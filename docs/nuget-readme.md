@@ -1,0 +1,61 @@
+# Slnmap
+
+*Slnmap (sln-map) — a semantic map of your .sln for AI coding agents.*
+
+**Open source under the MIT license.** Source, issues, and full docs:
+[github.com/EMahmoudNabil/slnmap](https://github.com/EMahmoudNabil/slnmap)
+
+**Your AI agent can't refactor .NET code it can't see.** Ask an agent *"what breaks if I change this
+interface?"* and it guesses from the files in its context — missing callers in other projects and
+files it never opened. Slnmap gives the agent a precise, compiler-accurate map of your whole solution,
+so it answers correctly: every caller, every implementation, across every project. It runs locally and
+serves the map to your agent or editor over [MCP](https://modelcontextprotocol.io).
+
+## Quickstart
+
+**1. Install** (requires the [.NET SDK](https://dotnet.microsoft.com/download) 9.0+):
+
+```console
+dotnet tool install --global Slnmap
+```
+
+**2. Analyze** your solution (builds `slnmap.db` in the current folder):
+
+```console
+slnmap analyze path/to/YourSolution.sln
+```
+
+**3. Connect** your MCP client. For Claude Code, add this to `.mcp.json`, using an **absolute** path to
+the `slnmap.db` you just built:
+
+```json
+{
+  "mcpServers": {
+    "slnmap": {
+      "command": "slnmap",
+      "args": ["serve", "--db", "C:/path/to/your/project/slnmap.db"]
+    }
+  }
+}
+```
+
+## The five tools
+
+The server exposes five read-only tools: `find_symbol`, `get_dependencies`, `impact_analysis`,
+`get_architecture_overview`, and `find_usages`. For an interface, `impact_analysis` follows both the
+interface's callers **and** its concrete implementations/overrides — across projects, in files nobody
+has open.
+
+## Privacy
+
+**100% local — and now you can verify it.** No telemetry, no network calls, no cloud service; analysis
+works fully offline. Now that the CLI and MCP server are open source, the claim is auditable.
+
+## License & support
+
+Slnmap is open source under the [MIT license](https://github.com/EMahmoudNabil/slnmap/blob/main/LICENSE).
+The CLI and MCP server are MIT-licensed and will stay that way. Future hosted or team-oriented features
+may be commercial.
+
+For questions or to report an issue, open a
+[GitHub issue](https://github.com/EMahmoudNabil/slnmap/issues) or contact **hello@slnmap.dev**.

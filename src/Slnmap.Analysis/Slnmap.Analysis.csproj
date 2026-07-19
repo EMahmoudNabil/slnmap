@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Roslyn-based solution analyzer producing a Slnmap code graph. Roslyn types must not leak into Slnmap.Core.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Slnmap.Core\Slnmap.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Since Roslyn 4.9, MSBuildWorkspace locates MSBuild via its out-of-process
+         BuildHost, so Microsoft.Build.Locator is not needed. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" />
+  </ItemGroup>
+
+</Project>

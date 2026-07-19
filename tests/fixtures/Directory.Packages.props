@@ -1,0 +1,6 @@
+<!-- Shields fixture projects from the repository's central package management. -->
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+</Project>

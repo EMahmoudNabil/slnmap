@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Slnmap.Analysis\Slnmap.Analysis.csproj" />
+    <ProjectReference Include="..\..\src\Slnmap.Core\Slnmap.Core.csproj" />
+    <ProjectReference Include="..\..\src\Slnmap.Mcp\Slnmap.Mcp.csproj" />
+    <ProjectReference Include="..\..\src\Slnmap.Storage\Slnmap.Storage.csproj" />
+    <!-- Referenced so the CLI is built before these tests run; the tests invoke its dll as a process. -->
+    <ProjectReference Include="..\..\src\Slnmap.Cli\Slnmap.Cli.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+</Project>

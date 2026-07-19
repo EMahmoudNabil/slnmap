@@ -1,0 +1,3 @@
+<!-- Stops MSBuild from walking up to the repository root: fixture projects are
+     analysis test *subjects* and must not inherit Slnmap's build conventions. -->
+<Project />

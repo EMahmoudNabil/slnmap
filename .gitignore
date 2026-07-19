@@ -1,0 +1,26 @@
+# Build outputs
+bin/
+obj/
+artifacts/
+TestResults/
+
+# IDE
+.vs/
+.idea/
+*.user
+*.suo
+
+# NuGet
+*.nupkg
+packages/
+
+# Local databases
+*.db
+*.db-shm
+*.db-wal
+*.db.tmp
+*.db.tmp-shm
+*.db.tmp-wal
+
+# Benchmark repos (cloned locally, never committed)
+bench/

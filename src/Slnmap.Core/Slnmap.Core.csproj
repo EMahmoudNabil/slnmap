@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Slnmap domain model: the code graph and analysis/storage abstractions. No external dependencies.</Description>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- Assembly name is the invoked command, so help usage and the MCP server name read "slnmap". -->
+    <AssemblyName>slnmap</AssemblyName>
+    <Description>Slnmap (sln-map) — a semantic map of your .sln for AI coding agents. Analyze a .NET solution into a queryable code graph, serve it over MCP, and inspect index status.</Description>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>slnmap</ToolCommandName>
+    <PackageId>Slnmap</PackageId>
+    <Version>0.2.1</Version>
+    <RollForward>Major</RollForward>
+    <PackageReadmeFile>nuget-readme.md</PackageReadmeFile>
+    <PackageIcon>icon.png</PackageIcon>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <Authors>Mahmoud Nabil</Authors>
+    <Copyright>Copyright (c) 2026 Mahmoud Nabil</Copyright>
+    <PackageProjectUrl>https://slnmap.dev</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/EMahmoudNabil/slnmap</RepositoryUrl>
+    <PackageTags>dotnet;roslyn;mcp;ai;code-analysis;claude-code;knowledge-graph</PackageTags>
+    <PackageReleaseNotes>Slnmap is now open source under the MIT license.
+Source: https://github.com/EMahmoudNabil/slnmap</PackageReleaseNotes>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\docs\nuget-readme.md" Pack="true" PackagePath="\" />
+    <None Include="icon.png" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Slnmap.Analysis\Slnmap.Analysis.csproj" />
+    <ProjectReference Include="..\Slnmap.Core\Slnmap.Core.csproj" />
+    <ProjectReference Include="..\Slnmap.Mcp\Slnmap.Mcp.csproj" />
+    <ProjectReference Include="..\Slnmap.Storage\Slnmap.Storage.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Slnmap.Tests" />
+  </ItemGroup>
+
+</Project>
