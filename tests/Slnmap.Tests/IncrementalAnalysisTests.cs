@@ -79,6 +79,39 @@ public sealed class IncrementalAnalysisTests : IDisposable
         Assert.NotEqual(firstHash, secondHash);
     }
 
+    [Fact]
+    public async Task Incremental_WithTwoTopLevelEntryPoints_PreservesTheEdgeCensus()
+    {
+        // Regression for the entry-point FQN collision: with merged entry-point nodes, editing a
+        // file one app depends on made the planner re-analyze the OTHER app's Program.cs and
+        // permanently drop the first app's edges. Both edit directions are exercised so the test
+        // fails without the fix regardless of which file used to win the node dedup.
+        CopyDirectory(TestPaths.FixtureSolutionDirectory, _root);
+        DotNet.Run("restore FixtureSolution.sln", _root);
+        string solutionPath = Path.Combine(_root, "FixtureSolution.sln");
+        var analyzer = new RoslynSolutionAnalyzer();
+
+        var full = await analyzer.AnalyzeAsync(solutionPath);
+
+        // Edit FixtureCli's dependency (Text.cs): only it and FixtureCli/Program.cs re-analyze.
+        File.AppendAllText(Path.Combine(_root, "FixtureLib", "Text.cs"), "\n// census probe 1\n");
+        var afterTextEdit = await analyzer.AnalyzeAsync(solutionPath, full);
+        Assert.True(afterTextEdit.Stats.DocumentsAnalyzed < full.Stats.DocumentsAnalyzed);
+        Assert.Equal(full.Graph.NodeCount, afterTextEdit.Graph.NodeCount);
+        Assert.Equal(full.Graph.EdgeCount, afterTextEdit.Graph.EdgeCount);
+
+        // Edit FixtureApp's dependency (Shapes.cs): the other direction.
+        File.AppendAllText(Path.Combine(_root, "FixtureLib", "Shapes.cs"), "\n// census probe 2\n");
+        var afterShapesEdit = await analyzer.AnalyzeAsync(solutionPath, afterTextEdit);
+        Assert.True(afterShapesEdit.Stats.DocumentsAnalyzed < full.Stats.DocumentsAnalyzed);
+        Assert.Equal(full.Graph.NodeCount, afterShapesEdit.Graph.NodeCount);
+        Assert.Equal(full.Graph.EdgeCount, afterShapesEdit.Graph.EdgeCount);
+
+        // Both entry points survived the cycle as distinct nodes.
+        GraphAssert.Node(afterShapesEdit.Graph, NodeKind.Method, "FixtureApp.<top-level-statements-entry-point>");
+        GraphAssert.Node(afterShapesEdit.Graph, NodeKind.Method, "FixtureCli.<top-level-statements-entry-point>");
+    }
+
     private static void CopyDirectory(string source, string destination)
     {
         Directory.CreateDirectory(destination);

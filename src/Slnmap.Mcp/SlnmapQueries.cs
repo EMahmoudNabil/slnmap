@@ -9,7 +9,7 @@ namespace Slnmap.Mcp;
 /// Kept separate from the tool attributes so it can be unit-tested directly against a graph store.
 /// Inputs are fully qualified names (never node ids); unresolved FQNs yield "did you mean" suggestions.
 /// </summary>
-public sealed class SlnmapQueries
+public sealed partial class SlnmapQueries
 {
     private const int FindLimit = 20;
     private const int DependencyCap = 50;

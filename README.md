@@ -51,7 +51,7 @@ That's it. Ask your agent an architecture question and it will call Slnmap.
 
 ## What you can ask
 
-The server exposes five read-only tools. Give them fully qualified names; results are capped and
+The server exposes eleven read-only tools. Give them fully qualified names; results are capped and
 counts-first. (A note the tools also carry: an FQN does not reveal whether a member is an explicit
 interface implementation.)
 
@@ -62,6 +62,12 @@ interface implementation.)
 | `impact_analysis` | "What breaks if I change `IBasketService`?" |
 | `get_architecture_overview` | "Show me the projects and how they depend on each other." |
 | `find_usages` | "Where is `BasketService.GetBasket` used?" |
+| `find_implementations` | "Who implements `IBasketService` / overrides this virtual member?" |
+| `get_type_hierarchy` | "Show the base and derived type tree for `BaseEntity`." |
+| `find_tests_for_symbol` | "Which tests exercise `BasketService.AddItemToBasket`?" |
+| `get_project_dependencies` | "How do the projects reference each other, and where is the coupling worst?" |
+| `find_circular_dependencies` | "Are there dependency cycles between projects or namespaces?" |
+| `get_symbol_source` | "Show me the actual source of `IBasketService`." |
 
 For an interface (or interface member), `impact_analysis` follows both the interface's callers **and**
 its concrete implementations/overrides — so the answer includes code that only touches the interface,
@@ -116,10 +122,14 @@ and pinned commit are in [BENCHMARKS.md](BENCHMARKS.md).
 
 | Metric | Result |
 |---|---|
-| Graph size | 1,107 nodes / 2,168 edges |
+| Graph size | 1,111 nodes / 2,175 edges |
 | Cold analyze (10 projects) | ~25.6 s (median of 3) |
 | Re-analyze after a one-file change | ~27.1 s (median of 3 — see note) |
 | `impact_analysis` on `IBasketService` (18 dependents) | ~270 ms (end-to-end MCP round-trip) |
+
+Graph counts are for v0.3.0: the entry-point fix (see the [changelog](CHANGELOG.md)) makes each
+project's top-level `Program` distinct, so counts grew slightly versus v0.2.x (1,107 / 2,168).
+Timings were measured on v0.2.1; the analyzer work per document is unchanged in v0.3.0.
 
 **Incremental re-analysis.** Re-analysis re-walks only the changed file and its dependents, but each
 run still pays a full workspace load of the solution — because the CLI is run-and-exit and does not

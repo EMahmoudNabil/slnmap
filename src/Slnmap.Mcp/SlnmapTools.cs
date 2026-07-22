@@ -14,7 +14,7 @@ public static class SlnmapTools
 {
     /// <summary>
     /// Liveness check kept callable in-process (e.g. from tests), but intentionally NOT decorated as an
-    /// MCP tool — the advertised surface is exactly the five documented, read-only tools.
+    /// MCP tool — the advertised surface is exactly the eleven documented, read-only tools.
     /// </summary>
     public static string Ping() => "pong";
 
@@ -77,4 +77,82 @@ public static class SlnmapTools
         [Description("Fully qualified name of the symbol.")] string fqn,
         CancellationToken cancellationToken = default)
         => new SlnmapQueries(store).FindUsagesAsync(fqn, cancellationToken);
+
+    [McpServerTool(Name = "find_implementations")]
+    [Description(
+        "List the concrete types that implement an interface / derive from a base type, or the members " +
+        "that implement or override an interface member or virtual/abstract member. Transitive over " +
+        "Implements + Inherits, grouped by project with file:line. Pass a fully qualified name. Use " +
+        "this for \"who are the concrete types/overrides\"; for the full blast radius of a change use " +
+        "impact_analysis; for the inheritance shape as a tree use get_type_hierarchy.")]
+    public static Task<string> FindImplementations(
+        IGraphStore store,
+        [Description("Fully qualified name of an interface, base type, or interface/virtual member.")] string fqn,
+        CancellationToken cancellationToken = default)
+        => new SlnmapQueries(store).FindImplementationsAsync(fqn, cancellationToken);
+
+    [McpServerTool(Name = "get_type_hierarchy")]
+    [Description(
+        "Show the base and/or derived type tree for a type as an indented text tree, transitive over " +
+        "Inherits + Implements, depth-capped. direction: 'up' = base types/interfaces, 'down' = " +
+        "derived types/implementers, 'both'. Pass a fully qualified name. For just the concrete " +
+        "implementer list use find_implementations; for a mixed one-hop dependency list use " +
+        "get_dependencies.")]
+    public static Task<string> GetTypeHierarchy(
+        IGraphStore store,
+        [Description("Fully qualified name of the type.")] string fqn,
+        [Description("'up' (base types), 'down' (derived types), or 'both'.")] string direction = "both",
+        [Description("Maximum transitive depth, 1-10.")] int depth = 5,
+        CancellationToken cancellationToken = default)
+        => new SlnmapQueries(store).GetTypeHierarchyAsync(fqn, direction, depth, cancellationToken);
+
+    [McpServerTool(Name = "find_tests_for_symbol")]
+    [Description(
+        "Find the test members that transitively exercise a symbol: incoming callers (depth 5) filtered " +
+        "to test projects, grouped by project with file:line. Heuristic: a project is a test project " +
+        "when its name contains \"Test\" (there is no package data to detect a framework directly) — the " +
+        "output states this. Pass a fully qualified name. For all usages (not just tests) use " +
+        "find_usages; for the full set of dependents use impact_analysis.")]
+    public static Task<string> FindTestsForSymbol(
+        IGraphStore store,
+        [Description("Fully qualified name of the symbol under test.")] string fqn,
+        CancellationToken cancellationToken = default)
+        => new SlnmapQueries(store).FindTestsForSymbolAsync(fqn, cancellationToken);
+
+    [McpServerTool(Name = "get_project_dependencies")]
+    [Description(
+        "Project-to-project reference map with cross-project reference counts, ending in a hotspot line " +
+        "(the most-coupled pair). Pass a project name to focus on it, or 'all' (default) for the whole " +
+        "map. This is the focused, per-project drill-down; get_architecture_overview includes the same " +
+        "map plus node/edge/namespace census. To check for cycles use find_circular_dependencies.")]
+    public static Task<string> GetProjectDependencies(
+        IGraphStore store,
+        [Description("A project name, or 'all' for the full map.")] string project = "all",
+        CancellationToken cancellationToken = default)
+        => new SlnmapQueries(store).GetProjectDependenciesAsync(project, cancellationToken);
+
+    [McpServerTool(Name = "find_circular_dependencies")]
+    [Description(
+        "Detect dependency cycles between projects (scope='project') or namespaces (scope='namespace') " +
+        "over the derived container graph. Each cycle is reported as a path chain, worst offenders " +
+        "(most crossing references) first. An acyclic solution reports '0 cycles' — a real answer. To " +
+        "see the underlying edges use get_project_dependencies.")]
+    public static Task<string> FindCircularDependencies(
+        IGraphStore store,
+        [Description("'project' or 'namespace'.")] string scope = "project",
+        CancellationToken cancellationToken = default)
+        => new SlnmapQueries(store).FindCircularDependenciesAsync(scope, cancellationToken);
+
+    [McpServerTool(Name = "get_symbol_source")]
+    [Description(
+        "Return the real source code of a symbol, read from its file at the stored declaration span and " +
+        "expanded by context_lines on each side (capped at 120 lines). Pass a fully qualified name. " +
+        "find_symbol locates a symbol (kind + path, no body); this prints the body — the natural next " +
+        "call after find_symbol.")]
+    public static Task<string> GetSymbolSource(
+        IGraphStore store,
+        [Description("Fully qualified name of the symbol.")] string fqn,
+        [Description("Context lines to show on each side of the declaration, 0-20.")] int context_lines = 5,
+        CancellationToken cancellationToken = default)
+        => new SlnmapQueries(store).GetSymbolSourceAsync(fqn, context_lines, cancellationToken);
 }

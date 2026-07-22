@@ -45,7 +45,7 @@ cold and incremental rows below. Each timing row is the **median of 3 runs**.
 
 | Metric | Result |
 |---|---|
-| Graph size | **1,107 nodes / 2,168 edges** (10 projects, 279 files) |
+| Graph size | **1,107 nodes / 2,168 edges** (10 projects, 279 files) — v0.3.0 measures **1,111 / 2,175** (entry-point fix, see CHANGELOG) |
 | Cold analyze (10 projects, 282 docs) | **25.6 s** (median; runs: 23.5 / 25.6 / 30.9) |
 | Re-analyze after a one-file change (5 docs re-walked) | **27.1 s** (median; runs: 24.7 / 27.1 / 29.4) |
 | Re-analyze, nothing changed (0 docs re-walked) | ~18.8 s (single observation — the fast tail) |

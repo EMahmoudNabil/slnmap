@@ -129,6 +129,32 @@ public sealed class FullAnalysisTests : IClassFixture<AnalyzedFixtureSolution>
     }
 
     [Fact]
+    public void TopLevelEntryPoints_GetDistinctPerAssemblyNodes()
+    {
+        // Two top-level-statements executables: their entry points must be distinct nodes with
+        // assembly-qualified FQNs, never one merged node (the v0.3.0 incremental-corruption fix).
+        var app = GraphAssert.Node(Graph, NodeKind.Method, "FixtureApp.<top-level-statements-entry-point>");
+        var cli = GraphAssert.Node(Graph, NodeKind.Method, "FixtureCli.<top-level-statements-entry-point>");
+
+        Assert.NotEqual(app.Id, cli.Id);
+        Assert.EndsWith("FixtureApp" + Path.DirectorySeparatorChar + "Program.cs", app.FilePath!, StringComparison.Ordinal);
+        Assert.EndsWith("FixtureCli" + Path.DirectorySeparatorChar + "Program.cs", cli.FilePath!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExplicitPartialProgramClass_IsOneAssemblyQualifiedNode()
+    {
+        // FixtureApp declares `public partial class Program { }` (the WebApplicationFactory
+        // pattern): the explicit partial and the synthesized top-level class are one symbol and
+        // must yield exactly one node, assembly-qualified — GraphAssert.Node fails on 0 or 2.
+        var program = GraphAssert.Node(Graph, NodeKind.Class, "FixtureApp.Program");
+        Assert.EndsWith("Program.cs", program.FilePath!, StringComparison.Ordinal);
+
+        // No project leaves an unqualified (colliding) Program node behind.
+        Assert.DoesNotContain(Graph.Nodes, n => n.Kind == NodeKind.Class && n.Fqn == "Program");
+    }
+
+    [Fact]
     public void RecordsFileContentHashes()
     {
         var shapes = _fixture.Snapshot.Files.SingleOrDefault(

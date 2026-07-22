@@ -22,6 +22,16 @@ internal static class SymbolFacts
     public static bool IsInSource(ISymbol symbol) =>
         symbol.Locations.Any(static location => location.IsInSource);
 
+    /// <summary>
+    /// The Program class holding a project's top-level statements — synthesized, or explicitly
+    /// declared (`public partial class Program { }`, the WebApplicationFactory pattern; partial
+    /// declarations are one symbol). An ordinary Program class inside a namespace does not match.
+    /// </summary>
+    private static bool IsTopLevelProgramType(ISymbol definition) =>
+        definition is INamedTypeSymbol { Name: WellKnownMemberNames.TopLevelStatementsEntryPointTypeName, TypeKind: TypeKind.Class } type
+        && type.ContainingNamespace is { IsGlobalNamespace: true }
+        && !type.GetMembers(WellKnownMemberNames.TopLevelStatementsEntryPointMethodName).IsEmpty;
+
     public static NodeKind? MapKind(ISymbol symbol) => symbol switch
     {
         INamedTypeSymbol type => type.TypeKind switch
@@ -59,6 +69,20 @@ internal static class SymbolFacts
         }
 
         string fqn = definition.ToDisplayString(FqnFormat);
+
+        // The top-level-statements construct renders namespace-less FQNs — the entry point as a
+        // bare "<top-level-statements-entry-point>" and its containing Program class as a bare
+        // "Program" — so two projects' entry points (and Program classes, synthesized or explicit
+        // `partial class Program`) would collide on FQN. FQNs are node identity: merged nodes make
+        // incremental eviction attribute one project's edges to the other's file and silently drop
+        // them. Qualify both with the assembly (project) name: deterministic across machines,
+        // unlike a file path.
+        if ((fqn == "<top-level-statements-entry-point>" || IsTopLevelProgramType(definition))
+            && definition.ContainingAssembly is { } assembly)
+        {
+            fqn = $"{assembly.Name}.{fqn}";
+        }
+
         string name = definition.Name.Length > 0 ? definition.Name : fqn;
 
         string? file = null;
