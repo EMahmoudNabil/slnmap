@@ -84,6 +84,19 @@ slnmap doctor               # check the environment can run Slnmap
 
 `--db <path>` selects the database file (default `slnmap.db`).
 
+## Updating
+
+.NET tools do not update themselves, and Slnmap makes no network calls — so it will never nag you
+about (or check for) new versions. To update:
+
+```console
+dotnet tool update -g Slnmap
+```
+
+To hear about releases, watch the GitHub repo (**Watch → Custom → Releases**); each release ships
+with notes in the [changelog](CHANGELOG.md). After a major-version update, re-run
+`slnmap analyze` if the tool asks for it — release notes call out when a graph rebuild is needed.
+
 ## Build from source
 
 Slnmap is a standard .NET solution — clone, build, and test it with the SDK:

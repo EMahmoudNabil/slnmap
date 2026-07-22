@@ -113,3 +113,14 @@ file read and no drift risk.
 `serve` now defaults to Warning-level logging (stdout stays clean JSON-RPC; stderr is quiet in normal
 use). Add an opt-in `--verbose` flag that lowers the host log level to Information so operators can see
 per-request lifecycle logs when debugging an MCP integration.
+
+## Opt-in update check (deferred — only if users ask)
+
+**Status:** deferred by design, not planned.
+
+Slnmap makes no network calls — that is a hard guarantee in the Privacy section, not an accident.
+A built-in "new version available" check (even a lightweight query of the NuGet index) would soften
+that guarantee, so it stays out unless real users request it. If it ever lands, it must be explicit
+opt-in behind a manual command (e.g. `slnmap doctor --check-update`), never ambient, and the Privacy
+section must document it in the same release. Until then: `dotnet tool update -g Slnmap` and
+watching GitHub Releases are the supported channels (see README → Updating).
