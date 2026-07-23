@@ -2,6 +2,27 @@
 
 All notable changes to Slnmap are documented here. Versions follow [SemVer](https://semver.org).
 
+## 0.4.0
+
+### Added
+
+- **`slnmap viz`** — exports the code graph as a single self-contained, interactive HTML file. No
+  server, no CDN dependency, works fully offline; the graph rendering library is embedded in the
+  output. Starts collapsed to one node per project; click a project, namespace, or class to drill
+  into it and see its members and dependency edges. `--output <path>` sets the file to write;
+  `--project <name>` exports just one project's subtree, with the rest shown as collapsed stubs.
+
+### Fixed
+
+- `viz` now shows a clean error ("The graph file is corrupted or not a Slnmap database...") instead
+  of a raw stack trace when pointed at a stale or corrupted `slnmap.db`.
+- Clicking a node to expand or collapse it now re-frames the camera on the result, matching the
+  search and reset-view behavior — previously the expanded subgraph could end up outside the
+  visible viewport.
+- Node labels are now truncated for display (full name still shown in the detail panel). A small
+  number of compiler-synthesized names (e.g. anonymous types from EF Core migration lambdas) could
+  run into the thousands of characters, which defeated the viewer's auto-fit framing.
+
 ## 0.3.0
 
 ### Added

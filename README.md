@@ -79,10 +79,23 @@ across projects, in files nobody has open.
 slnmap analyze <solution>   # build or update the code graph (incremental on re-run)
 slnmap serve                # serve the graph to MCP clients over stdio
 slnmap status               # show node/edge counts and when it was last analyzed
+slnmap viz                  # export the graph as a self-contained interactive HTML file
 slnmap doctor               # check the environment can run Slnmap
 ```
 
 `--db <path>` selects the database file (default `slnmap.db`).
+
+## Visualizing the graph
+
+```console
+slnmap viz --output graph.html      # export the whole graph
+slnmap viz --project YourProject    # export one project's subtree; others render as collapsed stubs
+```
+
+Opens as a single HTML file — double-click it, no server or internet connection required. It starts
+collapsed to one node per project; click a project, namespace, or class to drill into it. Like the
+rest of Slnmap, the export is self-contained: the graph library is embedded in the file, so nothing is
+fetched from a CDN and it works fully offline.
 
 ## Updating
 

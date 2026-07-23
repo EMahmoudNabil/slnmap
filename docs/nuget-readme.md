@@ -39,12 +39,17 @@ the `slnmap.db` you just built:
 }
 ```
 
-## The five tools
+## The tools
 
-The server exposes five read-only tools: `find_symbol`, `get_dependencies`, `impact_analysis`,
-`get_architecture_overview`, and `find_usages`. For an interface, `impact_analysis` follows both the
-interface's callers **and** its concrete implementations/overrides — across projects, in files nobody
-has open.
+The server exposes eleven read-only tools — `find_symbol`, `get_dependencies`, `impact_analysis`,
+`get_architecture_overview`, `find_usages`, `find_implementations`, `get_type_hierarchy`,
+`find_tests_for_symbol`, `get_project_dependencies`, `find_circular_dependencies`, and
+`get_symbol_source` (full descriptions in the [README](https://github.com/EMahmoudNabil/slnmap#what-you-can-ask)).
+For an interface, `impact_analysis` follows both the interface's callers **and** its concrete
+implementations/overrides — across projects, in files nobody has open.
+
+There's also `slnmap viz`: exports the graph as a single self-contained, interactive HTML file —
+no server, no CDN, works offline.
 
 ## Privacy
 

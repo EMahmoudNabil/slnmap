@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Slnmap — code graph</title>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --line:#30363d; --ink:#c9d1d9; --muted:#8b949e; --accent:#7c5cff; }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--bg); color: var(--ink); font: 13px/1.45 ui-sans-serif, system-ui, "Segoe UI", sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  header { display: flex; align-items: center; gap: 12px; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+  header .brand { font-weight: 600; letter-spacing: .3px; }
+  header .brand span { color: var(--accent); }
+  header .meta { color: var(--muted); font-size: 11px; max-width: 34ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #searchWrap { position: relative; }
+  #search { background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; width: 260px; outline: none; }
+  #search:focus { border-color: var(--accent); }
+  #results { position: absolute; top: 32px; left: 0; width: 420px; max-height: 320px; overflow-y: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; display: none; z-index: 30; }
+  #results div { padding: 6px 10px; cursor: pointer; border-bottom: 1px solid var(--line); font-family: ui-monospace, Consolas, monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #results div:hover { background: #1f2733; }
+  #results .k { color: var(--muted); margin-right: 6px; }
+  #toggles { display: flex; gap: 10px; align-items: center; margin-left: auto; }
+  #toggles label { display: flex; gap: 4px; align-items: center; cursor: pointer; color: var(--muted); font-size: 12px; }
+  #toggles .sw { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+  button { background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  main { flex: 1; display: flex; min-height: 0; }
+  #graph { flex: 1; min-width: 0; }
+  #panel { width: 320px; border-left: 1px solid var(--line); background: var(--panel); padding: 14px; overflow-y: auto; display: none; }
+  #panel h2 { font-size: 14px; word-break: break-all; }
+  #panel .badge { display: inline-block; font-size: 11px; border-radius: 10px; padding: 1px 8px; margin: 6px 0 10px; color: #0d1117; font-weight: 600; }
+  #panel .fqn { font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; color: var(--muted); word-break: break-all; margin-bottom: 10px; }
+  #panel .row { color: var(--muted); font-size: 12px; margin: 3px 0; word-break: break-all; }
+  #panel .row b { color: var(--ink); font-weight: 500; }
+  #panel table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px; }
+  #panel td, #panel th { border-top: 1px solid var(--line); padding: 4px 2px; text-align: right; }
+  #panel th:first-child, #panel td:first-child { text-align: left; }
+  #panel .hint { margin-top: 12px; color: var(--muted); font-size: 11px; }
+  #legend { position: absolute; bottom: 12px; left: 12px; background: rgba(22,27,34,.92); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; font-size: 11px; color: var(--muted); z-index: 20; }
+  #legend .item { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; }
+  #legend .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  #status { position: absolute; bottom: 12px; right: 12px; color: var(--muted); font-size: 11px; background: rgba(22,27,34,.92); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; z-index: 20; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">slnmap <span>graph</span></div>
+  <div class="meta" id="meta"></div>
+  <div id="searchWrap">
+    <input id="search" placeholder="Search symbols… (name or FQN)" autocomplete="off">
+    <div id="results"></div>
+  </div>
+  <div id="toggles"></div>
+  <button id="reset">Reset view</button>
+</header>
+<main>
+  <div id="graph"></div>
+  <aside id="panel"></aside>
+</main>
+<div id="legend"></div>
+<div id="status"></div>
+<script>__SLNMAP_LIB__</script>
+<script>
+"use strict";
+const DATA = __SLNMAP_DATA__;
+
+// ---- data model -------------------------------------------------------------------------------
+const KINDS = DATA.kinds;                    // NodeKind names, indexed by numeric value
+const EDGE_KINDS = DATA.edgeKinds;           // Calls, References, Implements, Inherits
+const N = DATA.nodes;                        // [kind, name, fqn, file, line, parent]
+const E = DATA.edges;                        // [source, target, kind]
+const kindOf = i => KINDS[N[i][0]];
+const children = N.map(() => []);
+const roots = [];
+N.forEach((n, i) => { if (n[5] >= 0) children[n[5]].push(i); else roots.push(i); });
+
+const KIND_COLORS = {
+  Project: "#7c5cff", Namespace: "#8b949e", Class: "#58a6ff", Interface: "#3fb950",
+  Struct: "#2ea8a0", Record: "#79c0ff", Enum: "#d29922", Delegate: "#bc8cff",
+  Method: "#f0883e", Constructor: "#f8b26a", Property: "#ff7b72", Field: "#9e6a03",
+  Event: "#db61a2", Unknown: "#6e7681",
+};
+const KIND_SIZES = { Project: 26, Namespace: 18, Class: 13, Interface: 13, Struct: 13, Record: 13, Enum: 12, Delegate: 12 };
+const EDGE_COLORS = ["#f0883e", "#58a6ff", "#3fb950", "#bc8cff"]; // by EDGE_KINDS index
+const CONTAINERS = new Set(["Project", "Namespace", "Class", "Interface", "Struct", "Record", "Enum"]);
+const EXPAND_CONFIRM_AT = 300;
+
+// Compiler-synthesized names (anonymous types from EF migration lambdas, etc.) can run into the
+// thousands of characters; an untruncated one as a node label defeats network.fit()'s framing.
+const MAX_LABEL_CHARS = 60;
+function truncateLabel(s, max) {
+  return s.length > max ? s.slice(0, max - 1) + "…" : s;
+}
+
+// ---- drill state ------------------------------------------------------------------------------
+const expanded = new Set();
+const edgeKindOn = EDGE_KINDS.map(() => true);
+let ancCache = new Map();
+
+function isVisible(i) {
+  for (let p = N[i][5]; p >= 0; p = N[p][5]) { if (!expanded.has(p)) return false; }
+  return true;
+}
+function visibleAncestor(i) {
+  if (ancCache.has(i)) return ancCache.get(i);
+  let r = i;
+  while (!isVisible(r)) r = N[r][5];
+  ancCache.set(i, r);
+  return r;
+}
+
+// ---- vis-network ------------------------------------------------------------------------------
+const nodesDS = new vis.DataSet();
+const edgesDS = new vis.DataSet();
+const network = new vis.Network(document.getElementById("graph"), { nodes: nodesDS, edges: edgesDS }, {
+  nodes: { shape: "dot", font: { color: "#c9d1d9", size: 12, face: "ui-sans-serif" }, borderWidth: 1.5 },
+  edges: {
+    arrows: { to: { enabled: true, scaleFactor: 0.6 } },
+    smooth: { enabled: true, type: "continuous", roundness: 0.4 },
+    font: { color: "#8b949e", size: 10, strokeWidth: 4, strokeColor: "#0d1117" },
+  },
+  physics: {
+    solver: "barnesHut",
+    barnesHut: { gravitationalConstant: -3200, springLength: 150, springConstant: 0.02, avoidOverlap: 0.4 },
+    stabilization: { iterations: 250, updateInterval: 50 },
+  },
+  interaction: { hover: true, tooltipDelay: 200 },
+});
+network.on("stabilizationIterationsDone", () => network.setOptions({ physics: false }));
+
+function rebuild() {
+  ancCache = new Map();
+  const visible = [];
+  const stack = [...roots];
+  while (stack.length) {
+    const i = stack.pop();
+    visible.push(i);
+    if (expanded.has(i)) for (const c of children[i]) stack.push(c);
+  }
+
+  const vNodes = visible.map(i => {
+    const kind = kindOf(i);
+    const isOpen = expanded.has(i);
+    const canOpen = CONTAINERS.has(kind) && children[i].length > 0;
+    return {
+      id: i,
+      label: truncateLabel(N[i][1], MAX_LABEL_CHARS) + (canOpen && !isOpen ? ` (${children[i].length})` : ""),
+      title: truncateLabel(N[i][2], 300),
+      size: KIND_SIZES[kind] || 8,
+      color: { background: KIND_COLORS[kind] || KIND_COLORS.Unknown, border: isOpen ? "#e6edf3" : "#30363d" },
+      borderWidth: isOpen ? 2.5 : 1.5,
+      shape: canOpen ? "dot" : "dot",
+      font: { size: kind === "Project" ? 14 : 12 },
+    };
+  });
+
+  const groups = new Map(); // "a|b|k" -> count
+  for (const [s, t, k] of E) {
+    if (!edgeKindOn[k]) continue;
+    const a = visibleAncestor(s), b = visibleAncestor(t);
+    if (a === b) continue;
+    const key = a + "|" + b + "|" + k;
+    groups.set(key, (groups.get(key) || 0) + 1);
+  }
+  const vEdges = [];
+  for (const [key, count] of groups) {
+    const [a, b, k] = key.split("|").map(Number);
+    vEdges.push({
+      id: key, from: a, to: b,
+      label: count > 1 ? String(count) : "",
+      width: Math.min(1 + Math.log2(count), 6),
+      color: { color: EDGE_COLORS[k], opacity: 0.75 },
+    });
+  }
+
+  network.setOptions({ physics: true });
+  nodesDS.clear(); edgesDS.clear();
+  nodesDS.add(vNodes); edgesDS.add(vEdges);
+  network.stabilize(250);
+  document.getElementById("status").textContent =
+    `${vNodes.length} visible of ${N.length} nodes · ${vEdges.length} drawn of ${E.length} edges`;
+}
+
+// ---- interactions -----------------------------------------------------------------------------
+network.on("click", params => {
+  if (!params.nodes.length) return;
+  const i = params.nodes[0];
+  showPanel(i);
+  const kind = kindOf(i);
+  if (!CONTAINERS.has(kind) || children[i].length === 0) return;
+  if (expanded.has(i)) {
+    // collapse the whole subtree so re-expanding starts clean
+    const drop = [i];
+    while (drop.length) {
+      const d = drop.pop();
+      expanded.delete(d);
+      for (const c of children[d]) drop.push(c);
+    }
+  } else {
+    if (children[i].length > EXPAND_CONFIRM_AT
+        && !confirm(`"${N[i][1]}" has ${children[i].length} direct children — expand anyway?`)) return;
+    expanded.add(i);
+  }
+  rebuild();
+  network.once("stabilizationIterationsDone", () => network.fit({ animation: { duration: 400 } }));
+});
+
+function showPanel(i) {
+  const kind = kindOf(i);
+  const into = EDGE_KINDS.map(() => 0), outof = EDGE_KINDS.map(() => 0);
+  for (const [s, t, k] of E) { if (s === i) outof[k]++; if (t === i) into[k]++; }
+  const rows = EDGE_KINDS.map((name, k) =>
+    `<tr><td><span class="sw" style="background:${EDGE_COLORS[k]};display:inline-block;width:10px;height:3px;border-radius:2px;margin-right:5px"></span>${name}</td><td>${into[k]}</td><td>${outof[k]}</td></tr>`).join("");
+  const file = N[i][3] ? `${esc(N[i][3])}${N[i][4] ? ":" + N[i][4] : ""}` : "(no single source location)";
+  const panel = document.getElementById("panel");
+  panel.innerHTML =
+    `<h2>${esc(truncateLabel(N[i][1], 120))}</h2>` +
+    `<span class="badge" style="background:${KIND_COLORS[kind] || KIND_COLORS.Unknown}">${kind}</span>` +
+    `<div class="fqn">${esc(N[i][2])}</div>` +
+    `<div class="row"><b>File:</b> ${file}</div>` +
+    `<div class="row"><b>Children:</b> ${children[i].length}</div>` +
+    `<table><tr><th>Edges (direct)</th><th>in</th><th>out</th></tr>${rows}</table>` +
+    `<div class="hint">Click a container node to expand or collapse it. Aggregated edge labels show how many underlying references they bundle.</div>`;
+  panel.style.display = "block";
+}
+function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+
+// ---- search -----------------------------------------------------------------------------------
+const searchBox = document.getElementById("search");
+const resultsBox = document.getElementById("results");
+searchBox.addEventListener("input", () => {
+  const q = searchBox.value.trim().toLowerCase();
+  resultsBox.innerHTML = "";
+  if (q.length < 2) { resultsBox.style.display = "none"; return; }
+  const hits = [];
+  for (let i = 0; i < N.length && hits.length < 20; i++) {
+    if (N[i][1].toLowerCase().includes(q) || N[i][2].toLowerCase().includes(q)) hits.push(i);
+  }
+  if (!hits.length) { resultsBox.style.display = "none"; return; }
+  for (const i of hits) {
+    const div = document.createElement("div");
+    div.innerHTML = `<span class="k">[${kindOf(i)}]</span>${esc(truncateLabel(N[i][2], 120))}`;
+    div.onclick = () => revealNode(i);
+    resultsBox.appendChild(div);
+  }
+  resultsBox.style.display = "block";
+});
+document.addEventListener("click", e => { if (!e.target.closest("#searchWrap")) resultsBox.style.display = "none"; });
+
+function revealNode(i) {
+  resultsBox.style.display = "none";
+  for (let p = N[i][5]; p >= 0; p = N[p][5]) expanded.add(p);
+  rebuild();
+  network.once("stabilizationIterationsDone", () => {
+    network.selectNodes([i]);
+    network.focus(i, { scale: 1.1, animation: { duration: 500 } });
+  });
+  showPanel(i);
+}
+
+// ---- toggles, legend, meta, reset -------------------------------------------------------------
+const togglesBox = document.getElementById("toggles");
+const totals = EDGE_KINDS.map(() => 0);
+for (const [, , k] of E) totals[k]++;
+EDGE_KINDS.forEach((name, k) => {
+  const label = document.createElement("label");
+  label.innerHTML = `<input type="checkbox" checked><span class="sw" style="background:${EDGE_COLORS[k]}"></span>${name} (${totals[k]})`;
+  label.querySelector("input").onchange = e => { edgeKindOn[k] = e.target.checked; rebuild(); };
+  togglesBox.appendChild(label);
+});
+
+document.getElementById("legend").innerHTML = Object.entries(KIND_COLORS)
+  .filter(([kind]) => kind !== "Unknown" && N.some(n => KINDS[n[0]] === kind))
+  .map(([kind, color]) => `<span class="item"><span class="dot" style="background:${color}"></span>${kind}</span>`)
+  .join("");
+
+const solution = (DATA.meta.solution || "").split(/[\\/]/).pop() || "";
+document.getElementById("meta").textContent =
+  `${solution} · ${N.length} nodes · analyzed ${DATA.meta.analyzed ? DATA.meta.analyzed.slice(0, 10) : "?"}`;
+document.title = `Slnmap — ${solution || "code graph"}`;
+
+document.getElementById("reset").onclick = () => {
+  expanded.clear();
+  document.getElementById("panel").style.display = "none";
+  rebuild();
+  network.once("stabilizationIterationsDone", () => network.fit({ animation: { duration: 400 } }));
+};
+
+rebuild();
+network.once("stabilizationIterationsDone", () => network.fit());
+</script>
+</body>
+</html>

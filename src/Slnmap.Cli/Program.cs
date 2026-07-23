@@ -207,6 +207,93 @@ statusCommand.SetAction(async (parseResult, cancellationToken) =>
     return 0;
 });
 
+var outputOption = new Option<string>("--output", "-o")
+{
+    Description = "Path of the HTML file to write.",
+    DefaultValueFactory = _ => "graph.html",
+};
+
+var projectOption = new Option<string?>("--project")
+{
+    Description = "Export only this project's subtree; other projects appear as collapsed stubs.",
+};
+
+var vizCommand = new Command("viz", "Export the code graph as a self-contained interactive HTML file.")
+{
+    dbOption,
+    outputOption,
+    projectOption,
+};
+vizCommand.SetAction(async (parseResult, cancellationToken) =>
+{
+    string db = parseResult.GetRequiredValue(dbOption);
+    string output = Path.GetFullPath(parseResult.GetRequiredValue(outputOption));
+    string? project = parseResult.GetValue(projectOption);
+    await using var store = new SqliteGraphStore(db);
+
+    if (!File.Exists(store.DatabasePath))
+    {
+        Console.Error.WriteLine($"No graph at {store.DatabasePath}. Run 'slnmap analyze <solution>' first.");
+        return 1;
+    }
+
+    CodeGraph graph;
+    try
+    {
+        await store.InitializeAsync(cancellationToken).ConfigureAwait(false);
+        graph = await store.LoadGraphAsync(cancellationToken).ConfigureAwait(false);
+    }
+    catch (Exception e) when (e is not OperationCanceledException)
+    {
+        // A stale/torn/corrupt db throws a raw SqliteException with internal file paths;
+        // show the same clean two-line message 'analyze' uses for its failure paths instead.
+        Console.Error.WriteLine(Palette.Err.Error("The graph file is corrupted or not a Slnmap database."));
+        Console.Error.WriteLine(Palette.Err.Label("Delete slnmap.db and re-run 'slnmap analyze'."));
+        return 1;
+    }
+
+    if (graph.NodeCount == 0)
+    {
+        Console.Error.WriteLine(Palette.Err.Error("The graph is empty. Run 'slnmap analyze <solution>' first."));
+        return 1;
+    }
+
+    var vizMeta = await store.GetMetaAsync(cancellationToken).ConfigureAwait(false);
+    var stopwatch = Stopwatch.StartNew();
+    VizExporter.VizStats stats;
+    try
+    {
+        stats = VizExporter.WriteHtml(graph, vizMeta, output, project);
+    }
+    catch (ArgumentException e)
+    {
+        // Unknown --project — the message already lists the valid names.
+        Console.Error.WriteLine(Palette.Err.Error(e.Message));
+        return 1;
+    }
+
+    stopwatch.Stop();
+
+    if (project is null && stats.NodeCount > 30_000)
+    {
+        Console.Error.WriteLine(Palette.Err.Warn(
+            $"Large graph ({stats.NodeCount} nodes): the HTML will open, but consider --project <name> for a lighter file."));
+    }
+
+    var vizPal = Palette.Out;
+    Console.WriteLine(vizPal.Label("Nodes:     ") + vizPal.Number(stats.NodeCount.ToString(CultureInfo.InvariantCulture)) + vizPal.Label(" (drill-down starts at the project level)"));
+    Console.WriteLine(vizPal.Label("Edges:     ") + vizPal.Number(stats.DependencyEdgeCount.ToString(CultureInfo.InvariantCulture)) + vizPal.Label(" dependency edges (Contains is the hierarchy)"));
+    if (stats.OrphansAttachedToProjects + stats.OrphansUnattributed > 0)
+    {
+        Console.WriteLine(vizPal.Label("Reattached:") + " " + vizPal.Number(stats.OrphansAttachedToProjects.ToString(CultureInfo.InvariantCulture)) + vizPal.Label(" orphaned nodes to projects by path, ") + vizPal.Number(stats.OrphansUnattributed.ToString(CultureInfo.InvariantCulture)) + vizPal.Label(" unattributed"));
+    }
+
+    Console.WriteLine(vizPal.Label("Size:      ") + vizPal.Number((stats.OutputBytes / 1024.0).ToString("F0", CultureInfo.InvariantCulture)) + vizPal.Label(" KB"));
+    Console.WriteLine(vizPal.Label("Elapsed:   ") + vizPal.Success($"{stopwatch.Elapsed.TotalMilliseconds.ToString("F0", CultureInfo.InvariantCulture)} ms"));
+    Console.WriteLine(vizPal.Label("Saved:     ") + vizPal.Label(output));
+    return 0;
+});
+
 var doctorPathArgument = new Argument<string>("path")
 {
     Description = "Directory or solution to check for a governing global.json (defaults to the current directory).",
@@ -242,6 +329,7 @@ var rootCommand = new RootCommand("Slnmap — maps a .NET solution into a querya
     analyzeCommand,
     serveCommand,
     statusCommand,
+    vizCommand,
     doctorCommand,
 };
 
