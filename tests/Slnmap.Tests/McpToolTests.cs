@@ -123,6 +123,53 @@ public sealed class McpToolTests : IClassFixture<AnalyzedFixtureGraphStore>
     }
 
     [Fact]
+    public async Task FindUsages_GenericTypeArgumentOnlyReference_FindsIt()
+    {
+        // The false-"safe-to-delete" case: a class referenced only via
+        // Registrar.Register<GenericMethodArgOnly>() must not report "no usages found".
+        string result = await _queries.FindUsagesAsync("Fixture.Lib.GenericMethodArgOnly");
+        Assert.Contains("Fixture.Lib.GenericRefs.UseAll()", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("No usages found", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ImpactAnalysis_GenericTypeArgumentOnlyReference_ReportsReferencingMember()
+    {
+        string result = await _queries.ImpactAnalysisAsync("Fixture.Lib.GenericMethodArgOnly");
+        Assert.Contains("Fixture.Lib.GenericRefs.UseAll()", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("nothing else in the graph depends on it", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task FindUsages_BareTypeofOnlyReference_FindsIt()
+    {
+        string result = await _queries.FindUsagesAsync("Fixture.Lib.TypeofOnly");
+        Assert.Contains("Fixture.Lib.GenericRefs.UseAll()", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task FindUsages_AttributeArgumentOnlyReference_FindsIt()
+    {
+        string result = await _queries.FindUsagesAsync("Fixture.Lib.AttributeArgOnly");
+        Assert.Contains("Fixture.Lib.Marked", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task FindSymbol_FieldByName_ReturnsFieldKind()
+    {
+        string result = await _queries.FindSymbolAsync("KnownTypes", null);
+        Assert.Contains("[Field]", result, StringComparison.Ordinal);
+        Assert.Contains("Fixture.Lib.FieldHolder.KnownTypes", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task FindSymbol_FieldKindFilter_RestrictsResults()
+    {
+        string result = await _queries.FindSymbolAsync("_a", "Field");
+        Assert.Contains("Fixture.Lib.MultiDeclaratorFields._a", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task NotAnalyzedDatabase_ReturnsActionableMessage()
     {
         string directory = Path.Combine(Path.GetTempPath(), "slnmap-mcp-empty", Guid.NewGuid().ToString("N"));

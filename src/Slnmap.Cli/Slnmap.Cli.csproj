@@ -8,7 +8,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>slnmap</ToolCommandName>
     <PackageId>Slnmap</PackageId>
-    <Version>0.4.0</Version>
+    <Version>0.5.0</Version>
     <RollForward>Major</RollForward>
     <PackageReadmeFile>nuget-readme.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>
@@ -18,9 +18,10 @@
     <PackageProjectUrl>https://slnmap.dev</PackageProjectUrl>
     <RepositoryUrl>https://github.com/EMahmoudNabil/slnmap</RepositoryUrl>
     <PackageTags>dotnet;roslyn;mcp;ai;code-analysis;claude-code;knowledge-graph</PackageTags>
-    <PackageReleaseNotes>New 'slnmap viz' command: exports the code graph as a single self-contained,
-interactive HTML file (no CDN, no network calls) with a click-to-drill-down project/namespace/class
-view. See CHANGELOG.md for details.
+    <PackageReleaseNotes>Type references reachable only through a generic type argument, typeof(), or
+an attribute constructor argument now produce References edges (find_usages/impact_analysis no longer
+report a false "no usages"). Fields are now modeled as graph nodes, findable via find_symbol. See
+CHANGELOG.md for details.
 Source: https://github.com/EMahmoudNabil/slnmap</PackageReleaseNotes>
   </PropertyGroup>
 

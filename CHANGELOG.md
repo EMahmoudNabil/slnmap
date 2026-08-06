@@ -2,6 +2,50 @@
 
 All notable changes to Slnmap are documented here. Versions follow [SemVer](https://semver.org).
 
+## 0.5.0
+
+### Fixed
+
+- **Type references reachable only through a generic type argument, `typeof()`, or an attribute
+  constructor argument were invisible to `find_usages` and `impact_analysis`.** Found by
+  dogfooding Slnmap against a real 26k-node, 5-project ASP.NET solution: a middleware class
+  registered only via `app.UseMiddleware<T>()`, a Hangfire job type passed only as
+  `RecurringJob.AddOrUpdate<T>(...)`, or a class named only in `typeof(X)` inside a lookup table
+  all reported **zero usages and zero impact** — even though each was genuinely load-bearing.
+  That's not merely incomplete: an agent asking "is it safe to delete/rename this?" got an
+  actively wrong "yes." Generic type arguments, bare `typeof(X)`, and attribute arguments
+  (`[Foo(typeof(X))]`) now all produce `References` edges, same as any other type mention.
+  (Fixes #1)
+- **Fields were not modeled as graph nodes.** `find_symbol` couldn't find a field by name at all
+  — the only workaround was `get_symbol_source` on the containing class and reading the body as
+  text. This hit exactly the symbols agents ask about most: version constants, feature-flag sets,
+  `typeof`-keyed lookup tables (e.g. `private static readonly HashSet<Type> KnownTypes = { ... }`).
+  Fields are now first-class `Field` nodes, findable via `find_symbol` and `find_symbol(kind:
+  "Field")`; a field's initializer expressions (including the `typeof(...)` fix above) now
+  attribute their `References` edges to the field itself, not to the containing class. Additive
+  only — no schema migration (`nodes.kind` is stored as free-form text, not a constrained/int
+  column). (Fixes #2)
+
+Measured on Slnmap's own solution (6 projects, 81 documents): **+13.9% nodes, +32.1% edges**
+(nearly all of the edge growth is the new `References` edges — `Calls` didn't move), analyze time
+unchanged within run-to-run noise, `slnmap.db` size +27%. Well under the 2.5x-edge-growth /
+30%-time-regression thresholds that would have called for gating this behind a flag — ships
+as-is, no opt-out needed.
+
+**Upgrade note:** the new edges are produced at analysis time — **re-run `slnmap analyze`** (no
+flag needed) to pick them up on an existing `slnmap.db`; no schema migration, delete, or
+`--full` re-analysis is required.
+
+**Known remaining limits** (not fixed by this release):
+- A **fully-qualified** type reference without a `using` shortcut (e.g. a parameter typed
+  `Fixture.Lib.SomeType` with no `using Fixture.Lib;` in scope) is still invisible — it's caught
+  by the same syntax-exclusion rule that (correctly) ignores `using` directives themselves. Rare
+  in idiomatic C#, tracked as a follow-up.
+- **Events** (`public event EventHandler Foo;`) are still not modeled — a distinct symbol kind
+  from fields (`IEventSymbol`, not `IFieldSymbol`) despite the similar declaration syntax.
+- NuGet package references and `Directory.Packages.props` version pins remain out of the graph
+  by design — a deliberate model boundary, not a gap.
+
 ## 0.4.0
 
 ### Added

@@ -51,6 +51,10 @@ internal static class SymbolFacts
             _ => null,
         },
         IPropertySymbol => NodeKind.Property,
+        // Enum members are IFieldSymbol in Roslyn's model too, but they're enumerants, not state —
+        // NodeKind.Enum already covers the enum type; leave individual members unmapped here (a
+        // separate, not-yet-modeled gap) rather than mislabeling them as Field.
+        IFieldSymbol { ContainingType.TypeKind: not TypeKind.Enum } => NodeKind.Field,
         INamespaceSymbol => NodeKind.Namespace,
         _ => null,
     };

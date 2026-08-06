@@ -148,14 +148,18 @@ and pinned commit are in [BENCHMARKS.md](BENCHMARKS.md).
 
 | Metric | Result |
 |---|---|
-| Graph size | 1,111 nodes / 2,175 edges |
-| Cold analyze (10 projects) | ~25.6 s (median of 3) |
-| Re-analyze after a one-file change | ~27.1 s (median of 3 — see note) |
-| `impact_analysis` on `IBasketService` (18 dependents) | ~270 ms (end-to-end MCP round-trip) |
+| Graph size | 1,311 nodes / 2,922 edges |
+| Cold analyze (10 projects) | ~27.0 s (median of 3) |
+| Re-analyze after a one-file change | ~22.7 s (median of 3 — see note) |
+| `impact_analysis` on `IBasketService` (29 dependents) | ~240–290 ms (end-to-end MCP round-trip) |
 
-Graph counts are for v0.3.0: the entry-point fix (see the [changelog](CHANGELOG.md)) makes each
-project's top-level `Program` distinct, so counts grew slightly versus v0.2.x (1,107 / 2,168).
-Timings were measured on v0.2.1; the analyzer work per document is unchanged in v0.3.0.
+Numbers are for v0.5.0: type-reference edges (generic type arguments, `typeof()`, attribute
+arguments) and Field nodes are new in this release (see the [changelog](CHANGELOG.md)), which is
+why graph size and `IBasketService`'s dependent count both grew substantially versus v0.3.0
+(1,111 / 2,175 edges, 18 dependents) — full before/after detail in
+[BENCHMARKS.md](BENCHMARKS.md). Timings were re-measured on the same machine as the original
+v0.2.1 numbers and are flat within normal run-to-run noise; the analyzer's per-document work is
+otherwise unchanged.
 
 **Incremental re-analysis.** Re-analysis re-walks only the changed file and its dependents, but each
 run still pays a full workspace load of the solution — because the CLI is run-and-exit and does not
