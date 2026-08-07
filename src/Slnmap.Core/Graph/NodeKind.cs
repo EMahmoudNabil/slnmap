@@ -2,7 +2,8 @@ namespace Slnmap.Core.Graph;
 
 /// <summary>
 /// The kind of symbol a <see cref="SymbolNode"/> represents.
-/// Values are persisted as integers; never reorder or renumber existing members.
+/// Persisted in the database as the enum member's name (TEXT, not its integer value) —
+/// never rename an existing member without a migration.
 /// </summary>
 public enum NodeKind
 {

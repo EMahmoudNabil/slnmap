@@ -54,6 +54,12 @@ internal sealed class DocumentWalker
                 case MethodDeclarationSyntax or PropertyDeclarationSyntax or IndexerDeclarationSyntax:
                     GetOrCreateNode(_model.GetDeclaredSymbol(node, _cancellationToken));
                     break;
+                // Matches only FieldDeclarationSyntax, not the sibling EventFieldDeclarationSyntax
+                // (same shape, `event Handler Foo;`) — that declares an IEventSymbol, a distinct
+                // symbol kind with its own unmapped NodeKind.Event; out of scope here.
+                case VariableDeclaratorSyntax declarator when declarator.Parent?.Parent is FieldDeclarationSyntax:
+                    GetOrCreateNode(_model.GetDeclaredSymbol(declarator, _cancellationToken));
+                    break;
                 case InvocationExpressionSyntax invocation:
                     HandleInvocation(invocation);
                     break;
@@ -207,10 +213,12 @@ internal sealed class DocumentWalker
             return;
         }
 
-        // Only property accesses and method-group references become References edges;
-        // invocations are Calls, and plain type mentions are covered by other edge kinds.
+        // Property accesses, method-group references, and plain type mentions (generic type
+        // arguments, typeof(), attribute constructor arguments, parameter/field/return types)
+        // become References edges; invocations are Calls, and a type's own declaration is
+        // covered by Inherits/Implements/Contains instead.
         var symbol = ResolveSymbol(name);
-        if (symbol is not (IPropertySymbol or IMethodSymbol))
+        if (symbol is not (IPropertySymbol or IMethodSymbol or INamedTypeSymbol))
         {
             return;
         }
@@ -237,7 +245,6 @@ internal sealed class DocumentWalker
     {
         QualifiedNameSyntax => true,        // type/namespace positions (using directives, qualified type names)
         UsingDirectiveSyntax => true,
-        TypeArgumentListSyntax => true,
         NameColonSyntax or NameEqualsSyntax => true,
         ExplicitInterfaceSpecifierSyntax => true,
         AliasQualifiedNameSyntax => true,
@@ -262,8 +269,9 @@ internal sealed class DocumentWalker
     /// <summary>
     /// Resolves the member node an edge at <paramref name="position"/> originates from:
     /// accessors map to their property, lambdas and local functions to their containing
-    /// member, field initializers to their type. Covers synthesized members such as the
-    /// top-level-statements entry point.
+    /// member, field initializers to their field (falling further back to the containing type
+    /// only when the field itself isn't modeled, e.g. an enum member). Covers synthesized
+    /// members such as the top-level-statements entry point.
     /// </summary>
     private SymbolNode? GetEnclosingMemberNode(int position)
     {
@@ -282,13 +290,13 @@ internal sealed class DocumentWalker
                 continue;
             }
 
-            if (symbol is IMethodSymbol or IPropertySymbol or INamedTypeSymbol
+            if (symbol is IMethodSymbol or IPropertySymbol or INamedTypeSymbol or IFieldSymbol
                 && GetOrCreateNode(symbol) is { } node)
             {
                 return node;
             }
 
-            symbol = symbol is IFieldSymbol field ? field.ContainingType : symbol.ContainingSymbol;
+            symbol = symbol.ContainingSymbol;
         }
 
         return null;
@@ -320,7 +328,7 @@ internal sealed class DocumentWalker
         }
 
         _nodes.Add(node);
-        if (node.Kind is NodeKind.Method or NodeKind.Constructor or NodeKind.Property
+        if (node.Kind is NodeKind.Method or NodeKind.Constructor or NodeKind.Property or NodeKind.Field
             && symbol.ContainingType is { } containingType
             && GetOrCreateNode(containingType) is { } typeNode)
         {

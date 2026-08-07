@@ -164,4 +164,131 @@ public sealed class FullAnalysisTests : IClassFixture<AnalyzedFixtureSolution>
         Assert.Equal(64, shapes.ContentHash.Length);
         Assert.True(_fixture.Snapshot.Stats.DocumentsAnalyzed > 0);
     }
+
+    // --- Gap 1: type references (generic type args, typeof, attribute arguments) ---
+
+    [Fact]
+    public void TypeReference_GenericMethodArgumentOnly_CreatesReferenceEdge()
+    {
+        var useAll = GraphAssert.Node(Graph, NodeKind.Method, "Fixture.Lib.GenericRefs.UseAll()");
+        var target = GraphAssert.Node(Graph, NodeKind.Class, "Fixture.Lib.GenericMethodArgOnly");
+        GraphAssert.Edge(Graph, useAll, target, RelationshipKind.References);
+    }
+
+    [Fact]
+    public void TypeReference_GenericObjectCreationArgumentOnly_CreatesReferenceEdge()
+    {
+        var useAll = GraphAssert.Node(Graph, NodeKind.Method, "Fixture.Lib.GenericRefs.UseAll()");
+        var target = GraphAssert.Node(Graph, NodeKind.Class, "Fixture.Lib.GenericCreationArgOnly");
+        GraphAssert.Edge(Graph, useAll, target, RelationshipKind.References);
+    }
+
+    [Fact]
+    public void TypeReference_BareTypeof_CreatesReferenceEdge()
+    {
+        var useAll = GraphAssert.Node(Graph, NodeKind.Method, "Fixture.Lib.GenericRefs.UseAll()");
+        var target = GraphAssert.Node(Graph, NodeKind.Class, "Fixture.Lib.TypeofOnly");
+        GraphAssert.Edge(Graph, useAll, target, RelationshipKind.References);
+    }
+
+    [Fact]
+    public void TypeReference_AttributeConstructorArgument_CreatesReferenceEdge()
+    {
+        var marked = GraphAssert.Node(Graph, NodeKind.Class, "Fixture.Lib.Marked");
+        var target = GraphAssert.Node(Graph, NodeKind.Class, "Fixture.Lib.AttributeArgOnly");
+        GraphAssert.Edge(Graph, marked, target, RelationshipKind.References);
+    }
+
+    [Fact]
+    public void SelfReferencingGeneric_DoesNotCreateSelfLoopReferenceEdge()
+    {
+        // `class SelfRef : IEquatable<SelfRef>` mentions its own type inside a generic type
+        // argument in its own base list — must not create a SelfRef -> SelfRef self-loop.
+        var selfRef = GraphAssert.Node(Graph, NodeKind.Class, "Fixture.Lib.SelfRef");
+        Assert.DoesNotContain(
+            Graph.OutgoingEdges(selfRef.Id, RelationshipKind.References),
+            e => e.TargetId == selfRef.Id);
+    }
+
+    [Fact]
+    public void MemberReferencingOwnContainingType_CreatesRealReferenceEdge()
+    {
+        // A local variable's type annotation naming its own containing type is a real, wanted
+        // reference, not the kind of self-loop noise the previous test guards against (source and
+        // target are different nodes: a Method and its Class).
+        var clone = GraphAssert.Node(Graph, NodeKind.Method, "Fixture.Lib.CopyTarget.Clone(Fixture.Lib.CopyTarget)");
+        var copyTarget = GraphAssert.Node(Graph, NodeKind.Class, "Fixture.Lib.CopyTarget");
+        GraphAssert.Edge(Graph, clone, copyTarget, RelationshipKind.References);
+    }
+
+    [Fact]
+    public void ExplicitInterfaceSpecifier_DoesNotCreateExtraReferenceEdge()
+    {
+        // The "INameHolder" before ".Name" in `string INameHolder.Name => ...` must not create a
+        // References edge duplicating the type-level Implements relationship.
+        var explicitName = GraphAssert.Node(Graph, NodeKind.Property, "Fixture.Lib.INameHolder.Name");
+        var iface = GraphAssert.Node(Graph, NodeKind.Interface, "Fixture.Lib.INameHolder");
+        Assert.DoesNotContain(
+            Graph.OutgoingEdges(explicitName.Id, RelationshipKind.References),
+            e => e.TargetId == iface.Id);
+    }
+
+    [Fact]
+    public void FullyQualifiedTypeReference_KnownResidualGap_StillProducesNoReferenceEdge()
+    {
+        // Documents current behavior (not a requirement): a fully-qualified (no `using`
+        // shortcut) reference to an in-source type is still excluded, because it is the
+        // rightmost name of a QualifiedNameSyntax, and QualifiedNameSyntax remains excluded by
+        // IsNonExpressionContext for using-directive scaffolding. See
+        // reports/gap-fix-implementation.md, "known residual gaps".
+        var target = GraphAssert.Node(Graph, NodeKind.Class, "Fixture.Lib.FullyQualifiedRefTarget");
+        Assert.Empty(Graph.IncomingEdges(target.Id, RelationshipKind.References));
+    }
+
+    // --- Gap 2: fields as graph nodes ---
+
+    [Fact]
+    public void Field_HashSetOfType_IsModeledAsFieldNodeContainedByItsType()
+    {
+        var field = GraphAssert.Node(Graph, NodeKind.Field, "Fixture.Lib.FieldHolder.KnownTypes");
+        var holder = GraphAssert.Node(Graph, NodeKind.Class, "Fixture.Lib.FieldHolder");
+        GraphAssert.Edge(Graph, holder, field, RelationshipKind.Contains);
+    }
+
+    [Fact]
+    public void Field_TypeofInitializerEntries_CreateReferenceEdgesFromTheFieldItself()
+    {
+        // Once fields are nodes, typeof(...) entries in a field initializer must attribute to
+        // the FIELD, not fall back to the containing class (the pre-fix behavior).
+        var field = GraphAssert.Node(Graph, NodeKind.Field, "Fixture.Lib.FieldHolder.KnownTypes");
+        var a = GraphAssert.Node(Graph, NodeKind.Class, "Fixture.Lib.FieldTypeofA");
+        var b = GraphAssert.Node(Graph, NodeKind.Class, "Fixture.Lib.FieldTypeofB");
+        GraphAssert.Edge(Graph, field, a, RelationshipKind.References);
+        GraphAssert.Edge(Graph, field, b, RelationshipKind.References);
+
+        var holder = GraphAssert.Node(Graph, NodeKind.Class, "Fixture.Lib.FieldHolder");
+        Assert.DoesNotContain(Graph.OutgoingEdges(holder.Id, RelationshipKind.References), e => e.TargetId == a.Id);
+        Assert.DoesNotContain(Graph.OutgoingEdges(holder.Id, RelationshipKind.References), e => e.TargetId == b.Id);
+    }
+
+    [Fact]
+    public void MultiDeclaratorField_ProducesTwoDistinctFieldNodes()
+    {
+        var a = GraphAssert.Node(Graph, NodeKind.Field, "Fixture.Lib.MultiDeclaratorFields._a");
+        var b = GraphAssert.Node(Graph, NodeKind.Field, "Fixture.Lib.MultiDeclaratorFields._b");
+        Assert.NotEqual(a.Id, b.Id);
+
+        var owner = GraphAssert.Node(Graph, NodeKind.Class, "Fixture.Lib.MultiDeclaratorFields");
+        GraphAssert.Edge(Graph, owner, a, RelationshipKind.Contains);
+        GraphAssert.Edge(Graph, owner, b, RelationshipKind.Contains);
+    }
+
+    [Fact]
+    public void EventFieldDeclaration_IsDeliberatelyNotModeled()
+    {
+        // EventFieldDeclarationSyntax shares the field declarator shape but declares an
+        // IEventSymbol, not an IFieldSymbol — out of scope for this fix (NodeKind.Event exists
+        // but stays unmapped). No node of any kind should exist for it.
+        Assert.DoesNotContain(Graph.Nodes, n => n.Name == "Changed" && n.Fqn.Contains("EventHolder", StringComparison.Ordinal));
+    }
 }
