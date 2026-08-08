@@ -2,6 +2,77 @@
 
 All notable changes to Slnmap are documented here. Versions follow [SemVer](https://semver.org).
 
+## 0.6.0
+
+### Fixed
+
+- **Fully-qualified type references (no `using` shortcut) now produce `References` edges.**
+  Closes the exact gap the previous release's own "known remaining limits" flagged: a parameter,
+  field, or return type spelled out fully (e.g. `Fixture.Lib.SomeType` with no
+  `using Fixture.Lib;` in scope) was invisible to `find_usages`/`impact_analysis`, caught by the
+  same syntax-exclusion rule that (correctly) ignores `using` directives themselves — that
+  exclusion has been narrowed to no longer swallow this valid reference shape too. This is the
+  single largest contributor to this release's edge growth (see Benchmarks below). (Fixes #4)
+- **Incremental re-analysis no longer silently drops edges owned by a re-walked dependent file's
+  own declarations.** A whitespace-only touch to a file that other files depend on could
+  previously cause a subsequent incremental `analyze` to produce *fewer* edges than a cold
+  analyze of the identical state — a silent correctness bug, not a performance one. Verified via
+  two real-world repro points on eShopOnWeb (a single-dependency touch and a 20-file fan-in
+  touch): incremental edge count now matches cold edge count exactly in both cases. (Fixes #6)
+- **`analyze` now detects a `slnmap` tool-version change and forces a full rebuild automatically.**
+  Re-analyzing an existing `slnmap.db` written by a different tool version no longer risks mixing
+  graph output from two different analyzer behaviors — a version mismatch is treated the same as
+  an empty/missing database, with a warning printed to `stderr` (`serve` still starts; the warning
+  is advisory, not a hard failure). No action needed on your part; this triggers automatically the
+  next time you upgrade and re-run `analyze`.
+
+### Added
+
+- **Events are now modeled as graph nodes.** `public event EventHandler Foo;` (field-style) and
+  explicit-accessor (`event` with `add`/`remove`) declarations are both first-class `Event` nodes,
+  findable via `find_symbol` and `find_symbol(kind: "Event")` — the same visibility fields got in
+  v0.5.0. **Event subscription and invocation are not yet tracked as usage edges** (the same
+  limitation fields have — see "Known remaining limits" below): a `+=`/`-=` subscription site or
+  an `?.Invoke()` raise site produces no edge to the event itself today. Node visibility is real
+  and useful on its own (an agent can now find an event by name at all, which it couldn't
+  before); don't read this as full usage-tracking parity with methods/classes yet. Tracked as a
+  follow-up in #8. (Partially addresses #5)
+
+### Benchmarks
+
+Measured on the `eShopOnWeb` benchmark target (10 projects, 279 files; see
+[BENCHMARKS.md](BENCHMARKS.md) for full methodology), before/after this release, same machine,
+same session:
+
+| Metric | v0.5.0 | v0.6.0 |
+|---|---|---|
+| Graph size | 1,311 nodes / 2,922 edges | 1,332 nodes / 3,014 edges (**+1.6% / +3.1%**) |
+| Cold analyze (median of 3) | 22.0 s | 20.9 s (flat, within run-to-run noise) |
+| Incremental analyze (median of 3) | 18.9 s | 18.7 s (flat) |
+
+The fully-qualified-reference fix (above) accounts for 89 of the 92 new edges; the event-node fix
+contributes the remaining 3 (structural containment edges for the 3 new `Event` nodes — consistent
+with it not yet producing usage edges, see above). Edge growth is well under the 2.5x threshold
+that would call for gating this behind a flag.
+
+**Upgrade note:** re-run `slnmap analyze` on your existing `slnmap.db` to pick up the new edges
+and event nodes — **this now happens automatically** the moment `analyze` detects it was last
+written by a different tool version (see the tool-version-check fix above), so a normal upgrade-
+and-reanalyze needs no extra flag or manual `slnmap.db` deletion.
+
+**Known remaining limits** (not fixed by this release):
+- **Event subscription/invocation is not yet tracked as usage edges** — `find_usages` on an event
+  currently returns no results even when real subscribers exist in your code. Node visibility
+  (`find_symbol`) works; usage tracking doesn't yet. (#8)
+- A generic type argument passed to an **external** (framework/library) generic method — e.g.
+  `app.UseMiddleware<T>()` — still doesn't produce an edge, even though the v0.5.0/v0.6.0 fixes
+  cover the same shape for first-party generic methods. (#9)
+- A fully-qualified `typeof()` reference inside an **assembly-level attribute**
+  (`[assembly: SomeAttribute(typeof(X))]`) produces no edge — there's no containing member for the
+  analyzer to attribute the reference to. Architecturally explainable, low priority. (#11)
+- NuGet package references and `Directory.Packages.props` version pins remain out of the graph
+  by design — a deliberate model boundary, not a gap.
+
 ## 0.5.0
 
 ### Fixed

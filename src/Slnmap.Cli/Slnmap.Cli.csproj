@@ -8,7 +8,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>slnmap</ToolCommandName>
     <PackageId>Slnmap</PackageId>
-    <Version>0.5.0</Version>
+    <Version>0.6.0</Version>
     <RollForward>Major</RollForward>
     <PackageReadmeFile>nuget-readme.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>
@@ -18,10 +18,11 @@
     <PackageProjectUrl>https://slnmap.dev</PackageProjectUrl>
     <RepositoryUrl>https://github.com/EMahmoudNabil/slnmap</RepositoryUrl>
     <PackageTags>dotnet;roslyn;mcp;ai;code-analysis;claude-code;knowledge-graph</PackageTags>
-    <PackageReleaseNotes>Type references reachable only through a generic type argument, typeof(), or
-an attribute constructor argument now produce References edges (find_usages/impact_analysis no longer
-report a false "no usages"). Fields are now modeled as graph nodes, findable via find_symbol. See
-CHANGELOG.md for details.
+    <PackageReleaseNotes>Fully-qualified type references (no using shortcut) now produce References
+edges. Events are now modeled as graph nodes, findable via find_symbol(kind: "Event") -- event
+subscription/invocation usage tracking is not yet included. Incremental re-analysis no longer
+silently drops edges owned by a re-walked dependent file's own declarations. analyze now detects a
+tool-version change and forces a full rebuild automatically. See CHANGELOG.md for details.
 Source: https://github.com/EMahmoudNabil/slnmap</PackageReleaseNotes>
   </PropertyGroup>
 

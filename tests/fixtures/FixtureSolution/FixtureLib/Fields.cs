@@ -36,8 +36,9 @@ public sealed class MultiDeclaratorFields
 public sealed class EventHolder
 {
     // EventFieldDeclarationSyntax has the same declarator shape as a field but declares an
-    // IEventSymbol, not an IFieldSymbol — deliberately NOT modeled as NodeKind.Field (or at all)
-    // by this fix; NodeKind.Event exists but remains unmapped, a separate follow-up gap.
+    // IEventSymbol, not an IFieldSymbol. Modeled as NodeKind.Event by #5 (v0.6.0) — see
+    // Events.cs / EventNodeGapTests.cs for the dedicated Event fixture; this member exists to
+    // confirm the fix applies uniformly to a field-style event declared outside that fixture too.
     public event EventHandler? Changed;
 
     public void Raise() => Changed?.Invoke(this, EventArgs.Empty);

@@ -148,18 +148,17 @@ and pinned commit are in [BENCHMARKS.md](BENCHMARKS.md).
 
 | Metric | Result |
 |---|---|
-| Graph size | 1,311 nodes / 2,922 edges |
-| Cold analyze (10 projects) | ~27.0 s (median of 3) |
-| Re-analyze after a one-file change | ~22.7 s (median of 3 — see note) |
-| `impact_analysis` on `IBasketService` (29 dependents) | ~240–290 ms (end-to-end MCP round-trip) |
+| Graph size | 1,332 nodes / 3,014 edges |
+| Cold analyze (10 projects) | ~20.9 s (median of 3) |
+| Re-analyze after a one-file change | ~18.7 s (median of 3 — see note) |
+| `impact_analysis` on `IBasketService` (29 dependents, last measured v0.5.0) | ~240–290 ms (end-to-end MCP round-trip) |
 
-Numbers are for v0.5.0: type-reference edges (generic type arguments, `typeof()`, attribute
-arguments) and Field nodes are new in this release (see the [changelog](CHANGELOG.md)), which is
-why graph size and `IBasketService`'s dependent count both grew substantially versus v0.3.0
-(1,111 / 2,175 edges, 18 dependents) — full before/after detail in
-[BENCHMARKS.md](BENCHMARKS.md). Timings were re-measured on the same machine as the original
-v0.2.1 numbers and are flat within normal run-to-run noise; the analyzer's per-document work is
-otherwise unchanged.
+Numbers are for v0.6.0: fully-qualified type references (no `using` shortcut) now produce edges,
+and events are modeled as graph nodes (see the [changelog](CHANGELOG.md)) — the fully-qualified-
+reference fix accounts for nearly all of this release's edge growth (89 of 92 new edges) versus
+v0.5.0 (1,311 / 2,922 edges). Timings are flat within normal run-to-run noise; the analyzer's
+per-document work is otherwise unchanged. Full before/after detail, including the v0.5.0 and
+v0.3.0 baselines, is in [BENCHMARKS.md](BENCHMARKS.md).
 
 **Incremental re-analysis.** Re-analysis re-walks only the changed file and its dependents, but each
 run still pays a full workspace load of the solution — because the CLI is run-and-exit and does not

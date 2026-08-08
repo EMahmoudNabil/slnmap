@@ -11,4 +11,10 @@ public static class MetaKeys
 
     /// <summary>Absolute path of the solution or project the graph was built from.</summary>
     public const string SolutionPath = "solution_path";
+
+    /// <summary>
+    /// Version of the slnmap tool that produced this graph (the CLI assembly's version, e.g.
+    /// <c>"0.5.0"</c>). Absent in databases written before this key existed.
+    /// </summary>
+    public const string ToolVersion = "tool_version";
 }

@@ -19,9 +19,16 @@ internal sealed class AnalysisPlan
 
 /// <summary>
 /// Plans incremental re-analysis from a previous snapshot: changed and added files are
-/// re-analyzed, plus their dependents — files whose symbols hold edges into symbols the
-/// changed files declare. Everything those files previously contributed is evicted from
-/// the baseline graph; untouched files carry over as-is.
+/// re-analyzed, plus their one-hop dependents — files whose symbols hold edges into symbols
+/// the changed files declare. Re-walking a dependent exists only to refresh that dependent's
+/// own outgoing edges (in case a symbol it points at was renamed or removed in the changed
+/// file) — it does not, and need not, protect edges that *other* files hold into the
+/// dependent's own unrelated declarations. Edge survival in the baseline is scoped by the
+/// edge's source file only: an edge is "owned" by whichever document's walk produced it, and
+/// every node id is a deterministic content hash (kind + fully-qualified name), so a
+/// surviving edge always re-links correctly once its target's file is re-walked — see the
+/// eviction loop below. A post-merge dangling-edge prune (<c>RoslynSolutionAnalyzer</c>)
+/// is the safety net for edges whose target was genuinely deleted, not just regenerated.
 /// </summary>
 internal static class IncrementalPlanner
 {
@@ -70,9 +77,14 @@ internal static class IncrementalPlanner
             }
         }
 
-        // Dependents: files whose members point at symbols declared in dirty files.
-        // One level suffices — a dependent's own declarations are unchanged, so nothing
-        // further out can observe a difference.
+        // Dependents: files whose members point at symbols declared in dirty files. One hop
+        // suffices for THIS purpose — a dependent's own declarations are unchanged, so
+        // re-walking it once is enough to refresh its own outgoing edges (the only thing that
+        // can differ: whether the symbol it references in the dirty file still exists, or still
+        // means the same thing). This does not, by itself, protect edges that some other file
+        // holds into the dependent's own unrelated nodes — eviction below is scoped by an
+        // edge's source file only, precisely so re-walking a dependent never has to imply
+        // evicting edges other files own into it.
         var filesToAnalyze = new HashSet<string>(changed, StringComparer.Ordinal);
         foreach (var edge in graph.Edges)
         {
@@ -101,11 +113,19 @@ internal static class IncrementalPlanner
             }
         }
 
+        // An edge is owned by whichever document's walk produced it — always the edge's SOURCE
+        // (DocumentWalker only ever emits an edge while walking the document containing the
+        // referencing code). So an edge survives here whenever its source file survives, even if
+        // its target's file is being re-walked: the target's node id is a deterministic content
+        // hash (kind + fully-qualified name, see SymbolNode.CreateId), so re-walking the target's
+        // file regenerates an identical node id for an unchanged symbol and the kept edge
+        // re-links correctly. If the target symbol was genuinely removed (not just regenerated),
+        // the edge becomes dangling and is swept up by RoslynSolutionAnalyzer's post-merge
+        // dangling-edge prune, not by gating eviction on the target here.
         foreach (var edge in graph.Edges)
         {
             bool sourceKept = fileOfNode.GetValueOrDefault(edge.SourceId) is not { } sourceFile || !evicted.Contains(sourceFile);
-            bool targetKept = fileOfNode.GetValueOrDefault(edge.TargetId) is not { } targetFile || !evicted.Contains(targetFile);
-            if (sourceKept && targetKept)
+            if (sourceKept)
             {
                 baseline.AddEdge(edge);
             }
