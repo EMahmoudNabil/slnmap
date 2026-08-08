@@ -8,7 +8,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>slnmap</ToolCommandName>
     <PackageId>Slnmap</PackageId>
-    <Version>0.6.0</Version>
+    <Version>0.6.1</Version>
     <RollForward>Major</RollForward>
     <PackageReadmeFile>nuget-readme.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>
@@ -18,11 +18,13 @@
     <PackageProjectUrl>https://slnmap.dev</PackageProjectUrl>
     <RepositoryUrl>https://github.com/EMahmoudNabil/slnmap</RepositoryUrl>
     <PackageTags>dotnet;roslyn;mcp;ai;code-analysis;claude-code;knowledge-graph</PackageTags>
-    <PackageReleaseNotes>Fully-qualified type references (no using shortcut) now produce References
-edges. Events are now modeled as graph nodes, findable via find_symbol(kind: "Event") -- event
-subscription/invocation usage tracking is not yet included. Incremental re-analysis no longer
-silently drops edges owned by a re-walked dependent file's own declarations. analyze now detects a
-tool-version change and forces a full rebuild automatically. See CHANGELOG.md for details.
+    <PackageReleaseNotes>Bugfix release. find_usages/impact_analysis on fields and constants now
+return real usage edges -- previously they answered "no usages found" for every field and const, a
+false "safe to change" on codebases using const classes for domain values. Structurally identical
+anonymous types no longer collapse into one node, which fabricated cross-project dependency rows
+in get_architecture_overview; named tuple elements are excluded by the same guard. Enum members
+remain unmodeled (tracked in #13). Upgrading: just re-run analyze -- the tool-version check forces
+the full rebuild automatically. See CHANGELOG.md for details.
 Source: https://github.com/EMahmoudNabil/slnmap</PackageReleaseNotes>
   </PropertyGroup>
 

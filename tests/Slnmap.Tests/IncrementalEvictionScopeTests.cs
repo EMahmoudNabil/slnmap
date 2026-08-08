@@ -125,6 +125,51 @@ public sealed class IncrementalEvictionScopeTests : IDisposable
         Assert.Equal(implementor.Id, GraphAssert.Node(incremental.Graph, NodeKind.Class, "Fixture.Lib.EvictionChainImplementor").Id);
     }
 
+    [Fact]
+    public async Task TouchingConstDeclaringFile_FieldUsageEdgesSurviveTheEvictionBoundary()
+    {
+        // v0.6.1 spot-check: the new field-usage References edges must survive the #6
+        // eviction-and-rewalk cycle like every other edge kind. VendorActivity.cs declares
+        // VendorActivityTypes.Deactivated; its usage edges arrive from DeactivateVendorCommand.cs
+        // (same project) AND VendorAudit.cs (FixtureApp) — the latter crosses the eviction
+        // boundary. #6's fix is edge-kind-agnostic by design; this verifies rather than assumes.
+        CopyDirectory(TestPaths.FixtureSolutionDirectory, _root);
+        DotNet.Run("restore FixtureSolution.sln", _root);
+        string solutionPath = Path.Combine(_root, "FixtureSolution.sln");
+        var analyzer = new RoslynSolutionAnalyzer();
+
+        var cold = await analyzer.AnalyzeAsync(solutionPath);
+        AssertCrossProjectConstUsageEdgePresent(cold.Graph);
+
+        // Whitespace-only touch, zero semantic change — same shape as the #6 repro above.
+        File.AppendAllText(Path.Combine(_root, "FixtureLib", "VendorActivity.cs"), "\n");
+
+        var incremental = await analyzer.AnalyzeAsync(solutionPath, cold);
+
+        Assert.True(
+            incremental.Stats.DocumentsAnalyzed < cold.Stats.DocumentsAnalyzed,
+            $"expected an incremental re-walk, got the full {incremental.Stats.DocumentsAnalyzed} documents");
+
+        // cold == incremental, in full: identical node-id set and identical edge set.
+        var coldNodeIds = cold.Graph.Nodes.Select(n => n.Id).ToHashSet(StringComparer.Ordinal);
+        var incrementalNodeIds = incremental.Graph.Nodes.Select(n => n.Id).ToHashSet(StringComparer.Ordinal);
+        Assert.True(coldNodeIds.SetEquals(incrementalNodeIds), "node sets diverged between cold and incremental");
+        Assert.True(
+            cold.Graph.Edges.ToHashSet().SetEquals(incremental.Graph.Edges),
+            "edge sets diverged between cold and incremental");
+
+        AssertCrossProjectConstUsageEdgePresent(incremental.Graph);
+    }
+
+    private static void AssertCrossProjectConstUsageEdgePresent(CodeGraph graph)
+    {
+        var audit = GraphAssert.Node(graph, NodeKind.Method, "Fixture.App.VendorAudit.IsDeactivation(string)");
+        var command = GraphAssert.Node(graph, NodeKind.Property, "Fixture.Lib.DeactivateVendorCommand.ActivityType");
+        var deactivated = GraphAssert.Node(graph, NodeKind.Field, "Fixture.Lib.VendorActivityTypes.Deactivated");
+        GraphAssert.Edge(graph, audit, deactivated, RelationshipKind.References);
+        GraphAssert.Edge(graph, command, deactivated, RelationshipKind.References);
+    }
+
     private static void AssertEToDEdgePresent(CodeGraph graph)
     {
         var consumerMethod = GraphAssert.Node(graph, NodeKind.Method, "Fixture.Lib.EvictionChainConsumer.UseUnrelatedWork()");

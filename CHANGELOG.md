@@ -2,6 +2,45 @@
 
 All notable changes to Slnmap are documented here. Versions follow [SemVer](https://semver.org).
 
+## 0.6.1
+
+### Fixed
+
+- **`find_usages`/`impact_analysis` on fields and constants now return real usage edges.**
+  Fields and consts had nodes (v0.5.0) and outgoing references (v0.6.0), but no INCOMING usage
+  edge was ever recorded — so `find_usages` on any field or const confidently answered
+  "No usages found" and `impact_analysis` answered "nothing else depends on it", even with real
+  usages across many files. On codebases that use const classes for domain values instead of
+  enums, that was a repo-wide false "safe to change". Reads, writes, compound assignments,
+  argument/interpolation positions, `nameof(...)` sites, and reads from other fields'
+  initializers all now produce `References` edges attributed to the correct enclosing member.
+  Field evidence that drove the fix: a reference-solution eval found a const with 5 real usages
+  in 3 files reported as unused.
+- **Structurally identical anonymous types no longer collapse into one node.** Anonymous types
+  render structural FQNs (`<anonymous type: int Id, string Label>`), and FQN is node identity —
+  so identical shapes declared in *different projects* merged into a single node pinned to
+  whichever file was analyzed first, fabricating cross-project dependency rows in
+  `get_architecture_overview` (the eval saw 9 false rows make a clean-architecture solution look
+  layering-violating). Anonymous types (and their properties) now produce no nodes at all: they
+  are unnameable and unqueryable, and their only observed graph effect was these false edges plus
+  census inflation.
+- **Also guarded: named tuple elements.** The field-edge fix above would have recreated the same
+  collapse defect under a different type kind — named tuple elements are in-source field symbols
+  whose FQNs (`(string From, string To).From`) are identical across files, and their containing
+  tuple type never gets a node, so they'd also float disconnected. Caught by the pre-ship
+  benchmark gate's node-diff; excluded by the same guard.
+
+### Known remaining limits
+
+- **Enum members are still not modeled as nodes** — `find_usages` at enum-member granularity
+  (`MyEnum.Value`) is not available; the usage is visible at enum-type granularity only. This was
+  deliberately kept out of this release: enabling it via the new field-edge path produced an
+  inconsistent census (only *referenced* members would materialize as nodes), so it needs its own
+  declaration-walk feature. Tracked in #13.
+
+**Upgrade note:** just update and re-run `slnmap analyze` — the v0.6.0 tool-version check detects
+the upgrade and forces the full rebuild automatically; no flags, no manual `slnmap.db` deletion.
+
 ## 0.6.0
 
 ### Fixed

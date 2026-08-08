@@ -46,6 +46,11 @@ cold and incremental rows below. Each timing row is the **median of 3 runs**.
 
 ## Results
 
+*v0.6.1 (field/const usage edges) was not re-benchmarked on eShopOnWeb; on the Slnmap development
+solution it added +8.6% edges / +1.0% nodes with flat analyze time (1.086x edge growth, well under
+the 2.5x gating threshold), so expect eShopOnWeb's graph-size figures below to read slightly low
+for v0.6.1.*
+
 **Latest release, before/after:**
 
 | Metric | v0.5.0 | **v0.6.0 (re-measured)** |
