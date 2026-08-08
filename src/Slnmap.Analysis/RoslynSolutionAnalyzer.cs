@@ -146,6 +146,10 @@ public sealed class RoslynSolutionAnalyzer : ISolutionAnalyzer
             }
         }
 
+        // Order matters: dangling edges must go first, so orphan-namespace detection never
+        // miscounts a namespace as "still has children" via an edge to a node that no longer
+        // exists in the merged graph.
+        graph = PruneDanglingEdges(graph);
         graph = PruneOrphanNamespaces(graph);
 
         var files = currentHashes.Select(static kv => new FileRecord(kv.Key, kv.Value)).ToList();
@@ -180,6 +184,35 @@ public sealed class RoslynSolutionAnalyzer : ISolutionAnalyzer
             var requirement = GlobalJson.FindSdkRequirement(path);
             throw new SdkNotFoundException(SdkResolutionDiagnostics.BuildMessage(path, requirement, installed.Versions), e);
         }
+    }
+
+    /// <summary>
+    /// Drops any edge whose source or target node id is absent from the merged graph. The
+    /// incremental planner's baseline eviction (<see cref="IncrementalPlanner"/>) keeps an edge
+    /// whenever its SOURCE file survives, regardless of whether its target's file is being
+    /// re-walked — that's safe when the target symbol still exists (same content-hash id, just
+    /// regenerated), but if the target symbol was genuinely deleted (not just moved or
+    /// unchanged), the kept edge now points at a node id that no longer exists anywhere in this
+    /// graph. This is the safety net for that case: run after merging, before
+    /// <see cref="PruneOrphanNamespaces"/>.
+    /// </summary>
+    private static CodeGraph PruneDanglingEdges(CodeGraph graph)
+    {
+        var pruned = new CodeGraph();
+        foreach (var node in graph.Nodes)
+        {
+            pruned.AddNode(node);
+        }
+
+        foreach (var edge in graph.Edges)
+        {
+            if (graph.ContainsNode(edge.SourceId) && graph.ContainsNode(edge.TargetId))
+            {
+                pruned.AddEdge(edge);
+            }
+        }
+
+        return pruned;
     }
 
     /// <summary>Namespaces that no longer contain anything (after incremental eviction) are dropped.</summary>

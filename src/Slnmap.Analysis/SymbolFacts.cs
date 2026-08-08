@@ -55,6 +55,7 @@ internal static class SymbolFacts
         // NodeKind.Enum already covers the enum type; leave individual members unmapped here (a
         // separate, not-yet-modeled gap) rather than mislabeling them as Field.
         IFieldSymbol { ContainingType.TypeKind: not TypeKind.Enum } => NodeKind.Field,
+        IEventSymbol => NodeKind.Event,
         INamespaceSymbol => NodeKind.Namespace,
         _ => null,
     };

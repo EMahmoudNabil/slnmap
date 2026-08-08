@@ -112,10 +112,10 @@ public sealed class FullyQualifiedRefTarget
 
 public static class FullyQualifiedRefUser
 {
-    // KNOWN RESIDUAL GAP (out of scope for this fix, documented in
-    // reports/gap-fix-implementation.md): a fully-qualified (no `using` shortcut) type reference
-    // is still excluded, because "FullyQualifiedRefTarget" here is the rightmost SimpleNameSyntax
-    // of a QualifiedNameSyntax ("Fixture.Lib.FullyQualifiedRefTarget"), and QualifiedNameSyntax is
-    // (deliberately) still excluded by IsNonExpressionContext for using-directive scaffolding.
+    // FIXED by #4 (v0.6.0): a fully-qualified (no `using` shortcut) type reference now produces a
+    // References edge — IsNonExpressionContext's QualifiedNameSyntax exclusion is narrowed to the
+    // true qualifier/namespace segments only, per reports/issue-4-investigation.md §1.2/§4. This
+    // used to be a documented "known residual gap" (reports/gap-fix-implementation.md); see
+    // FullAnalysisTests.FullyQualifiedTypeReference_NowCreatesReferenceEdge.
     public static void Accept(Fixture.Lib.FullyQualifiedRefTarget value) => _ = value;
 }

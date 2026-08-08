@@ -51,13 +51,15 @@ internal sealed class DocumentWalker
                 case BaseTypeDeclarationSyntax or DelegateDeclarationSyntax:
                     HandleTypeDeclaration(node);
                     break;
-                case MethodDeclarationSyntax or PropertyDeclarationSyntax or IndexerDeclarationSyntax:
+                case MethodDeclarationSyntax or PropertyDeclarationSyntax or IndexerDeclarationSyntax or EventDeclarationSyntax:
                     GetOrCreateNode(_model.GetDeclaredSymbol(node, _cancellationToken));
                     break;
-                // Matches only FieldDeclarationSyntax, not the sibling EventFieldDeclarationSyntax
-                // (same shape, `event Handler Foo;`) — that declares an IEventSymbol, a distinct
-                // symbol kind with its own unmapped NodeKind.Event; out of scope here.
-                case VariableDeclaratorSyntax declarator when declarator.Parent?.Parent is FieldDeclarationSyntax:
+                // BaseFieldDeclarationSyntax covers both FieldDeclarationSyntax and its sibling
+                // EventFieldDeclarationSyntax (same declarator shape, `event Handler Foo;`).
+                // GetDeclaredSymbol resolves each declarator to the correct symbol kind (IFieldSymbol
+                // or IEventSymbol) regardless of which base-type arm matched; MapKind routes each to
+                // NodeKind.Field or NodeKind.Event correctly.
+                case VariableDeclaratorSyntax declarator when declarator.Parent?.Parent is BaseFieldDeclarationSyntax:
                     GetOrCreateNode(_model.GetDeclaredSymbol(declarator, _cancellationToken));
                     break;
                 case InvocationExpressionSyntax invocation:
@@ -181,7 +183,7 @@ internal sealed class DocumentWalker
             return;
         }
 
-        if (GetEnclosingMemberNode(invocation.SpanStart) is { } source)
+        if (GetEnclosingMemberNode(invocation) is { } source)
         {
             _edges.Add(new RelationshipEdge(source.Id, target.Id, RelationshipKind.Calls));
         }
@@ -200,7 +202,7 @@ internal sealed class DocumentWalker
             return;
         }
 
-        if (GetEnclosingMemberNode(creation.SpanStart) is { } source)
+        if (GetEnclosingMemberNode(creation) is { } source)
         {
             _edges.Add(new RelationshipEdge(source.Id, target.Id, RelationshipKind.References));
         }
@@ -229,7 +231,7 @@ internal sealed class DocumentWalker
             return;
         }
 
-        if (GetEnclosingMemberNode(name.SpanStart) is { } source && source.Id != target.Id)
+        if (GetEnclosingMemberNode(name) is { } source && source.Id != target.Id)
         {
             _edges.Add(new RelationshipEdge(source.Id, target.Id, RelationshipKind.References));
         }
@@ -241,15 +243,35 @@ internal sealed class DocumentWalker
         return info.Symbol ?? info.CandidateSymbols.FirstOrDefault();
     }
 
-    private static bool IsNonExpressionContext(SimpleNameSyntax name) => name.Parent switch
+    private static bool IsNonExpressionContext(SimpleNameSyntax name)
     {
-        QualifiedNameSyntax => true,        // type/namespace positions (using directives, qualified type names)
-        UsingDirectiveSyntax => true,
-        NameColonSyntax or NameEqualsSyntax => true,
-        ExplicitInterfaceSpecifierSyntax => true,
-        AliasQualifiedNameSyntax => true,
-        _ => false,
-    };
+        if (name.Parent is QualifiedNameSyntax parentQn)
+        {
+            // Left-side segments, and right-side segments that are themselves nested inside a
+            // longer chain, are namespace/type qualifiers — never a reference in their own right.
+            if (parentQn.Right != name || parentQn.Parent is QualifiedNameSyntax)
+            {
+                return true;
+            }
+
+            // `name` is the true, whole-chain-terminating leaf. Its status now depends on what the
+            // chain as a whole names — a namespace being imported/declared stays excluded; anything
+            // else (typeof, parameter/field/variable type, generic argument, cast, attribute name,
+            // object-creation type, …) is a real type reference and must NOT be excluded.
+            return parentQn.Parent is UsingDirectiveSyntax
+                or NamespaceDeclarationSyntax
+                or FileScopedNamespaceDeclarationSyntax;
+        }
+
+        return name.Parent switch
+        {
+            UsingDirectiveSyntax => true,
+            NameColonSyntax or NameEqualsSyntax => true,
+            ExplicitInterfaceSpecifierSyntax => true,
+            AliasQualifiedNameSyntax => true,
+            _ => false,
+        };
+    }
 
     private static bool IsInvocationTarget(SimpleNameSyntax name)
     {
@@ -267,20 +289,69 @@ internal sealed class DocumentWalker
     }
 
     /// <summary>
-    /// Resolves the member node an edge at <paramref name="position"/> originates from:
-    /// accessors map to their property, lambdas and local functions to their containing
+    /// Resolves the member node an edge originating at <paramref name="syntax"/> should attribute
+    /// to: accessors map to their property, lambdas and local functions to their containing
     /// member, field initializers to their field (falling further back to the containing type
     /// only when the field itself isn't modeled, e.g. an enum member). Covers synthesized
     /// members such as the top-level-statements entry point.
     /// </summary>
-    private SymbolNode? GetEnclosingMemberNode(int position)
+    /// <remarks>
+    /// A position inside a method/property/indexer/event's own SIGNATURE (a parameter type or
+    /// return type) is a special case checked first, syntactically: <see cref="SemanticModel.GetEnclosingSymbol"/>
+    /// resolves such a position to the CONTAINING TYPE, skipping the member being declared there
+    /// entirely — a walk-up from that point can never recover it, since the correct answer isn't
+    /// an ancestor of what <c>GetEnclosingSymbol</c> returned. Confirmed pre-existing (reproduces
+    /// for an unqualified case too, e.g. a self-referential parameter type — just silently masked
+    /// there because the misattributed source happens to equal the target, so the self-loop guard
+    /// in <see cref="HandleNameReference"/> hides it); unrelated to type-reference edge kind.
+    /// </remarks>
+    private SymbolNode? GetEnclosingMemberNode(SyntaxNode syntax)
     {
-        var symbol = _model.GetEnclosingSymbol(position, _cancellationToken);
+        for (var ancestor = syntax.Parent; ancestor is not null; ancestor = ancestor.Parent)
+        {
+            if (ancestor is not (BaseMethodDeclarationSyntax or BasePropertyDeclarationSyntax))
+            {
+                continue;
+            }
+
+            SyntaxNode? body = ancestor switch
+            {
+                BaseMethodDeclarationSyntax m => m.Body ?? (SyntaxNode?)m.ExpressionBody,
+                PropertyDeclarationSyntax p => p.AccessorList ?? (SyntaxNode?)p.ExpressionBody,
+                IndexerDeclarationSyntax i => i.AccessorList ?? (SyntaxNode?)i.ExpressionBody,
+                EventDeclarationSyntax e => e.AccessorList,
+                _ => null,
+            };
+
+            // Not in the body (or there is none, e.g. an abstract/partial signature) — `syntax`
+            // sits in the declaration's own signature. Attribute directly to it; a walk-up from
+            // GetEnclosingSymbol's answer would land on the containing type instead.
+            if (body is null || !body.Span.Contains(syntax.Span))
+            {
+                return _model.GetDeclaredSymbol(ancestor, _cancellationToken) is { } declared
+                    ? GetOrCreateNode(declared)
+                    : null;
+            }
+
+            break;
+        }
+
+        var symbol = _model.GetEnclosingSymbol(syntax.SpanStart, _cancellationToken);
         while (symbol is not null)
         {
             if (symbol is IMethodSymbol { AssociatedSymbol: IPropertySymbol property })
             {
                 symbol = property;
+                continue;
+            }
+
+            // The event-accessor analogue of the property case above. ContainingSymbol of an
+            // EventAdd/EventRemove accessor resolves to the containing TYPE, not the event —
+            // AssociatedSymbol is the documented, reliable way to reach the event itself (the
+            // same API the property case already relies on for the identical purpose).
+            if (symbol is IMethodSymbol { AssociatedSymbol: IEventSymbol @event })
+            {
+                symbol = @event;
                 continue;
             }
 
@@ -290,7 +361,7 @@ internal sealed class DocumentWalker
                 continue;
             }
 
-            if (symbol is IMethodSymbol or IPropertySymbol or INamedTypeSymbol or IFieldSymbol
+            if (symbol is IMethodSymbol or IPropertySymbol or INamedTypeSymbol or IFieldSymbol or IEventSymbol
                 && GetOrCreateNode(symbol) is { } node)
             {
                 return node;
@@ -328,7 +399,7 @@ internal sealed class DocumentWalker
         }
 
         _nodes.Add(node);
-        if (node.Kind is NodeKind.Method or NodeKind.Constructor or NodeKind.Property or NodeKind.Field
+        if (node.Kind is NodeKind.Method or NodeKind.Constructor or NodeKind.Property or NodeKind.Field or NodeKind.Event
             && symbol.ContainingType is { } containingType
             && GetOrCreateNode(containingType) is { } typeNode)
         {

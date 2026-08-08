@@ -12,7 +12,8 @@ massaging: where a result is unflattering (see *incremental re-analysis*), it is
 - **Solution:** `eShopOnWeb.sln` — **10 projects**, target framework **net8.0**
 - **SDK:** .NET 9 (`9.0.314`) — the only SDK installed; the net8.0 target is built by the .NET 9 SDK
 - **Slnmap:** v0.2.0 (`0.2.0+6d85dcc`) for the original numbers below; re-measured on **v0.5.0**
-  where noted (type-reference edges + Field nodes — see CHANGELOG) — the analyzer's per-document
+  and now **v0.6.0** where noted (fully-qualified type-reference edges + event nodes + the
+  incremental-eviction and tool-version-check fixes — see CHANGELOG) — the analyzer's per-document
   work is otherwise unchanged since v0.2.x
 
 ## Machine
@@ -45,17 +46,31 @@ cold and incremental rows below. Each timing row is the **median of 3 runs**.
 
 ## Results
 
-| Metric | v0.2.0 / v0.3.0 (original) | **v0.5.0 (re-measured)** |
-|---|---|---|
-| Graph size (10 projects, 279 files) | 1,107 / 2,168 edges; v0.3.0: 1,111 / 2,175 (entry-point fix) | **1,311 nodes / 2,922 edges** — +18.0% nodes / +34.3% edges vs. v0.3.0 (type-reference edges + Field nodes; see CHANGELOG) |
-| Cold analyze (282 docs) | 25.6 s median (23.5 / 25.6 / 30.9) | **27.0 s** median (25.7 / 27.0 / 27.2) — flat within the ±5 s run-to-run noise already noted below |
-| Re-analyze after a one-file change (6 docs re-walked) | 27.1 s median (24.7 / 27.1 / 29.4) | **22.7 s** median (22.3 / 22.7 / 25.9) — flat/within noise |
-| Re-analyze, nothing changed | ~18.8 s (single observation) | **23.0 s** (single observation) — within noise |
-| `impact_analysis` on `IBasketService` | 18 dependents, ~270 ms warm median (231 ms best) | **29 dependents**, ~239–289 ms across 3 warm runs |
+**Latest release, before/after:**
 
-The dependent-count jump on `impact_analysis` (18 → 29) is the type-reference-edges fix doing its
-job, not measurement noise: the 11 newly-visible dependents include the DI registration call site
-(`Web.Configuration.ConfigureCoreServices.AddCoreServices`, reached transitively from
+| Metric | v0.5.0 | **v0.6.0 (re-measured)** |
+|---|---|---|
+| Graph size (10 projects, 279 files) | 1,311 nodes / 2,922 edges | **1,332 nodes / 3,014 edges** — +1.6% nodes / +3.1% edges (fully-qualified references + event nodes; see CHANGELOG) |
+| Cold analyze (282 docs, median of 3) | 22.0 s (22.1 / 22.0 / 21.7) | **20.9 s** (22.8 / 20.9 / 20.9) — flat within the ±5 s run-to-run noise noted below |
+| Incremental re-analyze, one file changed (6 docs re-walked, median of 3) | 18.9 s (18.6 / 20.3 / 18.9) | **18.7 s** (18.7 / 18.7 / 18.9) — flat |
+| `slnmap.db` size (cold) | 1,458,176 bytes (~1.39 MB) | **1,503,232 bytes** (~1.43 MB) — +3.1% |
+
+Of the 92 new edges, 89 come from the fully-qualified-reference fix; the remaining 3 are the
+structural containment edges for the 3 new `Event` nodes eShopOnWeb picked up (event *usage*
+tracking isn't shipped yet — see CHANGELOG's known-limits list). Edge growth (1.031x) is well
+under the 2.5x threshold that would call for gating this behind a flag.
+
+**`impact_analysis`/query-latency figures below are carried forward from v0.5.0, not re-measured
+for v0.6.0** — this release's benchmark scope covered graph size and analyze timing only (see
+`reports/v060-qa-benchmark-report.md` in the private working repo for the full v0.6.0 methodology).
+
+| Metric | v0.2.0 / v0.3.0 (original) | v0.5.0 (last re-measured) |
+|---|---|---|
+| `impact_analysis` on `IBasketService` | 18 dependents, ~270 ms warm median (231 ms best) | 29 dependents, ~239–289 ms across 3 warm runs |
+
+The dependent-count jump on `impact_analysis` (18 → 29) was the v0.5.0 type-reference-edges fix
+doing its job, not measurement noise: the 11 newly-visible dependents include the DI registration
+call site (`Web.Configuration.ConfigureCoreServices.AddCoreServices`, reached transitively from
 `Web.<top-level-statements-entry-point>` at depth 2) and three mock-object test fields
 (`[Field] ...BasketServiceTests.*._mockLogger`) that a pre-v0.5.0 graph reported as having zero
 relationship to `IBasketService` at all.

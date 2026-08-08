@@ -1,6 +1,7 @@
 using System.CommandLine;
 using System.Diagnostics;
 using System.Globalization;
+using System.Reflection;
 using Slnmap.Analysis;
 using Slnmap.Core.Analysis;
 using Slnmap.Core.Graph;
@@ -43,10 +44,13 @@ analyzeCommand.SetAction(async (parseResult, cancellationToken) =>
     var analyzer = new RoslynSolutionAnalyzer(warnings.Add);
 
     await using var store = new SqliteGraphStore(db);
+    string currentVersion = CurrentVersion();
 
     // An existing graph enables incremental re-analysis: only changed files and their
-    // dependents are re-walked; everything else is carried over.
-    AnalysisSnapshot? previous = await LoadPreviousAsync(store, cancellationToken).ConfigureAwait(false);
+    // dependents are re-walked; everything else is carried over. A graph from a different
+    // slnmap version is never reused as a baseline — analysis behavior can change release to
+    // release (see issue #6), so a version change always forces a full rebuild.
+    AnalysisSnapshot? previous = await LoadPreviousAsync(store, currentVersion, status, cancellationToken).ConfigureAwait(false);
     if (previous is not null)
     {
         status.WriteLine($"incremental: reusing {previous.Graph.NodeCount} nodes from {store.DatabasePath}");
@@ -97,6 +101,7 @@ analyzeCommand.SetAction(async (parseResult, cancellationToken) =>
     {
         [MetaKeys.SolutionPath] = solution,
         [MetaKeys.LastAnalyzed] = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture),
+        [MetaKeys.ToolVersion] = currentVersion,
     };
     await store.SaveAsync(snapshot.Graph, snapshot.Files, meta, cancellationToken).ConfigureAwait(false);
     stopwatch.Stop();
@@ -142,6 +147,24 @@ serveCommand.SetAction(async (parseResult, cancellationToken) =>
 {
     string db = parseResult.GetRequiredValue(dbOption);
     await using var store = new SqliteGraphStore(db);
+
+    // Read-only staleness is the user's call to make, not ours — never refuse to serve. But they
+    // must see it: a graph built by a different slnmap version may reflect analysis behavior
+    // (e.g. issue #6) that no longer matches what this version would produce.
+    if (File.Exists(store.DatabasePath))
+    {
+        await store.InitializeAsync(cancellationToken).ConfigureAwait(false);
+        var meta = await store.GetMetaAsync(cancellationToken).ConfigureAwait(false);
+        meta.TryGetValue(MetaKeys.ToolVersion, out var storedVersion);
+        string currentVersion = CurrentVersion();
+        if (storedVersion != currentVersion)
+        {
+            Console.Error.WriteLine(Palette.Err.Warn(
+                $"warning: this database was built with slnmap {storedVersion ?? "an earlier version (predates version tracking)"}, " +
+                $"but this is {currentVersion} — analysis behavior may differ. Run 'slnmap analyze' to refresh it."));
+        }
+    }
+
     await McpServerHost.RunAsync(store, cancellationToken).ConfigureAwait(false);
     return 0;
 });
@@ -337,9 +360,11 @@ return await rootCommand.Parse(args).InvokeAsync().ConfigureAwait(false);
 
 /// <summary>
 /// Loads the stored graph as an incremental baseline, or null when there is no prior graph
-/// (fresh database or empty). Stats are irrelevant to the analyzer and left at zero.
+/// (fresh database, empty, or written by a different slnmap version). Stats are irrelevant to
+/// the analyzer and left at zero.
 /// </summary>
-static async Task<AnalysisSnapshot?> LoadPreviousAsync(SqliteGraphStore store, CancellationToken cancellationToken)
+static async Task<AnalysisSnapshot?> LoadPreviousAsync(
+    SqliteGraphStore store, string currentVersion, ConsoleStatusLine status, CancellationToken cancellationToken)
 {
     if (!File.Exists(store.DatabasePath))
     {
@@ -353,10 +378,31 @@ static async Task<AnalysisSnapshot?> LoadPreviousAsync(SqliteGraphStore store, C
         return null;
     }
 
+    var meta = await store.GetMetaAsync(cancellationToken).ConfigureAwait(false);
+    meta.TryGetValue(MetaKeys.ToolVersion, out var storedVersion);
+    if (storedVersion != currentVersion)
+    {
+        // Any difference forces a full rebuild, not just major/minor: analysis behavior can
+        // change in a patch release (issue #6's fix is exactly that), and a spurious full
+        // rebuild costs seconds while silently reusing a stale graph costs correctness.
+        status.WriteLine(
+            $"slnmap version changed ({storedVersion ?? "unknown"} -> {currentVersion}): performing full re-analysis");
+        return null;
+    }
+
     var hashes = await store.GetFileHashesAsync(cancellationToken).ConfigureAwait(false);
     var files = hashes.Select(pair => new FileRecord(pair.Key, pair.Value)).ToList();
     return new AnalysisSnapshot(graph, files, new AnalysisStats(0, 0, 0));
 }
+
+/// <summary>
+/// The running slnmap assembly's version (e.g. <c>"0.5.0"</c>) — the CLI project's
+/// <c>&lt;Version&gt;</c>, not <see cref="AssemblyInformationalVersionAttribute"/>, which the SDK
+/// suffixes with a <c>+&lt;git-sha&gt;</c> build-metadata tag that changes on every commit and
+/// would force a full rebuild far more often than an actual release.
+/// </summary>
+static string CurrentVersion() =>
+    Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "unknown";
 
 /// <summary>Single-line progress display on stderr that warnings can safely interleave with.</summary>
 internal sealed class ConsoleStatusLine : IProgress<AnalysisProgress>

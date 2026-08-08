@@ -234,15 +234,15 @@ public sealed class FullAnalysisTests : IClassFixture<AnalyzedFixtureSolution>
     }
 
     [Fact]
-    public void FullyQualifiedTypeReference_KnownResidualGap_StillProducesNoReferenceEdge()
+    public void FullyQualifiedTypeReference_NowCreatesReferenceEdge()
     {
-        // Documents current behavior (not a requirement): a fully-qualified (no `using`
-        // shortcut) reference to an in-source type is still excluded, because it is the
-        // rightmost name of a QualifiedNameSyntax, and QualifiedNameSyntax remains excluded by
-        // IsNonExpressionContext for using-directive scaffolding. See
-        // reports/gap-fix-implementation.md, "known residual gaps".
+        // Fixed by #4 (v0.6.0): a fully-qualified (no `using` shortcut) reference to an in-source
+        // type now produces a References edge (see reports/issue-4-investigation.md §1.2/§4).
+        // Previously named FullyQualifiedTypeReference_KnownResidualGap_StillProducesNoReferenceEdge,
+        // asserting the opposite — that test documented a bug this one confirms is fixed.
+        var source = GraphAssert.Node(Graph, NodeKind.Method, "Fixture.Lib.FullyQualifiedRefUser.Accept(Fixture.Lib.FullyQualifiedRefTarget)");
         var target = GraphAssert.Node(Graph, NodeKind.Class, "Fixture.Lib.FullyQualifiedRefTarget");
-        Assert.Empty(Graph.IncomingEdges(target.Id, RelationshipKind.References));
+        GraphAssert.Edge(Graph, source, target, RelationshipKind.References);
     }
 
     // --- Gap 2: fields as graph nodes ---
@@ -284,11 +284,13 @@ public sealed class FullAnalysisTests : IClassFixture<AnalyzedFixtureSolution>
     }
 
     [Fact]
-    public void EventFieldDeclaration_IsDeliberatelyNotModeled()
+    public void EventFieldDeclaration_IsNowModeledAsEventNode()
     {
-        // EventFieldDeclarationSyntax shares the field declarator shape but declares an
-        // IEventSymbol, not an IFieldSymbol — out of scope for this fix (NodeKind.Event exists
-        // but stays unmapped). No node of any kind should exist for it.
-        Assert.DoesNotContain(Graph.Nodes, n => n.Name == "Changed" && n.Fqn.Contains("EventHolder", StringComparison.Ordinal));
+        // Fixed by #5 (v0.6.0): EventFieldDeclarationSyntax's IEventSymbol now maps to
+        // NodeKind.Event (see reports/issue-5-investigation.md §4.1-4.2). Previously named
+        // EventFieldDeclaration_IsDeliberatelyNotModeled, asserting no node existed at all.
+        var eventNode = GraphAssert.Node(Graph, NodeKind.Event, "Fixture.Lib.EventHolder.Changed");
+        var holder = GraphAssert.Node(Graph, NodeKind.Class, "Fixture.Lib.EventHolder");
+        GraphAssert.Edge(Graph, holder, eventNode, RelationshipKind.Contains);
     }
 }
