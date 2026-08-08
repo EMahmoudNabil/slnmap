@@ -138,7 +138,7 @@ public sealed class DbVersionCheckTests : IDisposable
         using var process = StartCli("serve", "-d", dbPath);
         try
         {
-            string stderrSoFar = await ReadUntilAsync(
+            string stderrSoFar = await ProcessOutput.ReadUntilAsync(
                 process.StandardError,
                 line => line.Contains("Slnmap MCP server ready", StringComparison.Ordinal),
                 TimeSpan.FromSeconds(30));
@@ -195,35 +195,8 @@ public sealed class DbVersionCheckTests : IDisposable
         }
     }
 
-    private static async Task<string> ReadUntilAsync(StreamReader reader, Func<string, bool> predicate, TimeSpan timeout)
-    {
-        var lines = new List<string>();
-        using var cts = new CancellationTokenSource(timeout);
-        while (!cts.IsCancellationRequested)
-        {
-            var lineTask = reader.ReadLineAsync();
-            var completed = await Task.WhenAny(lineTask, Task.Delay(timeout, cts.Token)).ConfigureAwait(false);
-            if (completed != lineTask)
-            {
-                break;
-            }
-
-            string? line = await lineTask.ConfigureAwait(false);
-            if (line is null)
-            {
-                break;
-            }
-
-            lines.Add(line);
-            if (predicate(line))
-            {
-                return string.Join('\n', lines);
-            }
-        }
-
-        throw new TimeoutException(
-            $"Did not see the expected line within {timeout}. Output so far:\n{string.Join('\n', lines)}");
-    }
+    // ReadUntilAsync now lives in TestInfrastructure.cs's ProcessOutput class (shared with
+    // DotNet.Run, which needed the same timeout-bounded-read treatment — see issue #10).
 
     private static (int ExitCode, string Stdout, string Stderr) RunCli(params string[] args)
     {

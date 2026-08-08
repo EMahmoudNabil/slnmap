@@ -14,6 +14,10 @@ jobs:
         # Add '10.0.x' to this list to also test on .NET 10 (one-line change).
         dotnet: ['9.0.x']
     runs-on: ${{ matrix.os }}
+    # Belt-and-suspenders against a hung test process (see issue #10): the job itself is capped
+    # well above the slowest known-good run (~16 min on ubuntu-latest), so a stall fails the job
+    # instead of idling for GitHub's 6-hour default.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -29,7 +33,9 @@ jobs:
         run: dotnet build --no-restore --configuration Release
 
       - name: Test
-        run: dotnet test --no-build --configuration Release --logger "trx;LogFileName=results.trx"
+        # --blame-hang-timeout converts a stalled test into a clear failure (with a hang dump)
+        # well before the job-level timeout-minutes above would otherwise have to catch it.
+        run: dotnet test --no-build --configuration Release --logger "trx;LogFileName=results.trx" --blame-hang-timeout 5m --blame-hang-dump-type mini
 
       - name: Upload test results
         if: always()
@@ -37,3 +43,11 @@ jobs:
         with:
           name: test-results-${{ matrix.os }}-${{ matrix.dotnet }}
           path: '**/TestResults/*.trx'
+
+      - name: Upload hang dump (if any)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hang-dump-${{ matrix.os }}-${{ matrix.dotnet }}
+          path: '**/TestResults/**/*.dmp'
+          if-no-files-found: ignore
