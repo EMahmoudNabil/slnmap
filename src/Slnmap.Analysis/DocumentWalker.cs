@@ -215,12 +215,14 @@ internal sealed class DocumentWalker
             return;
         }
 
-        // Property accesses, method-group references, and plain type mentions (generic type
-        // arguments, typeof(), attribute constructor arguments, parameter/field/return types)
-        // become References edges; invocations are Calls, and a type's own declaration is
-        // covered by Inherits/Implements/Contains instead.
+        // Property accesses, field/const reads and writes, method-group references, and plain
+        // type mentions (generic type arguments, typeof(), attribute constructor arguments,
+        // parameter/field/return types) become References edges; invocations are Calls, and a
+        // type's own declaration is covered by Inherits/Implements/Contains instead. Enum
+        // members are IFieldSymbol too but stay edge-less: MapKind deliberately leaves them
+        // unmodeled, so GetOrCreateNode returns null below and the edge is skipped.
         var symbol = ResolveSymbol(name);
-        if (symbol is not (IPropertySymbol or IMethodSymbol or INamedTypeSymbol))
+        if (symbol is not (IPropertySymbol or IMethodSymbol or INamedTypeSymbol or IFieldSymbol))
         {
             return;
         }

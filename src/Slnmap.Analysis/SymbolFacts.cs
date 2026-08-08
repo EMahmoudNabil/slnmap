@@ -73,6 +73,20 @@ internal static class SymbolFacts
             return null;
         }
 
+        // Anonymous types (and their properties) and named tuple elements produce no nodes.
+        // They are unnameable and unqueryable, and structurally identical ones in DIFFERENT
+        // files render the same FQN ("<anonymous type: int Id, string Label>",
+        // "(string From, string To).From") — FQN is node identity, so they'd collapse into one
+        // node pinned to whichever file was analyzed first, fabricating cross-project References
+        // edges between projects that share no real code (v0.6.1). Tuple elements additionally
+        // float uncontained: their containing tuple type is never a node (its OriginalDefinition
+        // is the metadata ValueTuple), so nothing would even connect them to the graph.
+        if (definition is INamedTypeSymbol { IsAnonymousType: true }
+            || definition.ContainingType is { IsAnonymousType: true } or { IsTupleType: true })
+        {
+            return null;
+        }
+
         string fqn = definition.ToDisplayString(FqnFormat);
 
         // The top-level-statements construct renders namespace-less FQNs — the entry point as a
