@@ -23,6 +23,9 @@ changes, no hallucinated dependencies. It runs locally and serves the map to you
 dotnet tool install --global Slnmap
 ```
 
+If this is the first .NET global tool ever installed on the machine, the tools directory
+(`~/.dotnet/tools`) may not be on your `PATH` yet — open a new terminal before running `slnmap`.
+
 **2. Analyze** your solution (or a single `.csproj`) — this builds `slnmap.db` in the current folder:
 
 ```console
@@ -45,6 +48,16 @@ your project folder, so a relative path can silently resolve to the wrong (or a 
 ```
 
 On macOS/Linux, use a POSIX absolute path instead, e.g. `/home/you/project/slnmap.db`.
+
+Or register it from the command line:
+
+```console
+claude mcp add slnmap -- slnmap serve --db C:/path/to/your/project/slnmap.db
+```
+
+> **Restart your MCP client after registering.** Fully quit and relaunch it — starting a new
+> conversation or reconnecting mid-session is not enough; a running session will not see the new
+> tools until the client process restarts.
 
 That's it. Ask your agent an architecture question and it will call Slnmap.
 (Run `slnmap doctor` first if anything looks off — see [Troubleshooting](#troubleshooting).)
@@ -73,6 +86,26 @@ For an interface (or interface member), `impact_analysis` follows both the inter
 its concrete implementations/overrides — so the answer includes code that only touches the interface,
 across projects, in files nobody has open.
 
+## MCP tools reference
+
+The exact parameter names, for clients that call the tools directly. Most tools take `fqn` — the
+symbol's fully qualified name — not `symbol`, `name`, or `type`; a wrong parameter name fails the
+call.
+
+| Tool | Parameters | Description |
+|---|---|---|
+| `find_symbol` | `query` *(required)*, `kind` *(optional)* | Search symbols by name or FQN, case-insensitive substring; returns kind, FQN, and file for up to 20 matches. |
+| `get_architecture_overview` | *(none)* | Projects, project-to-project dependencies, node/edge counts by kind, and top-level namespaces. |
+| `get_symbol_source` | `fqn` *(required)*, `context_lines` *(optional, 0–20, default 5)* | Print a symbol's source, read from its file at the declaration span. |
+| `find_usages` | `fqn` *(required)* | Where a symbol is called or referenced — containing member, file, and line, up to 50. |
+| `get_dependencies` | `fqn` *(required)*, `direction` *(optional: `outgoing`/`incoming`, default `outgoing`)*, `depth` *(optional, 1–3, default 1)* | A symbol's dependencies grouped by relationship kind (Calls, Implements, Inherits, References). |
+| `find_implementations` | `fqn` *(required)* | Concrete types implementing an interface / deriving from a base, or members overriding a virtual/interface member. |
+| `get_type_hierarchy` | `fqn` *(required)*, `direction` *(optional: `up`/`down`/`both`, default `both`)*, `depth` *(optional, 1–10, default 5)* | Base and/or derived type tree as an indented text tree. |
+| `get_project_dependencies` | `project` *(optional, default `all`)* | Project-to-project reference map with cross-project reference counts and a hotspot line. |
+| `impact_analysis` | `fqn` *(required)* | Every symbol that transitively depends on the given one (depth 5) — counts first, then nearest-first. |
+| `find_tests_for_symbol` | `fqn` *(required)* | Test members that transitively exercise a symbol, grouped by project with file:line. |
+| `find_circular_dependencies` | `scope` *(optional: `project`/`namespace`, default `project`)* | Dependency cycles reported as path chains, worst offenders first. |
+
 ## CLI
 
 ```console
@@ -83,7 +116,12 @@ slnmap viz                  # export the graph as a self-contained interactive H
 slnmap doctor               # check the environment can run Slnmap
 ```
 
-`--db <path>` selects the database file (default `slnmap.db`).
+These five verbs are the whole CLI. Symbol, usage, and impact querying is MCP-only — there is no
+`find`/`usages`/`impact` command; connect an MCP client to `slnmap serve` to query the graph.
+
+`--db <path>` selects the database file (default `slnmap.db`). `-v`/`--verbose` prints per-document
+progress on its own line per update — useful in an interactive terminal, but it floods piped or
+redirected output (logs, CI), so omit it there.
 
 ## Visualizing the graph
 
@@ -160,6 +198,11 @@ v0.5.0 (1,311 / 2,922 edges). Timings are flat within normal run-to-run noise; t
 per-document work is otherwise unchanged. Full before/after detail, including the v0.5.0 and
 v0.3.0 baselines, is in [BENCHMARKS.md](BENCHMARKS.md).
 
+To estimate your own solution's cold analyze time, scale by size rather than anchoring on any single
+number above: field measurements on real-world solutions (antivirus real-time protection on, no
+exclusions) come out at roughly **55–60 seconds per 1,000 analyzed documents**. Treat it as
+approximate — hardware and antivirus overhead move it either way.
+
 **Incremental re-analysis.** Re-analysis re-walks only the changed file and its dependents, but each
 run still pays a full workspace load of the solution — because the CLI is run-and-exit and does not
 keep a warm workspace. In practice that means re-analysis is currently **about as fast as a cold run,
@@ -188,9 +231,16 @@ $ slnmap doctor
   that *did* load rather than failing the whole run (a *partial load*). By default these are condensed
   into a single `Warnings: N (M unique)` summary line; run `slnmap analyze --verbose` for the full,
   grouped detail.
-- **The first analysis of a large solution takes a while.** Cold analysis compiles every project once.
-  Re-runs are faster on graph work but still reload the workspace — see the performance note above.
-  This is normal; the graph is cached in `slnmap.db` between runs.
+- **The first analysis of a large solution takes a while.** Cold analysis compiles every project once;
+  as a rough guide from field measurements, expect around **55–60 seconds per 1,000 analyzed
+  documents** (approximate). Re-runs are faster on graph work but still reload the workspace — see
+  the performance note above. This is normal; the graph is cached in `slnmap.db` between runs.
+- **Windows Defender (or other antivirus) slows analysis.** Real-time protection scans every file
+  Roslyn reads while compiling your solution. Adding an exclusion for your repository folder can
+  speed analysis up, but changing exclusions requires local admin rights — corporate users without
+  them may need an IT ticket. No exclusion is required for correctness: analysis completes fine
+  without one, and the ~55–60 s per 1,000 documents guide above was measured with real-time
+  protection on and no exclusions in place.
 - **`slnmap: command not found` after install.** Ensure the .NET global tools directory
   (`~/.dotnet/tools`) is on your `PATH`, then open a new shell.
 
