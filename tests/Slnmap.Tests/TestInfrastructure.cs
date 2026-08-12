@@ -32,12 +32,32 @@ internal static class DotNet
     // into a clear TimeoutException instead of a silent, unbounded wait.
     private static readonly TimeSpan ReadTimeout = TimeSpan.FromSeconds(120);
 
+    // Identical `dotnet restore` invocations run ONCE per test run. Concurrent (or later)
+    // restores of the SAME directory race on that project's obj/project.assets.json — against
+    // each other AND against another fixture's in-flight MSBuildWorkspace load — and the loser
+    // gets a compilation with unresolved framework references whose FQNs render as error types
+    // (observed: the v0.8.0 post-merge CI flake — `IEnumerable<>` instead of
+    // `System.Collections.Generic.IEnumerable<Fixture.Lib.IShape>`). Every test class's fixture
+    // restores the shared FixtureSolution and xUnit runs classes in parallel; Lazy gives
+    // execute-once-block-the-rest semantics per (directory, command). Temp-copy restores have
+    // unique directories and keep their full parallelism.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Lazy<bool>> CompletedRuns =
+        new(StringComparer.OrdinalIgnoreCase);
+
     public static void Run(string arguments, string workingDirectory)
     {
-        // Every call site here is `restore` against a fresh temp copy of FixtureSolution, run
-        // from several test classes' fixtures concurrently (xUnit parallelizes across classes by
-        // default). --disable-build-servers stops these concurrent invocations from contending
-        // over shared MSBuild/VBCSCompiler build-server state (observed: issue #10).
+        string key = $"{Path.GetFullPath(workingDirectory)}|{arguments}";
+        _ = CompletedRuns.GetOrAdd(key, _ => new Lazy<bool>(() =>
+        {
+            RunCore(arguments, workingDirectory);
+            return true;
+        })).Value;
+    }
+
+    private static void RunCore(string arguments, string workingDirectory)
+    {
+        // --disable-build-servers stops concurrent invocations from contending over shared
+        // MSBuild/VBCSCompiler build-server state (observed: issue #10).
         var startInfo = new ProcessStartInfo("dotnet", $"{arguments} --disable-build-servers")
         {
             WorkingDirectory = workingDirectory,
