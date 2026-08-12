@@ -26,7 +26,8 @@ public interface ISolutionAnalyzer
 public sealed record AnalysisSnapshot(CodeGraph Graph, IReadOnlyList<FileRecord> Files, AnalysisStats Stats);
 
 /// <summary>Counters describing how much work an analysis run performed.</summary>
-public sealed record AnalysisStats(int ProjectCount, int DocumentsAnalyzed, int DocumentsSkipped);
+/// <param name="UnresolvedEndpoints">Endpoint registrations whose route could not be resolved statically — counted, never guessed (each also surfaces a warning with its location and reason).</param>
+public sealed record AnalysisStats(int ProjectCount, int DocumentsAnalyzed, int DocumentsSkipped, int UnresolvedEndpoints = 0);
 
 /// <summary>A progress report emitted while analyzing, e.g. ("Compiling", 3, 12). Total may be 0 when unknown.</summary>
 public sealed record AnalysisProgress(string Stage, int Completed, int Total);

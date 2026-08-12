@@ -17,4 +17,10 @@ public static class MetaKeys
     /// <c>"0.5.0"</c>). Absent in databases written before this key existed.
     /// </summary>
     public const string ToolVersion = "tool_version";
+
+    /// <summary>
+    /// Count of endpoint registrations the last analysis could not resolve statically (counted,
+    /// never guessed — see the endpoint-nodes design). Absent or "0" when everything resolved.
+    /// </summary>
+    public const string UnresolvedEndpoints = "unresolved_endpoints";
 }

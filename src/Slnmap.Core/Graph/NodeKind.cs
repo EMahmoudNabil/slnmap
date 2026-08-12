@@ -21,4 +21,11 @@ public enum NodeKind
     Property = 11,
     Field = 12,
     Event = 13,
+
+    /// <summary>
+    /// An HTTP endpoint registration (ASP.NET Core Minimal API): fqn = "VERB template",
+    /// name = the composed route template. Not a Roslyn symbol — synthesized from the
+    /// Map* call site. Append-only: viz indexes kinds positionally, never insert mid-enum.
+    /// </summary>
+    Endpoint = 14,
 }

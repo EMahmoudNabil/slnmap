@@ -8,7 +8,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>slnmap</ToolCommandName>
     <PackageId>Slnmap</PackageId>
-    <Version>0.6.1</Version>
+    <Version>0.7.0</Version>
     <RollForward>Major</RollForward>
     <PackageReadmeFile>nuget-readme.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>
@@ -18,13 +18,16 @@
     <PackageProjectUrl>https://slnmap.dev</PackageProjectUrl>
     <RepositoryUrl>https://github.com/EMahmoudNabil/slnmap</RepositoryUrl>
     <PackageTags>dotnet;roslyn;mcp;ai;code-analysis;claude-code;knowledge-graph</PackageTags>
-    <PackageReleaseNotes>Bugfix release. find_usages/impact_analysis on fields and constants now
-return real usage edges -- previously they answered "no usages found" for every field and const, a
-false "safe to change" on codebases using const classes for domain values. Structurally identical
-anonymous types no longer collapse into one node, which fabricated cross-project dependency rows
-in get_architecture_overview; named tuple elements are excluded by the same guard. Enum members
-remain unmodeled (tracked in #13). Upgrading: just re-run analyze -- the tool-version check forces
-the full rebuild automatically. See CHANGELOG.md for details.
+    <PackageReleaseNotes>New: HTTP endpoints from ASP.NET Core Minimal APIs are first-class graph
+nodes. Each MapGet/MapPost/... registration becomes an Endpoint node ("VERB /route/template")
+linked to its handler method, so impact_analysis and find_usages on a handler now surface the
+actual routes that break. Two new MCP tools: list_endpoints (filter by verb/prefix) and
+find_endpoint (a concrete path like /api/vendors/42 matches its template). Route templates
+resolve statically -- MapGroup prefixes (nested and CleanArchitecture-convention), const and
+string.Empty patterns, custom reversed-argument Map* extensions; unresolvable registrations are
+counted and reported, never guessed. Attribute-routed controllers are not modeled yet. Upgrading:
+just re-run analyze -- the tool-version check forces the full rebuild automatically. See
+CHANGELOG.md for details.
 Source: https://github.com/EMahmoudNabil/slnmap</PackageReleaseNotes>
   </PropertyGroup>
 

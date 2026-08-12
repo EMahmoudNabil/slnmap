@@ -13,6 +13,7 @@ namespace Slnmap.Tests;
 public sealed class McpToolBudgetTests : IDisposable
 {
     private const int Callers = 2000;
+    private const int Endpoints = 300;
     private const int OutputBudgetChars = 12_000;
 
     private readonly string _directory = Path.Combine(
@@ -63,6 +64,15 @@ public sealed class McpToolBudgetTests : IDisposable
             graph.AddEdge(new RelationshipEdge(caller.Id, hubType.Id, RelationshipKind.References));
         }
 
+        // Far more endpoints than either endpoint tool's cap, all handled by the hub.
+        for (int i = 0; i < Endpoints; i++)
+        {
+            var endpoint = SymbolNode.Create(NodeKind.Endpoint, $"/api/big/{i}", $"GET /api/big/{i}", "Hub.cs", new SourceSpan(i, i + 1));
+            graph.AddNode(endpoint);
+            graph.AddEdge(new RelationshipEdge(hubType.Id, endpoint.Id, RelationshipKind.Contains));
+            graph.AddEdge(new RelationshipEdge(endpoint.Id, hub.Id, RelationshipKind.HandledBy));
+        }
+
         return graph;
     }
 
@@ -81,6 +91,8 @@ public sealed class McpToolBudgetTests : IDisposable
             await queries.ImpactAnalysisAsync("Big.Hub.Process()"),
             await queries.GetArchitectureOverviewAsync(),
             await queries.FindUsagesAsync("Big.Hub.Process()"),
+            await queries.ListEndpointsAsync(null, null),
+            await queries.FindEndpointAsync("/api/big/{id}", null),
         };
 
         foreach (string output in outputs)
@@ -96,6 +108,10 @@ public sealed class McpToolBudgetTests : IDisposable
         string find = await queries.FindSymbolAsync("M", null);
         Assert.Contains("20+ matches", find, StringComparison.Ordinal);       // cap engaged, disclosed honestly
         Assert.Contains("showing first 20", find, StringComparison.Ordinal);
+        string endpoints = await queries.ListEndpointsAsync(null, null);
+        Assert.Contains("more", endpoints, StringComparison.Ordinal);          // > 100 endpoints → truncated
+        string routes = await queries.FindEndpointAsync("/api/big/{id}", null);
+        Assert.Contains("more", routes, StringComparison.Ordinal);             // a hole matches all 300 → capped
     }
 
     [Fact]

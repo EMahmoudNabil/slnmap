@@ -2,7 +2,9 @@ namespace Slnmap.Core.Graph;
 
 /// <summary>
 /// The kind of relationship a <see cref="RelationshipEdge"/> represents.
-/// Values are persisted as integers; never reorder or renumber existing members.
+/// Persisted in the database as the enum member's name (TEXT, not its integer value) —
+/// never rename an existing member without a migration, and only append new members
+/// (viz indexes edge kinds positionally).
 /// </summary>
 public enum RelationshipKind
 {
@@ -20,4 +22,13 @@ public enum RelationshipKind
 
     /// <summary>Source lexically contains target (project → namespace → type → member).</summary>
     Contains = 4,
+
+    /// <summary>Source endpoint is handled by target method (Endpoint —HandledBy→ Method).</summary>
+    HandledBy = 5,
+
+    /// <summary>
+    /// Never persisted by this version: the graceful fallback a reader maps an edge kind
+    /// written by a newer slnmap onto, instead of crashing (see SqliteGraphStore.ParseEnum).
+    /// </summary>
+    Unknown = 6,
 }

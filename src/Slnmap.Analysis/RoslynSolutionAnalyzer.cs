@@ -133,6 +133,7 @@ public sealed class RoslynSolutionAnalyzer : ISolutionAnalyzer
             graph.AddNode(projectNode);
         }
 
+        int unresolvedEndpoints = 0;
         foreach (var result in results)
         {
             foreach (var node in result.Nodes)
@@ -144,6 +145,12 @@ public sealed class RoslynSolutionAnalyzer : ISolutionAnalyzer
             {
                 graph.AddEdge(edge);
             }
+
+            unresolvedEndpoints += result.UnresolvedEndpoints;
+            foreach (var warning in result.Warnings)
+            {
+                _warningSink?.Invoke(warning);
+            }
         }
 
         // Order matters: dangling edges must go first, so orphan-namespace detection never
@@ -153,7 +160,7 @@ public sealed class RoslynSolutionAnalyzer : ISolutionAnalyzer
         graph = PruneOrphanNamespaces(graph);
 
         var files = currentHashes.Select(static kv => new FileRecord(kv.Key, kv.Value)).ToList();
-        var stats = new AnalysisStats(projects.Count, analyzedCount, candidateDocuments - totalDocuments);
+        var stats = new AnalysisStats(projects.Count, analyzedCount, candidateDocuments - totalDocuments, unresolvedEndpoints);
         return new AnalysisSnapshot(graph, files, stats);
     }
 

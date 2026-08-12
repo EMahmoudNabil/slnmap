@@ -2,6 +2,54 @@
 
 All notable changes to Slnmap are documented here. Versions follow [SemVer](https://semver.org).
 
+## 0.7.0
+
+### Added
+
+- **HTTP endpoints are first-class graph nodes.** Every ASP.NET Core Minimal-API registration
+  (`MapGet`/`MapPost`/`MapPut`/`MapDelete`/`MapPatch`) becomes an `Endpoint` node whose identity
+  is the composed route template as authored (`GET /api/vendors/{id:int}` — parameter names and
+  constraints preserved), located at the registration call site and linked to its handler method
+  by a new `HandledBy` edge. `impact_analysis` and `find_usages` on a handler now surface the
+  actual HTTP routes that break — the chain `command → handler → endpoint` resolves end to end.
+- **Two new MCP tools** (eleven → thirteen):
+  - `list_endpoints(verb?, prefix?)` — all endpoints grouped by project as
+    `VERB /route → handler — file:line`, optionally filtered by HTTP verb and/or route prefix.
+  - `find_endpoint(route, verb?)` — matches an exact template *or* a concrete request path
+    (`/api/vendors/42` finds `GET /api/vendors/{id}`), with the framework's own semantics:
+    case-insensitive, `{param}`/`{param:constraint}` holes bind concrete segments. A miss
+    suggests near matches.
+- **Route templates resolve statically through real-world registration shapes**, decided by
+  overload resolution (never argument position): string literals; `const` patterns;
+  `string.Empty`; omitted patterns (overload defaults); literal and nested `MapGroup` prefixes;
+  single-hop in-source forwarders (custom reversed-argument `Map*(handler, pattern)` extensions);
+  and the CleanArchitecture-template convention (`MapGroup(this)` → `$"/api/{GetType().Name}"`),
+  guarded by the receiver type having no in-solution subtypes. Field verification on a 26k-node
+  production solution: **658 of 658 registrations resolved, zero unresolved**.
+- **Deterministic-or-declared:** every registration that cannot be resolved statically is counted
+  and reported with a reason (analyze summary line, warnings, and a disclosure note in
+  `list_endpoints`) — never guessed. Lambda/local-function handlers yield an endpoint node
+  without a `HandledBy` edge, declared as such.
+- **Forward-compatible graph reading:** a database written by a newer Slnmap whose node/edge
+  kinds this binary does not know now degrades gracefully (kinds map to `Unknown`, one warning)
+  instead of crashing older readers — `Endpoint`/`HandledBy` are the first kinds to cross that
+  line, but the hardening covers all future ones.
+- `slnmap viz` renders Endpoint nodes (own color, legend entry) and `HandledBy` edges.
+
+### Known limits
+
+- **Attribute-routed controllers (`[Route]`/`[HttpGet]`) are not modeled yet** — planned as a
+  follow-up with the same node shape (separate extractor). Conventional routing
+  (`MapControllerRoute`), `MapFallback`/`MapHub`/health-check/gRPC surfaces, and middleware-served
+  paths are also out of scope for now.
+- A `Map*` forwarder declared in a *different project* than its call site cannot be verified from
+  the caller's compilation — such registrations are counted unresolved, never guessed.
+
+### Upgrading
+
+Just re-run `slnmap analyze` — the tool-version check forces the one-time full rebuild
+automatically; endpoints appear in the graph after it.
+
 ## 0.6.1
 
 ### Fixed

@@ -46,6 +46,11 @@ cold and incremental rows below. Each timing row is the **median of 3 runs**.
 
 ## Results
 
+*v0.7.0 (Minimal-API endpoint nodes) was not re-benchmarked on eShopOnWeb; on the Slnmap
+development solution (no Minimal APIs) the graph was byte-identical with flat analyze time, and on
+a 26k-node production Minimal-API solution it added +2.1% nodes / +1.3% edges (658 endpoints) at
++0.4% analyze time — endpoint extraction is name-prefiltered and does not touch non-`Map*` code.*
+
 *v0.6.1 (field/const usage edges) was not re-benchmarked on eShopOnWeb; on the Slnmap development
 solution it added +8.6% edges / +1.0% nodes with flat analyze time (1.086x edge growth, well under
 the 2.5x gating threshold), so expect eShopOnWeb's graph-size figures below to read slightly low
