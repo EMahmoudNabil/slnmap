@@ -4,7 +4,11 @@ using Slnmap.Core.Graph;
 
 namespace Slnmap.Analysis;
 
-internal sealed record DocumentResult(IReadOnlyList<SymbolNode> Nodes, IReadOnlyList<RelationshipEdge> Edges);
+internal sealed record DocumentResult(
+    IReadOnlyList<SymbolNode> Nodes,
+    IReadOnlyList<RelationshipEdge> Edges,
+    IReadOnlyList<string> Warnings,
+    int UnresolvedEndpoints);
 
 /// <summary>
 /// Extracts nodes and edges from a single document. Declarations produce nodes and
@@ -19,6 +23,8 @@ internal sealed class DocumentWalker
     private readonly Dictionary<ISymbol, SymbolNode?> _symbolNodes = new(SymbolEqualityComparer.Default);
     private readonly List<SymbolNode> _nodes = [];
     private readonly List<RelationshipEdge> _edges = [];
+    private readonly List<string> _warnings = [];
+    private int _unresolvedEndpoints;
 
     private DocumentWalker(SemanticModel model, string projectNodeId, CancellationToken cancellationToken)
     {
@@ -38,7 +44,7 @@ internal sealed class DocumentWalker
 
         var walker = new DocumentWalker(model, projectNodeId, cancellationToken);
         walker.Visit(root);
-        return new DocumentResult(walker._nodes, walker._edges);
+        return new DocumentResult(walker._nodes, walker._edges, walker._warnings, walker._unresolvedEndpoints);
     }
 
     private void Visit(SyntaxNode root)
@@ -165,6 +171,15 @@ internal sealed class DocumentWalker
         if (ResolveSymbol(invocation) is not IMethodSymbol method)
         {
             return;
+        }
+
+        // Minimal-API endpoint registrations (Map* calls) would otherwise die at the external-target
+        // early return below — the framework Map* is not in source. Handled additively, before the
+        // un-reduction: EndpointFacts maps arguments to parameters on the symbol exactly as resolved.
+        // Name prefilter first, so the common case pays a single string comparison.
+        if (method.Name.StartsWith("Map", StringComparison.Ordinal))
+        {
+            HandleEndpointRegistration(invocation, method);
         }
 
         if (method.ReducedFrom is { } reduced)
@@ -409,5 +424,75 @@ internal sealed class DocumentWalker
         }
 
         return node;
+    }
+
+    /// <summary>
+    /// Synthesizes an Endpoint node from a Minimal-API Map* registration: fqn = "VERB template",
+    /// name = template, file+span = this call site. Emits RegisteringType —Contains→ Endpoint
+    /// explicitly (an endpoint is not a symbol, so <see cref="GetOrCreateNode"/>'s symbol-keyed
+    /// containment can't cover it) and Endpoint —HandledBy→ Method when the handler is a method
+    /// group resolving to a modeled method. Every registration that fails static resolution is
+    /// counted and reported with a reason — never guessed (the deterministic-or-declared contract).
+    /// </summary>
+    private void HandleEndpointRegistration(InvocationExpressionSyntax invocation, IMethodSymbol methodAsResolved)
+    {
+        var extraction = EndpointFacts.TryExtract(invocation, methodAsResolved, _model, _cancellationToken);
+        if (extraction is null)
+        {
+            return;
+        }
+
+        if (extraction.Template is null)
+        {
+            _unresolvedEndpoints++;
+            _warnings.Add($"Unresolved endpoint registration at {Location(invocation)}: {extraction.UnresolvedReason} (counted, not guessed).");
+            return;
+        }
+
+        var location = invocation.GetLocation();
+        var node = SymbolNode.Create(
+            NodeKind.Endpoint,
+            name: extraction.Template,
+            fqn: $"{extraction.Verb} {extraction.Template}",
+            filePath: location.SourceTree?.FilePath,
+            span: new SourceSpan(location.SourceSpan.Start, location.SourceSpan.End));
+        _nodes.Add(node);
+
+        // Duplicate registrations of the same verb+template hash to the same id — the graph keeps
+        // the first node (its call site) and every HandledBy edge (the honest superposition).
+        if (GetEnclosingTypeNode(invocation) is { } registrar)
+        {
+            _edges.Add(new RelationshipEdge(registrar.Id, node.Id, RelationshipKind.Contains));
+        }
+
+        if (extraction.HandlerExpression is { } handlerExpression
+            && ResolveSymbol(handlerExpression) is IMethodSymbol handler
+            && handler.MethodKind is not (MethodKind.AnonymousFunction or MethodKind.LocalFunction)
+            && GetOrCreateNode(handler) is { } handlerNode)
+        {
+            _edges.Add(new RelationshipEdge(node.Id, handlerNode.Id, RelationshipKind.HandledBy));
+        }
+        else
+        {
+            _warnings.Add($"Endpoint {node.Fqn} at {Location(invocation)}: handler is not a resolvable method group (lambda/local function/unmodeled) — endpoint recorded without a HandledBy edge.");
+        }
+    }
+
+    /// <summary>The nearest enclosing named type's node — for top-level statements, the synthesized Program class.</summary>
+    private SymbolNode? GetEnclosingTypeNode(SyntaxNode syntax)
+    {
+        var symbol = _model.GetEnclosingSymbol(syntax.SpanStart, _cancellationToken);
+        while (symbol is not null and not INamedTypeSymbol)
+        {
+            symbol = symbol.ContainingSymbol;
+        }
+
+        return symbol is INamedTypeSymbol type ? GetOrCreateNode(type) : null;
+    }
+
+    private static string Location(SyntaxNode syntax)
+    {
+        var span = syntax.GetLocation().GetLineSpan();
+        return $"{span.Path}:{span.StartLinePosition.Line + 1}";
     }
 }

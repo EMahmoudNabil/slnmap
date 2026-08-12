@@ -20,7 +20,7 @@ internal static class VizExporter
         long OutputBytes);
 
     private static readonly string[] EdgeKinds =
-        [nameof(RelationshipKind.Calls), nameof(RelationshipKind.References), nameof(RelationshipKind.Implements), nameof(RelationshipKind.Inherits)];
+        [nameof(RelationshipKind.Calls), nameof(RelationshipKind.References), nameof(RelationshipKind.Implements), nameof(RelationshipKind.Inherits), nameof(RelationshipKind.HandledBy)];
 
     public static VizStats WriteHtml(
         CodeGraph graph,

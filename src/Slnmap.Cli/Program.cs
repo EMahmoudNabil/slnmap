@@ -102,6 +102,7 @@ analyzeCommand.SetAction(async (parseResult, cancellationToken) =>
         [MetaKeys.SolutionPath] = solution,
         [MetaKeys.LastAnalyzed] = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture),
         [MetaKeys.ToolVersion] = currentVersion,
+        [MetaKeys.UnresolvedEndpoints] = snapshot.Stats.UnresolvedEndpoints.ToString(CultureInfo.InvariantCulture),
     };
     await store.SaveAsync(snapshot.Graph, snapshot.Files, meta, cancellationToken).ConfigureAwait(false);
     stopwatch.Stop();
@@ -132,6 +133,14 @@ analyzeCommand.SetAction(async (parseResult, cancellationToken) =>
     Console.WriteLine(pal.Label("Projects:  ") + pal.Number(stats.ProjectCount.ToString(CultureInfo.InvariantCulture)));
     Console.WriteLine(pal.Label("Documents: ") + pal.Number(stats.DocumentsAnalyzed.ToString(CultureInfo.InvariantCulture)) + pal.Label(" analyzed, ") + pal.Number(stats.DocumentsSkipped.ToString(CultureInfo.InvariantCulture)) + pal.Label(" skipped"));
     Console.WriteLine(pal.Label("Graph:     ") + pal.Number(graph.NodeCount.ToString(CultureInfo.InvariantCulture)) + pal.Label(" nodes, ") + pal.Number(graph.EdgeCount.ToString(CultureInfo.InvariantCulture)) + pal.Label(" edges"));
+    int endpointCount = graph.Nodes.Count(static n => n.Kind == NodeKind.Endpoint);
+    if (endpointCount > 0 || stats.UnresolvedEndpoints > 0)
+    {
+        string unresolvedValue = stats.UnresolvedEndpoints == 0
+            ? pal.Success("0")
+            : pal.Warn(stats.UnresolvedEndpoints.ToString(CultureInfo.InvariantCulture));
+        Console.WriteLine(pal.Label("Endpoints: ") + pal.Number(endpointCount.ToString(CultureInfo.InvariantCulture)) + pal.Label(" mapped, ") + unresolvedValue + pal.Label(" unresolved" + (stats.UnresolvedEndpoints > 0 ? " (see warnings; run --verbose for locations)" : "")));
+    }
     Console.WriteLine(pal.Label("Files:     ") + pal.Number(snapshot.Files.Count.ToString(CultureInfo.InvariantCulture)) + pal.Label(" hashed"));
     Console.WriteLine(pal.Label("Warnings:  ") + warningsValue);
     Console.WriteLine(pal.Label("Elapsed:   ") + pal.Success($"{stopwatch.Elapsed.TotalSeconds.ToString("F1", CultureInfo.InvariantCulture)}s"));

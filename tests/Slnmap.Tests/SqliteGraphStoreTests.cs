@@ -89,6 +89,52 @@ public sealed class SqliteGraphStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task UnknownKindNames_DegradeToUnknown_InsteadOfCrashing()
+    {
+        // Forward compatibility (endpoint-nodes design §2.1): a database written by a NEWER slnmap
+        // may contain kind names this binary's enums lack — Endpoint/HandledBy were the first ever.
+        // Every read path must degrade to the Unknown member, not crash in Enum.Parse.
+        var a = Type("A");
+        var b = Type("B");
+        var graph = new CodeGraph();
+        graph.AddNode(a);
+        graph.AddNode(b);
+        graph.AddEdge(new RelationshipEdge(a.Id, b.Id, RelationshipKind.Calls));
+
+        await using var store = NewStore();
+        await store.SaveAsync(graph, [], NoMeta);
+
+        // Simulate the newer writer: rewrite one node kind and one edge kind to future names.
+        var connectionString = new SqliteConnectionStringBuilder { DataSource = DbPath, Pooling = false }.ToString();
+        await using (var connection = new SqliteConnection(connectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE nodes SET kind = 'HologramProjector' WHERE id = $a;
+                UPDATE edges SET kind = 'Teleports';
+                """;
+            command.Parameters.AddWithValue("$a", a.Id);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var loaded = await store.LoadGraphAsync();
+        Assert.True(loaded.TryGetNode(a.Id, out var futureNode));
+        Assert.Equal(NodeKind.Unknown, futureNode!.Kind);
+        Assert.True(loaded.TryGetNode(b.Id, out var intactNode));
+        Assert.Equal(NodeKind.Class, intactNode!.Kind);
+        Assert.Equal(RelationshipKind.Unknown, Assert.Single(loaded.Edges).Kind);
+
+        // The aggregating paths must survive too.
+        var stats = await store.GetStatisticsAsync();
+        Assert.Equal(1, stats.NodesByKind[NodeKind.Unknown]);
+        Assert.Equal(1, stats.EdgesByKind[RelationshipKind.Unknown]);
+
+        var byIds = await store.GetNodesByIdsAsync([a.Id]);
+        Assert.Equal(NodeKind.Unknown, Assert.Single(byIds).Kind);
+    }
+
+    [Fact]
     public async Task FindNodes_MatchesNameOrFqn_AndRespectsLimit()
     {
         var graph = new CodeGraph();

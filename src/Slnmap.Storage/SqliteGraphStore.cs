@@ -531,8 +531,31 @@ public sealed class SqliteGraphStore : IGraphStore
             span);
     }
 
-    private static TEnum ParseEnum<TEnum>(string value) where TEnum : struct, Enum =>
-        Enum.Parse<TEnum>(value);
+    /// <summary>
+    /// Kind names are written by whichever slnmap version built the database; a NEWER version may
+    /// have appended members this binary does not know (Endpoint was the first, v0.7.0). A bare
+    /// Enum.Parse would crash every read path on such rows — map them onto the enum's Unknown
+    /// member instead (NodeKind.Unknown / RelationshipKind.Unknown) and warn once per unknown name,
+    /// so an older binary (or a long-running older MCP server) degrades gracefully.
+    /// </summary>
+    private static TEnum ParseEnum<TEnum>(string value) where TEnum : struct, Enum
+    {
+        if (Enum.TryParse(value, ignoreCase: false, out TEnum parsed))
+        {
+            return parsed;
+        }
+
+        if (WarnedUnknownKinds.TryAdd($"{typeof(TEnum).Name}:{value}", true))
+        {
+            Console.Error.WriteLine(
+                $"warning: unknown {typeof(TEnum).Name} '{value}' in the graph database — written by a newer slnmap version? " +
+                "Treating it as Unknown; re-run 'slnmap analyze' with this version to rebuild.");
+        }
+
+        return Enum.TryParse("Unknown", ignoreCase: false, out TEnum unknown) ? unknown : default;
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> WarnedUnknownKinds = new(StringComparer.Ordinal);
 
     private static void EnsureDirectory(string databasePath)
     {

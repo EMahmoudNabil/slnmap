@@ -14,7 +14,7 @@ public static class SlnmapTools
 {
     /// <summary>
     /// Liveness check kept callable in-process (e.g. from tests), but intentionally NOT decorated as an
-    /// MCP tool — the advertised surface is exactly the eleven documented, read-only tools.
+    /// MCP tool — the advertised surface is exactly the thirteen documented, read-only tools.
     /// </summary>
     public static string Ping() => "pong";
 
@@ -27,7 +27,7 @@ public static class SlnmapTools
     public static Task<string> FindSymbol(
         IGraphStore store,
         [Description("Text matched against symbol name and FQN (case-insensitive substring).")] string query,
-        [Description("Optional kind filter: Namespace, Class, Interface, Struct, Record, Enum, Delegate, Method, Constructor, Property, Field, Event.")] string? kind = null,
+        [Description("Optional kind filter: Namespace, Class, Interface, Struct, Record, Enum, Delegate, Method, Constructor, Property, Field, Event, Endpoint.")] string? kind = null,
         CancellationToken cancellationToken = default)
         => new SlnmapQueries(store).FindSymbolAsync(query, kind, cancellationToken);
 
@@ -142,6 +142,34 @@ public static class SlnmapTools
         [Description("'project' or 'namespace'.")] string scope = "project",
         CancellationToken cancellationToken = default)
         => new SlnmapQueries(store).FindCircularDependenciesAsync(scope, cancellationToken);
+
+    [McpServerTool(Name = "list_endpoints")]
+    [Description(
+        "List the HTTP endpoints extracted from ASP.NET Core Minimal API registrations, grouped by " +
+        "project: \"VERB /route/template → handler — file:line\". Endpoint identity is the composed " +
+        "route template as authored ({param} names and :int constraints preserved). Optionally filter " +
+        "by verb and/or route prefix. Registrations that could not be resolved statically are counted " +
+        "in a trailing note, never guessed. Attribute-routed controllers are not modeled yet.")]
+    public static Task<string> ListEndpoints(
+        IGraphStore store,
+        [Description("Optional HTTP verb filter: GET, POST, PUT, DELETE, or PATCH.")] string? verb = null,
+        [Description("Optional route prefix filter, e.g. '/api/vendors' (case-insensitive, compared against the composed template).")] string? prefix = null,
+        CancellationToken cancellationToken = default)
+        => new SlnmapQueries(store).ListEndpointsAsync(verb, prefix, cancellationToken);
+
+    [McpServerTool(Name = "find_endpoint")]
+    [Description(
+        "Find the endpoint(s) matching a route — an exact template (\"/api/vendors/{id}\") or a " +
+        "concrete path (\"/api/vendors/42\"), matched with the framework's own semantics: " +
+        "case-insensitive, {param}/{param:constraint} holes bind concrete segments. Returns each " +
+        "match with its handler method and registration file:line; a miss suggests near matches. " +
+        "Use impact_analysis on the handler to see an endpoint's blast radius.")]
+    public static Task<string> FindEndpoint(
+        IGraphStore store,
+        [Description("The route to find: a template or a concrete request path.")] string route,
+        [Description("Optional HTTP verb filter: GET, POST, PUT, DELETE, or PATCH.")] string? verb = null,
+        CancellationToken cancellationToken = default)
+        => new SlnmapQueries(store).FindEndpointAsync(route, verb, cancellationToken);
 
     [McpServerTool(Name = "get_symbol_source")]
     [Description(

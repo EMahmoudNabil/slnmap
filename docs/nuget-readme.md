@@ -41,12 +41,15 @@ the `slnmap.db` you just built:
 
 ## The tools
 
-The server exposes eleven read-only tools — `find_symbol`, `get_dependencies`, `impact_analysis`,
+The server exposes thirteen read-only tools — `find_symbol`, `get_dependencies`, `impact_analysis`,
 `get_architecture_overview`, `find_usages`, `find_implementations`, `get_type_hierarchy`,
-`find_tests_for_symbol`, `get_project_dependencies`, `find_circular_dependencies`, and
-`get_symbol_source` (full descriptions in the [README](https://github.com/EMahmoudNabil/slnmap#what-you-can-ask)).
+`find_tests_for_symbol`, `get_project_dependencies`, `find_circular_dependencies`,
+`get_symbol_source`, `list_endpoints`, and `find_endpoint` (full descriptions in the
+[README](https://github.com/EMahmoudNabil/slnmap#what-you-can-ask)).
 For an interface, `impact_analysis` follows both the interface's callers **and** its concrete
-implementations/overrides — across projects, in files nobody has open.
+implementations/overrides — across projects, in files nobody has open. HTTP endpoints registered
+via ASP.NET Core Minimal APIs are first-class graph nodes (v0.7.0): ask "which endpoint serves
+`/api/vendors/42`?" or "what breaks if I change this handler?" and get the actual route back.
 
 There's also `slnmap viz`: exports the graph as a single self-contained, interactive HTML file —
 no server, no CDN, works offline.

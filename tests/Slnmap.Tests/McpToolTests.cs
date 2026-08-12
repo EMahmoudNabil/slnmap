@@ -24,6 +24,9 @@ public sealed class AnalyzedFixtureGraphStore : IAsyncLifetime
         {
             [MetaKeys.SolutionPath] = TestPaths.FixtureSolution,
             [MetaKeys.LastAnalyzed] = "test",
+            // Mirrors what `analyze` persists — the fixture has designed-unresolved registrations
+            // (UnresolvedRegistrations.cs), and list_endpoints must disclose them.
+            [MetaKeys.UnresolvedEndpoints] = snapshot.Stats.UnresolvedEndpoints.ToString(System.Globalization.CultureInfo.InvariantCulture),
         };
         await Store.SaveAsync(snapshot.Graph, snapshot.Files, meta);
     }
@@ -167,6 +170,120 @@ public sealed class McpToolTests : IClassFixture<AnalyzedFixtureGraphStore>
     {
         string result = await _queries.FindSymbolAsync("_a", "Field");
         Assert.Contains("Fixture.Lib.MultiDeclaratorFields._a", result, StringComparison.Ordinal);
+    }
+
+    // ---- endpoint tools (v0.7.0) --------------------------------------------------------------
+
+    [Fact]
+    public async Task ListEndpoints_ListsRoutesWithHandlersAndLocations()
+    {
+        string result = await _queries.ListEndpointsAsync(null, null);
+        Assert.Contains("GET /api/vendors", result, StringComparison.Ordinal);
+        Assert.Contains("Fixture.Web.VendorEndpoints.ListVendors()", result, StringComparison.Ordinal);
+        Assert.Contains("VendorEndpoints.cs:", result, StringComparison.Ordinal);
+        // Grouped by project, like the other relationship tools.
+        Assert.Contains("FixtureWeb:", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ListEndpoints_DisclosesTheUnresolvedCount()
+    {
+        // The fixture ships designed-unresolved registrations; the listing must say so rather
+        // than read as complete coverage.
+        string result = await _queries.ListEndpointsAsync(null, null);
+        Assert.Contains("could not be resolved statically", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ListEndpoints_VerbFilter_RestrictsResults()
+    {
+        string result = await _queries.ListEndpointsAsync("post", null);
+        Assert.Contains("POST /api/vendors/{id}", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("GET /", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ListEndpoints_PrefixFilter_RestrictsResults()
+    {
+        string result = await _queries.ListEndpointsAsync(null, "/api/reminders");
+        Assert.Contains("/api/Reminders", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("/api/vendors", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ListEndpoints_UnknownVerb_NamesTheValidOnes()
+    {
+        // Issue #15-era lesson: a wrong input must produce a self-correcting message.
+        string result = await _queries.ListEndpointsAsync("FETCH", null);
+        Assert.Contains("Unknown verb 'FETCH'", result, StringComparison.Ordinal);
+        Assert.Contains("GET, POST, PUT, DELETE, PATCH", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task FindEndpoint_ExactTemplate_ReturnsEndpointAndHandler()
+    {
+        string result = await _queries.FindEndpointAsync("/api/vendors/{id}", null);
+        Assert.Contains("POST /api/vendors/{id}", result, StringComparison.Ordinal);
+        Assert.Contains("Fixture.Web.VendorEndpoints.UpdateVendor(string)", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task FindEndpoint_ConcretePath_BindsTheParameterHole()
+    {
+        // A real request path matches its template: {id} binds "42".
+        string result = await _queries.FindEndpointAsync("/api/vendors/42", null);
+        Assert.Contains("POST /api/vendors/{id}", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task FindEndpoint_MatchesCaseInsensitively()
+    {
+        string result = await _queries.FindEndpointAsync("/API/VENDORS", "get");
+        Assert.Contains("GET /api/vendors", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task FindEndpoint_Miss_SuggestsNearRoutes()
+    {
+        string result = await _queries.FindEndpointAsync("/vendors/archive", null);
+        Assert.Contains("No endpoint matches", result, StringComparison.Ordinal);
+        Assert.Contains("Did you mean", result, StringComparison.Ordinal);
+        Assert.Contains("/api/vendors/archive", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task FindEndpoint_EmptyRoute_ExplainsTheParameter()
+    {
+        string result = await _queries.FindEndpointAsync("  ", null);
+        Assert.Contains("Provide a route", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task FindUsages_Handler_SurfacesItsEndpoint()
+    {
+        // The one-line allow-list change: HandledBy is a usage kind, so a handler's endpoints
+        // appear in find_usages with no traversal special-casing.
+        string result = await _queries.FindUsagesAsync("Fixture.Web.VendorEndpoints.ListVendors()");
+        Assert.Contains("[Endpoint] GET /api/vendors", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ImpactAnalysis_Handler_SurfacesItsEndpoint()
+    {
+        // Edge orientation Endpoint —HandledBy→ Method: the endpoint is what breaks when the
+        // handler changes, and the incoming walk finds it with zero special-casing.
+        string result = await _queries.ImpactAnalysisAsync("Fixture.Web.VendorEndpoints.ArchiveSnapshot()");
+        Assert.Contains("GET /api/vendors/archive", result, StringComparison.Ordinal);
+        Assert.Contains("POST /api/vendors/archive", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task FindSymbol_EndpointKindFilter_Works()
+    {
+        // kind:Endpoint works the moment the enum member exists (TryParse ignoreCase).
+        string result = await _queries.FindSymbolAsync("vendors", "Endpoint");
+        Assert.Contains("[Endpoint] GET /api/vendors", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("[Class]", result, StringComparison.Ordinal);
     }
 
     [Fact]
