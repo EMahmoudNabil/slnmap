@@ -25,8 +25,10 @@ public sealed class AnalyzedFixtureGraphStore : IAsyncLifetime
             [MetaKeys.SolutionPath] = TestPaths.FixtureSolution,
             [MetaKeys.LastAnalyzed] = "test",
             // Mirrors what `analyze` persists — the fixture has designed-unresolved registrations
-            // (UnresolvedRegistrations.cs), and list_endpoints must disclose them.
+            // (UnresolvedRegistrations.cs) and a conventionally-routed controller
+            // (LegacyPagesController), and list_endpoints must disclose both.
             [MetaKeys.UnresolvedEndpoints] = snapshot.Stats.UnresolvedEndpoints.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            [MetaKeys.ConventionalControllers] = snapshot.Stats.ConventionalControllers.ToString(System.Globalization.CultureInfo.InvariantCulture),
         };
         await Store.SaveAsync(snapshot.Graph, snapshot.Files, meta);
     }
@@ -192,6 +194,32 @@ public sealed class McpToolTests : IClassFixture<AnalyzedFixtureGraphStore>
         // than read as complete coverage.
         string result = await _queries.ListEndpointsAsync(null, null);
         Assert.Contains("could not be resolved statically", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ListEndpoints_DisclosesConventionallyRoutedControllers()
+    {
+        // The v1.1 amended decision: a conventionally-routed controller (LegacyPagesController)
+        // is disclosed as a different routing system — so "why is my MVC controller missing?" is
+        // never a silent mystery — without polluting the unresolved count.
+        string result = await _queries.ListEndpointsAsync(null, null);
+        Assert.Contains("conventionally-routed controller", result, StringComparison.Ordinal);
+        Assert.Contains("not an extraction failure", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ListEndpoints_IncludesControllerEndpoints()
+    {
+        string result = await _queries.ListEndpointsAsync("delete", null);
+        Assert.Contains("DELETE /maintenance/purge", result, StringComparison.Ordinal);
+        Assert.Contains("Fixture.Web.StatusController.Purge()", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ImpactAnalysis_ControllerAction_SurfacesItsEndpoint()
+    {
+        string result = await _queries.ImpactAnalysisAsync("Fixture.Web.ReportsController.RebuildAsync()");
+        Assert.Contains("POST /Reports/Rebuild", result, StringComparison.Ordinal);
     }
 
     [Fact]

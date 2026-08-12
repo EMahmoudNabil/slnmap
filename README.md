@@ -88,13 +88,16 @@ For an interface (or interface member), `impact_analysis` follows both the inter
 its concrete implementations/overrides — so the answer includes code that only touches the interface,
 across projects, in files nobody has open.
 
-HTTP endpoints registered via **ASP.NET Core Minimal APIs** are first-class graph nodes (v0.7.0):
-each `MapGet`/`MapPost`/… registration appears as `VERB /route/template` linked to its handler
-method, so `impact_analysis` and `find_usages` on a handler surface the actual routes that break.
-Route templates are resolved statically — including `MapGroup` prefixes, `const` patterns, and the
-common CleanArchitecture registration conventions; anything that can't be resolved statically is
-counted and reported, never guessed. Attribute-routed controllers (`[Route]`/`[HttpGet]`) are not
-modeled yet.
+HTTP endpoints are first-class graph nodes — from **ASP.NET Core Minimal APIs** (v0.7.0) *and*
+**attribute-routed controllers** (v0.8.0): each `MapGet`/`MapPost`/… registration and each
+`[Route]`/`[HttpGet("…")]` action appears as `VERB /route/template` linked to its handler method,
+so `impact_analysis` and `find_usages` on a handler surface the actual routes that break. Route
+templates are resolved statically — `MapGroup` prefixes, `const` patterns, the common
+CleanArchitecture registration conventions, class-level `[Route]` (including inherited ones and
+`[controller]`/`[action]` tokens), and controller base classes reached through packages
+(Ardalis.ApiEndpoints works out of the box). Anything that can't be resolved statically is counted
+and reported, never guessed — and controllers routed *conventionally* (`MapControllerRoute`, no
+route attributes) are detected and disclosed rather than silently absent.
 
 ## MCP tools reference
 
@@ -115,7 +118,7 @@ call.
 | `impact_analysis` | `fqn` *(required)* | Every symbol that transitively depends on the given one (depth 5) — counts first, then nearest-first. |
 | `find_tests_for_symbol` | `fqn` *(required)* | Test members that transitively exercise a symbol, grouped by project with file:line. |
 | `find_circular_dependencies` | `scope` *(optional: `project`/`namespace`, default `project`)* | Dependency cycles reported as path chains, worst offenders first. |
-| `list_endpoints` | `verb` *(optional: `GET`/`POST`/`PUT`/`DELETE`/`PATCH`)*, `prefix` *(optional route prefix, e.g. `/api/vendors`)* | HTTP endpoints grouped by project: `VERB /route → handler — file:line`; unresolved registrations disclosed in a trailing note. |
+| `list_endpoints` | `verb` *(optional: `GET`/`POST`/`PUT`/`DELETE`/`PATCH`)*, `prefix` *(optional route prefix, e.g. `/api/vendors`)* | HTTP endpoints (Minimal APIs + attribute-routed controllers) grouped by project: `VERB /route → handler — file:line`; unresolved registrations and conventionally-routed controllers disclosed in trailing notes. |
 | `find_endpoint` | `route` *(required: a template or a concrete path)*, `verb` *(optional)* | Endpoints matching a route — case-insensitive, `{param}` holes bind concrete segments; a miss suggests near matches. |
 
 ## CLI

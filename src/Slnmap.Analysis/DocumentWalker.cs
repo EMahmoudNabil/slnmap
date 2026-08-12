@@ -8,7 +8,8 @@ internal sealed record DocumentResult(
     IReadOnlyList<SymbolNode> Nodes,
     IReadOnlyList<RelationshipEdge> Edges,
     IReadOnlyList<string> Warnings,
-    int UnresolvedEndpoints);
+    int UnresolvedEndpoints,
+    int ConventionalControllers);
 
 /// <summary>
 /// Extracts nodes and edges from a single document. Declarations produce nodes and
@@ -24,6 +25,7 @@ internal sealed class DocumentWalker
     private readonly List<SymbolNode> _nodes = [];
     private readonly List<RelationshipEdge> _edges = [];
     private readonly List<string> _warnings = [];
+    private readonly HashSet<INamedTypeSymbol> _conventionalControllers = new(SymbolEqualityComparer.Default);
     private int _unresolvedEndpoints;
 
     private DocumentWalker(SemanticModel model, string projectNodeId, CancellationToken cancellationToken)
@@ -44,7 +46,8 @@ internal sealed class DocumentWalker
 
         var walker = new DocumentWalker(model, projectNodeId, cancellationToken);
         walker.Visit(root);
-        return new DocumentResult(walker._nodes, walker._edges, walker._warnings, walker._unresolvedEndpoints);
+        return new DocumentResult(
+            walker._nodes, walker._edges, walker._warnings, walker._unresolvedEndpoints, walker._conventionalControllers.Count);
     }
 
     private void Visit(SyntaxNode root)
@@ -57,7 +60,20 @@ internal sealed class DocumentWalker
                 case BaseTypeDeclarationSyntax or DelegateDeclarationSyntax:
                     HandleTypeDeclaration(node);
                     break;
-                case MethodDeclarationSyntax or PropertyDeclarationSyntax or IndexerDeclarationSyntax or EventDeclarationSyntax:
+                case MethodDeclarationSyntax method:
+                    var declared = _model.GetDeclaredSymbol(method, _cancellationToken);
+                    GetOrCreateNode(declared);
+                    // Attribute-routed controller actions become Endpoint nodes (v1.1). Syntactic
+                    // prefilter: only classes that declare a base list can derive from
+                    // ControllerBase, so everything else pays zero semantic cost here.
+                    if (declared is IMethodSymbol methodSymbol
+                        && method.Parent is ClassDeclarationSyntax { BaseList: not null })
+                    {
+                        HandleControllerAction(method, methodSymbol);
+                    }
+
+                    break;
+                case PropertyDeclarationSyntax or IndexerDeclarationSyntax or EventDeclarationSyntax:
                     GetOrCreateNode(_model.GetDeclaredSymbol(node, _cancellationToken));
                     break;
                 // BaseFieldDeclarationSyntax covers both FieldDeclarationSyntax and its sibling
@@ -475,6 +491,70 @@ internal sealed class DocumentWalker
         else
         {
             _warnings.Add($"Endpoint {node.Fqn} at {Location(invocation)}: handler is not a resolvable method group (lambda/local function/unmodeled) — endpoint recorded without a HandledBy edge.");
+        }
+    }
+
+    /// <summary>
+    /// Synthesizes Endpoint nodes from an attribute-routed controller action (v1.1): same node
+    /// and edge shape as the Minimal-API branch — fqn = "VERB template" composed per MVC's own
+    /// selector semantics (ControllerEndpointFacts), file+span = the action method declaration,
+    /// Controller —Contains→ Endpoint, Endpoint —HandledBy→ action. Refusals are counted with a
+    /// reason; a conventionally-routed controller (no route templates anywhere) is a different
+    /// routing system — noted once per class, never counted as unresolved.
+    /// </summary>
+    private void HandleControllerAction(MethodDeclarationSyntax declaration, IMethodSymbol method)
+    {
+        var classification = ControllerEndpointFacts.Classify(method);
+        if (classification is null)
+        {
+            return;
+        }
+
+        if (classification.IsConventionallyRouted)
+        {
+            if (_conventionalControllers.Add(method.ContainingType))
+            {
+                _warnings.Add(
+                    $"Controller '{method.ContainingType.Name}' is conventionally routed (no route attributes) — "
+                    + "its actions are not modeled as endpoints (attribute routing only).");
+            }
+
+            return;
+        }
+
+        foreach (string reason in classification.UnresolvedReasons)
+        {
+            _unresolvedEndpoints++;
+            _warnings.Add($"Unresolved endpoint registration at {Location(declaration)}: {reason} (counted, not guessed).");
+        }
+
+        if (classification.Routes.Count == 0)
+        {
+            return;
+        }
+
+        var handlerNode = GetOrCreateNode(method);
+        var controllerNode = GetOrCreateNode(method.ContainingType);
+        var location = declaration.GetLocation();
+        foreach (var (verb, template) in classification.Routes)
+        {
+            var node = SymbolNode.Create(
+                NodeKind.Endpoint,
+                name: template,
+                fqn: $"{verb} {template}",
+                filePath: location.SourceTree?.FilePath,
+                span: new SourceSpan(location.SourceSpan.Start, location.SourceSpan.End));
+            _nodes.Add(node);
+
+            if (controllerNode is not null)
+            {
+                _edges.Add(new RelationshipEdge(controllerNode.Id, node.Id, RelationshipKind.Contains));
+            }
+
+            if (handlerNode is not null)
+            {
+                _edges.Add(new RelationshipEdge(node.Id, handlerNode.Id, RelationshipKind.HandledBy));
+            }
         }
     }
 

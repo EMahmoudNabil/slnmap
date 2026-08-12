@@ -8,7 +8,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>slnmap</ToolCommandName>
     <PackageId>Slnmap</PackageId>
-    <Version>0.7.0</Version>
+    <Version>0.8.0</Version>
     <RollForward>Major</RollForward>
     <PackageReadmeFile>nuget-readme.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>
@@ -18,14 +18,14 @@
     <PackageProjectUrl>https://slnmap.dev</PackageProjectUrl>
     <RepositoryUrl>https://github.com/EMahmoudNabil/slnmap</RepositoryUrl>
     <PackageTags>dotnet;roslyn;mcp;ai;code-analysis;claude-code;knowledge-graph</PackageTags>
-    <PackageReleaseNotes>New: HTTP endpoints from ASP.NET Core Minimal APIs are first-class graph
-nodes. Each MapGet/MapPost/... registration becomes an Endpoint node ("VERB /route/template")
-linked to its handler method, so impact_analysis and find_usages on a handler now surface the
-actual routes that break. Two new MCP tools: list_endpoints (filter by verb/prefix) and
-find_endpoint (a concrete path like /api/vendors/42 matches its template). Route templates
-resolve statically -- MapGroup prefixes (nested and CleanArchitecture-convention), const and
-string.Empty patterns, custom reversed-argument Map* extensions; unresolvable registrations are
-counted and reported, never guessed. Attribute-routed controllers are not modeled yet. Upgrading:
+    <PackageReleaseNotes>New: attribute-routed ASP.NET Core controllers now produce Endpoint
+nodes -- [Route]/[HttpGet("...")]/... actions become "VERB /route/template" nodes linked to their
+action methods, joining the Minimal-API endpoints from v0.7.0 with the same shape, tools
+(list_endpoints/find_endpoint), and incremental behavior. Composition follows MVC's own rules:
+class-level [Route] (declared or inherited), [controller]/[action]/[area] tokens, absolute
+overrides; controller base classes reached through packages work too (Ardalis.ApiEndpoints out of
+the box). Conventionally-routed controllers (no route attributes) are detected and disclosed --
+never silently absent; unresolvable shapes are counted and reported, never guessed. Upgrading:
 just re-run analyze -- the tool-version check forces the full rebuild automatically. See
 CHANGELOG.md for details.
 Source: https://github.com/EMahmoudNabil/slnmap</PackageReleaseNotes>

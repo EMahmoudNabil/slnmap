@@ -46,6 +46,13 @@ cold and incremental rows below. Each timing row is the **median of 3 runs**.
 
 ## Results
 
+*v0.8.0 (controller endpoint nodes) was measured against eShopOnWeb directly during field
+verification: 26 endpoints extracted (25 attribute-routed controller actions + 1
+Ardalis.ApiEndpoints), cold analyze 26.8 s on the current dev machine — not directly comparable
+to the pinned-methodology rows below. On solutions without controllers (the Slnmap development
+solution and a 26k-node production Minimal-API solution) the graph was byte-identical to v0.7.0
+with no measurable time delta.*
+
 *v0.7.0 (Minimal-API endpoint nodes) was not re-benchmarked on eShopOnWeb; on the Slnmap
 development solution (no Minimal APIs) the graph was byte-identical with flat analyze time, and on
 a 26k-node production Minimal-API solution it added +2.1% nodes / +1.3% edges (658 endpoints) at

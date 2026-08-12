@@ -134,6 +134,7 @@ public sealed class RoslynSolutionAnalyzer : ISolutionAnalyzer
         }
 
         int unresolvedEndpoints = 0;
+        int conventionalControllers = 0;
         foreach (var result in results)
         {
             foreach (var node in result.Nodes)
@@ -147,6 +148,7 @@ public sealed class RoslynSolutionAnalyzer : ISolutionAnalyzer
             }
 
             unresolvedEndpoints += result.UnresolvedEndpoints;
+            conventionalControllers += result.ConventionalControllers;
             foreach (var warning in result.Warnings)
             {
                 _warningSink?.Invoke(warning);
@@ -160,7 +162,7 @@ public sealed class RoslynSolutionAnalyzer : ISolutionAnalyzer
         graph = PruneOrphanNamespaces(graph);
 
         var files = currentHashes.Select(static kv => new FileRecord(kv.Key, kv.Value)).ToList();
-        var stats = new AnalysisStats(projects.Count, analyzedCount, candidateDocuments - totalDocuments, unresolvedEndpoints);
+        var stats = new AnalysisStats(projects.Count, analyzedCount, candidateDocuments - totalDocuments, unresolvedEndpoints, conventionalControllers);
         return new AnalysisSnapshot(graph, files, stats);
     }
 
