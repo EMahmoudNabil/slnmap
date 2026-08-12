@@ -2,6 +2,44 @@
 
 All notable changes to Slnmap are documented here. Versions follow [SemVer](https://semver.org).
 
+## 0.8.0
+
+### Added
+
+- **Attribute-routed ASP.NET Core controllers now produce `Endpoint` nodes.** Public ordinary
+  actions on non-abstract `ControllerBase`-derived classes — including base classes reached
+  through package metadata (Ardalis.ApiEndpoints works out of the box) — become
+  `VERB /route/template` nodes with the same shape, edges, MCP tools, and incremental behavior as
+  Minimal-API endpoints (v0.7.0). Composition follows MVC's own selector semantics: class-level
+  `[Route]` (nearest declared or inherited; multiple = one route each), templated
+  `[HttpGet("…")]`/`[Route("…")]` attributes each yield a route, bare verb attributes constrain
+  them or ride the class template, absolute (`/…`) templates override, and
+  `[controller]`/`[action]`/`[area]` tokens substitute with MVC's conventions (`Controller`/
+  `Async` suffix stripping). Duplicate verb+template collapses onto one node across both
+  extractors.
+- **Conventionally-routed controllers are detected and disclosed, never silently absent**: a
+  controller with no route attributes anywhere in its inheritance chain is a different routing
+  system (`MapControllerRoute`), not an extraction failure — the analyze summary, a per-class
+  warning, and a `list_endpoints` note all say so, so "0 endpoints" on an MVC codebase is never
+  a mystery.
+- Deterministic-or-declared, as always: verb-less attribute-routed actions, actions declared on
+  abstract controllers, unknown route tokens, and verbs outside the modeled set
+  (`HEAD`/`OPTIONS`/`AcceptVerbs`) are counted and reported with reasons.
+
+### Known limits
+
+- A route registered with an identical verb+template in two **different files** can lose one of
+  its `HandledBy` edges under *incremental* re-analysis (full analysis is unaffected). ASP.NET
+  itself rejects such duplicates at request time, so real codebases don't ship them; documented
+  for completeness.
+- Conventional routing (`MapControllerRoute` patterns) and Razor Pages remain unmodeled —
+  detected and disclosed where applicable, as above.
+
+### Upgrading
+
+Just re-run `slnmap analyze` — the tool-version check forces the one-time full rebuild
+automatically; controller endpoints appear in the graph after it.
+
 ## 0.7.0
 
 ### Added

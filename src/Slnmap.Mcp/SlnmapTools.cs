@@ -145,11 +145,13 @@ public static class SlnmapTools
 
     [McpServerTool(Name = "list_endpoints")]
     [Description(
-        "List the HTTP endpoints extracted from ASP.NET Core Minimal API registrations, grouped by " +
-        "project: \"VERB /route/template → handler — file:line\". Endpoint identity is the composed " +
-        "route template as authored ({param} names and :int constraints preserved). Optionally filter " +
-        "by verb and/or route prefix. Registrations that could not be resolved statically are counted " +
-        "in a trailing note, never guessed. Attribute-routed controllers are not modeled yet.")]
+        "List the HTTP endpoints extracted from ASP.NET Core Minimal API registrations AND " +
+        "attribute-routed controllers ([Route]/[HttpGet]...), grouped by project: " +
+        "\"VERB /route/template → handler — file:line\". Endpoint identity is the composed route " +
+        "template as authored ({param} names and :int constraints preserved). Optionally filter by " +
+        "verb and/or route prefix. Registrations that could not be resolved statically are counted " +
+        "in a trailing note, never guessed; conventionally-routed controllers (no route attributes) " +
+        "are disclosed but not modeled.")]
     public static Task<string> ListEndpoints(
         IGraphStore store,
         [Description("Optional HTTP verb filter: GET, POST, PUT, DELETE, or PATCH.")] string? verb = null,

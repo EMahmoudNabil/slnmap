@@ -102,9 +102,19 @@ public sealed class EndpointNodeTests : IClassFixture<AnalyzedFixtureSolution>
     [Fact]
     public void UnresolvedRegistrations_AreCounted_NotGuessed()
     {
-        // Exactly the three designed refusals: NonLeafHooks' "ping" (non-leaf GetType().Name),
-        // EchoPattern (non-constant), and RegisterPing's body (pattern is a wrapper's parameter).
-        Assert.Equal(3, _fixture.Snapshot.Stats.UnresolvedEndpoints);
+        // Exactly the five designed refusals — three Minimal-API: NonLeafHooks' "ping" (non-leaf
+        // GetType().Name), EchoPattern (non-constant), RegisterPing's body (pattern is a
+        // wrapper's parameter); and two controller-side (v1.1): AmbiguousVerbController.Ping
+        // (verb-less route) and SharedBaseController.Shared (abstract controller).
+        Assert.Equal(5, _fixture.Snapshot.Stats.UnresolvedEndpoints);
+    }
+
+    [Fact]
+    public void ConventionalControllers_AreNoted_NotCounted()
+    {
+        // LegacyPagesController (no route attributes anywhere) is a different routing system:
+        // one detection note per class, never an unresolved-endpoint count.
+        Assert.Equal(1, _fixture.Snapshot.Stats.ConventionalControllers);
     }
 
     [Fact]

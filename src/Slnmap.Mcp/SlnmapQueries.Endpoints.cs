@@ -36,7 +36,7 @@ public sealed partial class SlnmapQueries
         var endpoints = await _store.GetNodesByKindAsync(NodeKind.Endpoint, cancellationToken).ConfigureAwait(false);
         if (endpoints.Count == 0)
         {
-            return NoEndpointsMessage();
+            return await NoEndpointsMessageAsync(cancellationToken).ConfigureAwait(false);
         }
 
         var filtered = endpoints
@@ -102,7 +102,7 @@ public sealed partial class SlnmapQueries
         var endpoints = await _store.GetNodesByKindAsync(NodeKind.Endpoint, cancellationToken).ConfigureAwait(false);
         if (endpoints.Count == 0)
         {
-            return NoEndpointsMessage();
+            return await NoEndpointsMessageAsync(cancellationToken).ConfigureAwait(false);
         }
 
         string normalizedQuery = RouteTemplate.Normalize(route);
@@ -141,10 +141,25 @@ public sealed partial class SlnmapQueries
         return builder.ToString().TrimEnd();
     }
 
-    private static string NoEndpointsMessage() =>
-        "The graph contains no Endpoint nodes. Endpoints are extracted from ASP.NET Core Minimal API registrations "
-        + "(MapGet/MapPost/...) at analyze time — re-run 'slnmap analyze' with slnmap 0.7+ if this graph predates it. "
-        + "Attribute-routed controllers ([Route]/[HttpGet]) are not modeled yet.";
+    private async Task<string> NoEndpointsMessageAsync(CancellationToken cancellationToken)
+    {
+        var builder = new StringBuilder();
+        builder.Append(
+            "The graph contains no Endpoint nodes. Endpoints are extracted at analyze time from ASP.NET Core "
+            + "Minimal API registrations (MapGet/MapPost/...) and attribute-routed controllers ([Route]/[HttpGet]) — "
+            + "re-run 'slnmap analyze' with a current slnmap if this graph predates them.");
+        var meta = await _store.GetMetaAsync(cancellationToken).ConfigureAwait(false);
+        if (meta.TryGetValue(MetaKeys.ConventionalControllers, out var raw)
+            && int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out int conventional)
+            && conventional > 0)
+        {
+            builder.Append(
+                $" Note: this solution has {conventional} conventionally-routed controller(s) (no route attributes; "
+                + "routed by MapControllerRoute patterns) — those are a different routing system and are not modeled.");
+        }
+
+        return builder.ToString();
+    }
 
     /// <summary>The verb is the FQN's first token — "GET /api/vendors" → "GET" (design §2.3: no extra columns).</summary>
     private static string VerbOf(SymbolNode endpoint)
@@ -191,6 +206,13 @@ public sealed partial class SlnmapQueries
             && unresolved > 0)
         {
             builder.AppendLine($"note: {unresolved} registration(s) could not be resolved statically and are not listed — 'slnmap analyze --verbose' prints each with its location and reason.");
+        }
+
+        if (meta.TryGetValue(MetaKeys.ConventionalControllers, out var conventionalRaw)
+            && int.TryParse(conventionalRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out int conventional)
+            && conventional > 0)
+        {
+            builder.AppendLine($"note: {conventional} conventionally-routed controller(s) (no route attributes) are not modeled — a different routing system, not an extraction failure.");
         }
     }
 
