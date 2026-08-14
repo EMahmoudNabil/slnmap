@@ -23,7 +23,8 @@ public static class SlnmapTools
         "Search the code graph for symbols by name or fully qualified name (FQN). Returns up to 20 " +
         "matches, each with its kind, FQN and file. An FQN alone does not reveal whether a member is " +
         "an explicit interface implementation (those collapse to the Type.Member(params) form), so " +
-        "when several symbols share an FQN all are returned — disambiguate by kind.")]
+        "when several symbols share an FQN all are returned — disambiguate by kind. " +
+        "Example: {\"query\": \"IShape\", \"kind\": \"Interface\"}")]
     public static Task<string> FindSymbol(
         IGraphStore store,
         [Description("Text matched against symbol name and FQN (case-insensitive substring).")] string query,
@@ -36,7 +37,8 @@ public static class SlnmapTools
         "List a symbol's dependencies grouped by relationship kind (Calls, Implements, Inherits, " +
         "References), with optional transitive depth. Pass the symbol's fully qualified name. " +
         "direction 'outgoing' = what this symbol depends on; 'incoming' = what depends on this symbol. " +
-        "depth is 1-3. Results are capped at 50 with a truncation note.")]
+        "depth is 1-3. Results are capped at 50 with a truncation note. " +
+        "Example: {\"fqn\": \"Fixture.Lib.Circle.Area()\", \"direction\": \"incoming\", \"depth\": 1}")]
     public static Task<string> GetDependencies(
         IGraphStore store,
         [Description("Fully qualified name of the symbol.")] string fqn,
@@ -51,7 +53,7 @@ public static class SlnmapTools
         "depends on the given FQN (depth 5): counts first (totals by project and by kind), then the " +
         "dependent list nearest-first. When the target is an interface or an interface member, its " +
         "concrete implementations/overrides and their dependents are included — that is the point of " +
-        "the tool. Pass a fully qualified name.")]
+        "the tool. Pass a fully qualified name. Example: {\"fqn\": \"Fixture.Lib.IShape.Area()\"}")]
     public static Task<string> ImpactAnalysis(
         IGraphStore store,
         [Description("Fully qualified name of the symbol under consideration.")] string fqn,
@@ -61,7 +63,8 @@ public static class SlnmapTools
     [McpServerTool(Name = "get_architecture_overview")]
     [Description(
         "High-level map of the analyzed solution: projects, project-to-project dependencies derived " +
-        "from symbol references, node/edge counts by kind, and top-level namespaces.")]
+        "from symbol references, node/edge counts by kind, and top-level namespaces. " +
+        "Takes no parameters. Example: {}")]
     public static Task<string> GetArchitectureOverview(
         IGraphStore store,
         CancellationToken cancellationToken = default)
@@ -71,7 +74,8 @@ public static class SlnmapTools
     [Description(
         "Find where a symbol is used (called or referenced). Returns the containing member, file and " +
         "line for each usage, up to 50. Pass a fully qualified name. An FQN does not reveal " +
-        "explicit-interface-ness; if several symbols share the FQN, usages of all are reported.")]
+        "explicit-interface-ness; if several symbols share the FQN, usages of all are reported. " +
+        "Example: {\"fqn\": \"Fixture.Lib.IShape.Area()\"}")]
     public static Task<string> FindUsages(
         IGraphStore store,
         [Description("Fully qualified name of the symbol.")] string fqn,
@@ -84,7 +88,8 @@ public static class SlnmapTools
         "that implement or override an interface member or virtual/abstract member. Transitive over " +
         "Implements + Inherits, grouped by project with file:line. Pass a fully qualified name. Use " +
         "this for \"who are the concrete types/overrides\"; for the full blast radius of a change use " +
-        "impact_analysis; for the inheritance shape as a tree use get_type_hierarchy.")]
+        "impact_analysis; for the inheritance shape as a tree use get_type_hierarchy. " +
+        "Example: {\"fqn\": \"Fixture.Lib.IShape\"}")]
     public static Task<string> FindImplementations(
         IGraphStore store,
         [Description("Fully qualified name of an interface, base type, or interface/virtual member.")] string fqn,
@@ -97,7 +102,7 @@ public static class SlnmapTools
         "Inherits + Implements, depth-capped. direction: 'up' = base types/interfaces, 'down' = " +
         "derived types/implementers, 'both'. Pass a fully qualified name. For just the concrete " +
         "implementer list use find_implementations; for a mixed one-hop dependency list use " +
-        "get_dependencies.")]
+        "get_dependencies. Example: {\"fqn\": \"Fixture.Lib.ShapeBase\", \"direction\": \"down\"}")]
     public static Task<string> GetTypeHierarchy(
         IGraphStore store,
         [Description("Fully qualified name of the type.")] string fqn,
@@ -112,7 +117,8 @@ public static class SlnmapTools
         "to test projects, grouped by project with file:line. Heuristic: a project is a test project " +
         "when its name contains \"Test\" (there is no package data to detect a framework directly) — the " +
         "output states this. Pass a fully qualified name. For all usages (not just tests) use " +
-        "find_usages; for the full set of dependents use impact_analysis.")]
+        "find_usages; for the full set of dependents use impact_analysis. " +
+        "Example: {\"fqn\": \"Fixture.Lib.Circle.Area()\"}")]
     public static Task<string> FindTestsForSymbol(
         IGraphStore store,
         [Description("Fully qualified name of the symbol under test.")] string fqn,
@@ -124,7 +130,8 @@ public static class SlnmapTools
         "Project-to-project reference map with cross-project reference counts, ending in a hotspot line " +
         "(the most-coupled pair). Pass a project name to focus on it, or 'all' (default) for the whole " +
         "map. This is the focused, per-project drill-down; get_architecture_overview includes the same " +
-        "map plus node/edge/namespace census. To check for cycles use find_circular_dependencies.")]
+        "map plus node/edge/namespace census. To check for cycles use find_circular_dependencies. " +
+        "Example: {\"project\": \"FixtureLib\"}")]
     public static Task<string> GetProjectDependencies(
         IGraphStore store,
         [Description("A project name, or 'all' for the full map.")] string project = "all",
@@ -136,7 +143,7 @@ public static class SlnmapTools
         "Detect dependency cycles between projects (scope='project') or namespaces (scope='namespace') " +
         "over the derived container graph. Each cycle is reported as a path chain, worst offenders " +
         "(most crossing references) first. An acyclic solution reports '0 cycles' — a real answer. To " +
-        "see the underlying edges use get_project_dependencies.")]
+        "see the underlying edges use get_project_dependencies. Example: {\"scope\": \"namespace\"}")]
     public static Task<string> FindCircularDependencies(
         IGraphStore store,
         [Description("'project' or 'namespace'.")] string scope = "project",
@@ -151,7 +158,7 @@ public static class SlnmapTools
         "template as authored ({param} names and :int constraints preserved). Optionally filter by " +
         "verb and/or route prefix. Registrations that could not be resolved statically are counted " +
         "in a trailing note, never guessed; conventionally-routed controllers (no route attributes) " +
-        "are disclosed but not modeled.")]
+        "are disclosed but not modeled. Example: {\"verb\": \"GET\", \"prefix\": \"/api/vendors\"}")]
     public static Task<string> ListEndpoints(
         IGraphStore store,
         [Description("Optional HTTP verb filter: GET, POST, PUT, DELETE, or PATCH.")] string? verb = null,
@@ -165,7 +172,8 @@ public static class SlnmapTools
         "concrete path (\"/api/vendors/42\"), matched with the framework's own semantics: " +
         "case-insensitive, {param}/{param:constraint} holes bind concrete segments. Returns each " +
         "match with its handler method and registration file:line; a miss suggests near matches. " +
-        "Use impact_analysis on the handler to see an endpoint's blast radius.")]
+        "Use impact_analysis on the handler to see an endpoint's blast radius. " +
+        "Example: {\"route\": \"/api/vendors/42\"}")]
     public static Task<string> FindEndpoint(
         IGraphStore store,
         [Description("The route to find: a template or a concrete request path.")] string route,
@@ -178,7 +186,7 @@ public static class SlnmapTools
         "Return the real source code of a symbol, read from its file at the stored declaration span and " +
         "expanded by context_lines on each side (capped at 120 lines). Pass a fully qualified name. " +
         "find_symbol locates a symbol (kind + path, no body); this prints the body — the natural next " +
-        "call after find_symbol.")]
+        "call after find_symbol. Example: {\"fqn\": \"Fixture.Lib.Circle.Area()\", \"context_lines\": 3}")]
     public static Task<string> GetSymbolSource(
         IGraphStore store,
         [Description("Fully qualified name of the symbol.")] string fqn,

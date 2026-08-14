@@ -24,7 +24,10 @@ public sealed partial class SlnmapQueries
         string dir = (direction ?? "both").Trim().ToLowerInvariant();
         if (dir is not ("up" or "down" or "both"))
         {
-            return "direction must be 'up' (base types), 'down' (derived types), or 'both'.";
+            return ToolFailure.InvalidParameter(
+                "direction",
+                ["fqn", "direction", "depth"],
+                "direction must be 'up' (base types), 'down' (derived types), or 'both'.");
         }
 
         int maxDepth = Math.Clamp(depth, 1, 10);

@@ -2,6 +2,42 @@
 
 All notable changes to Slnmap are documented here. Versions follow [SemVer](https://semver.org).
 
+## 0.8.1
+
+### Changed — MCP failures are now machine-checkable (#15)
+
+Production feedback from MCP-server operators (the r/mcp launch thread) reshaped how tool
+failures reach the model. Success payloads are untouched — correct calls see zero difference.
+
+- **Failures return as normal tool results, never protocol-level `isError`** (clients render
+  isError inconsistently; a plain result always reaches the model). The payload is a small JSON
+  object with `status`/`code`/`message`/`hint`, the offending parameter, and the valid parameter
+  list — state a model can act on, not an exception string. Codes: `invalid_parameter` /
+  `missing_parameter` (hint `fix_call`) and `internal_error` (hint `retry`, with the
+  re-run-analyze remediation). "Not found" deliberately stays a normal prose answer with
+  suggestions — zero results is an answer, not a malfunction.
+- **Wrong-parameter calls are corrective now**: `find_usages(symbol: …)` used to return the
+  opaque `"An error occurred invoking 'find_usages'"` with the real cause visible only in the
+  server's stderr; it now returns
+  `unknown parameter 'symbol' — this tool takes fqn (required, string)` plus the machine fields.
+- **Unknown arguments are no longer silently dropped.** Previously, a wrong parameter name on a
+  tool whose parameters are all optional (e.g. `get_project_dependencies(projekt: …)`) ran with
+  defaults and returned the full unfiltered result — a failure shaped exactly like a success.
+  Now a hard, corrective failure.
+- **Sanitization is structural**: every tool call flows through one wrapper; stack traces, file
+  paths, and internal type names can never reach a payload (full detail still goes to stderr for
+  humans). Validation runs against each tool's own advertised schema, so messages can't drift
+  from the contract.
+- **Every tool description now carries one concrete example invocation** (`Example: {…}`), and
+  the test suite executes each example against a real analyzed graph — an example can never rot.
+- Fixed: `slnmap serve` against a corrupt/non-Slnmap database file now fails with the same clean
+  two-line message `status`/`viz` use, instead of crashing with a raw unhandled exception.
+
+### Upgrading
+
+No action needed — the graph format is unchanged; only tool-failure payloads and descriptions
+changed. Re-analysis is forced by the version check as usual on your next `slnmap analyze`.
+
 ## 0.8.0
 
 ### Added

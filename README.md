@@ -121,6 +121,12 @@ call.
 | `list_endpoints` | `verb` *(optional: `GET`/`POST`/`PUT`/`DELETE`/`PATCH`)*, `prefix` *(optional route prefix, e.g. `/api/vendors`)* | HTTP endpoints (Minimal APIs + attribute-routed controllers) grouped by project: `VERB /route → handler — file:line`; unresolved registrations and conventionally-routed controllers disclosed in trailing notes. |
 | `find_endpoint` | `route` *(required: a template or a concrete path)*, `verb` *(optional)* | Endpoints matching a route — case-insensitive, `{param}` holes bind concrete segments; a miss suggests near matches. |
 
+A malformed call never returns an opaque error: failures come back as a normal result carrying a
+small JSON payload — `status`/`code`/`message`/`hint` plus the offending parameter and the valid
+parameter list — so an agent can self-correct (`invalid_parameter`/`missing_parameter` → fix the
+call; `internal_error` → retry). "Not found" is a normal prose answer with suggestions, never an
+error. Stack traces and file paths never appear in a payload.
+
 ## CLI
 
 ```console

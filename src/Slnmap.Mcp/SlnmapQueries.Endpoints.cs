@@ -29,7 +29,10 @@ public sealed partial class SlnmapQueries
             verbFilter = verb.Trim().ToUpperInvariant();
             if (!KnownVerbs.Contains(verbFilter, StringComparer.Ordinal))
             {
-                return $"Unknown verb '{verb}'. Valid verbs: {string.Join(", ", KnownVerbs)}.";
+                return ToolFailure.InvalidParameter(
+                    "verb",
+                    ["verb", "prefix"],
+                    $"Unknown verb '{verb}'. Valid verbs: {string.Join(", ", KnownVerbs)}.");
             }
         }
 
@@ -86,7 +89,10 @@ public sealed partial class SlnmapQueries
 
         if (string.IsNullOrWhiteSpace(route))
         {
-            return "Provide a route to find, e.g. find_endpoint(route: \"/api/vendors/{id}\") — a concrete path like \"/api/vendors/42\" also matches its template.";
+            return ToolFailure.MissingParameter(
+                "route",
+                ["route", "verb"],
+                "Provide a route in 'route', e.g. {\"route\": \"/api/vendors/{id}\"} — a concrete path like \"/api/vendors/42\" also matches its template.");
         }
 
         string? verbFilter = null;
@@ -95,7 +101,10 @@ public sealed partial class SlnmapQueries
             verbFilter = verb.Trim().ToUpperInvariant();
             if (!KnownVerbs.Contains(verbFilter, StringComparer.Ordinal))
             {
-                return $"Unknown verb '{verb}'. Valid verbs: {string.Join(", ", KnownVerbs)}.";
+                return ToolFailure.InvalidParameter(
+                    "verb",
+                    ["route", "verb"],
+                    $"Unknown verb '{verb}'. Valid verbs: {string.Join(", ", KnownVerbs)}.");
             }
         }
 

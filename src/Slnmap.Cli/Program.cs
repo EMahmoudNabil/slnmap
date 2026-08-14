@@ -166,7 +166,19 @@ serveCommand.SetAction(async (parseResult, cancellationToken) =>
     // (e.g. issue #6) that no longer matches what this version would produce.
     if (File.Exists(store.DatabasePath))
     {
-        await store.InitializeAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await store.InitializeAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            // A corrupt/non-Slnmap file used to crash the whole server with a raw stack trace at
+            // startup — the same clean two-line message `viz` and `status` already use.
+            Console.Error.WriteLine(Palette.Err.Error("The graph file is corrupted or not a Slnmap database."));
+            Console.Error.WriteLine(Palette.Err.Label($"Delete {store.DatabasePath} and re-run 'slnmap analyze'."));
+            return 1;
+        }
+
         var meta = await store.GetMetaAsync(cancellationToken).ConfigureAwait(false);
         meta.TryGetValue(MetaKeys.ToolVersion, out var storedVersion);
         string currentVersion = CurrentVersion();

@@ -40,7 +40,10 @@ public sealed partial class SlnmapQueries
 
         if (string.IsNullOrWhiteSpace(query))
         {
-            return "Provide a search string (matched against symbol name and fully qualified name).";
+            return ToolFailure.MissingParameter(
+                "query",
+                ["query", "kind"],
+                "Provide a search string in 'query' — matched case-insensitively against symbol name and fully qualified name, e.g. {\"query\": \"IShape\"}.");
         }
 
         NodeKind? kindFilter = null;
@@ -48,7 +51,10 @@ public sealed partial class SlnmapQueries
         {
             if (!Enum.TryParse(kind, ignoreCase: true, out NodeKind parsed))
             {
-                return $"Unknown kind '{kind}'. Valid kinds: {string.Join(", ", Enum.GetNames<NodeKind>())}.";
+                return ToolFailure.InvalidParameter(
+                    "kind",
+                    ["query", "kind"],
+                    $"Unknown kind '{kind}'. Valid kinds: {string.Join(", ", Enum.GetNames<NodeKind>())}.");
             }
 
             kindFilter = parsed;
@@ -78,7 +84,7 @@ public sealed partial class SlnmapQueries
         if (matches.Count == 0)
         {
             string kindNote = kindFilter is null ? string.Empty : $" of kind {kindFilter}";
-            return $"No symbols match '{query}'{kindNote}.";
+            return $"No symbols match '{query}'{kindNote}. Try a shorter substring (matching is case-insensitive over names and FQNs){(kindFilter is null ? "" : ", or drop the kind filter")}.";
         }
 
         bool capped = matches.Count > FindLimit;
@@ -105,7 +111,10 @@ public sealed partial class SlnmapQueries
 
         if (!TryParseDirection(direction, out var edgeDirection))
         {
-            return "direction must be 'incoming' (who depends on this) or 'outgoing' (what this depends on).";
+            return ToolFailure.InvalidParameter(
+                "direction",
+                ["fqn", "direction", "depth"],
+                "direction must be 'incoming' (who depends on this) or 'outgoing' (what this depends on).");
         }
 
         depth = Math.Clamp(depth, 1, 3);

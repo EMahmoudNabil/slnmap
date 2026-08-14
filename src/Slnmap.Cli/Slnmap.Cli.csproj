@@ -8,7 +8,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>slnmap</ToolCommandName>
     <PackageId>Slnmap</PackageId>
-    <Version>0.8.0</Version>
+    <Version>0.8.1</Version>
     <RollForward>Major</RollForward>
     <PackageReadmeFile>nuget-readme.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>
@@ -18,16 +18,16 @@
     <PackageProjectUrl>https://slnmap.dev</PackageProjectUrl>
     <RepositoryUrl>https://github.com/EMahmoudNabil/slnmap</RepositoryUrl>
     <PackageTags>dotnet;roslyn;mcp;ai;code-analysis;claude-code;knowledge-graph</PackageTags>
-    <PackageReleaseNotes>New: attribute-routed ASP.NET Core controllers now produce Endpoint
-nodes -- [Route]/[HttpGet("...")]/... actions become "VERB /route/template" nodes linked to their
-action methods, joining the Minimal-API endpoints from v0.7.0 with the same shape, tools
-(list_endpoints/find_endpoint), and incremental behavior. Composition follows MVC's own rules:
-class-level [Route] (declared or inherited), [controller]/[action]/[area] tokens, absolute
-overrides; controller base classes reached through packages work too (Ardalis.ApiEndpoints out of
-the box). Conventionally-routed controllers (no route attributes) are detected and disclosed --
-never silently absent; unresolvable shapes are counted and reported, never guessed. Upgrading:
-just re-run analyze -- the tool-version check forces the full rebuild automatically. See
-CHANGELOG.md for details.
+    <PackageReleaseNotes>Agent-experience release: MCP tool failures are now machine-checkable.
+Failures return as normal tool results (never protocol-level isError) carrying a small JSON
+payload -- status/code/message/hint plus the offending parameter and the valid parameter list --
+so a model can self-correct instead of staring at "An error occurred invoking 'X'". Codes
+distinguish fix-the-call (invalid_parameter/missing_parameter) from retry-as-is (internal_error).
+Unknown arguments are no longer silently dropped on optional-only tools. Sanitization is
+structural: stack traces and paths can never reach a payload. Every tool description now carries
+a concrete example invocation, each executed against a real graph in the test suite. Success
+payloads are untouched -- correct calls see zero difference. Also fixed: serve against a corrupt
+db fails cleanly instead of crashing. Closes #15. See CHANGELOG.md for details.
 Source: https://github.com/EMahmoudNabil/slnmap</PackageReleaseNotes>
   </PropertyGroup>
 
