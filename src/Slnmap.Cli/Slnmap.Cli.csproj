@@ -8,7 +8,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>slnmap</ToolCommandName>
     <PackageId>Slnmap</PackageId>
-    <Version>0.8.1</Version>
+    <Version>0.8.2</Version>
     <RollForward>Major</RollForward>
     <PackageReadmeFile>nuget-readme.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>
@@ -18,16 +18,12 @@
     <PackageProjectUrl>https://slnmap.dev</PackageProjectUrl>
     <RepositoryUrl>https://github.com/EMahmoudNabil/slnmap</RepositoryUrl>
     <PackageTags>dotnet;roslyn;mcp;ai;code-analysis;claude-code;knowledge-graph</PackageTags>
-    <PackageReleaseNotes>Agent-experience release: MCP tool failures are now machine-checkable.
-Failures return as normal tool results (never protocol-level isError) carrying a small JSON
-payload -- status/code/message/hint plus the offending parameter and the valid parameter list --
-so a model can self-correct instead of staring at "An error occurred invoking 'X'". Codes
-distinguish fix-the-call (invalid_parameter/missing_parameter) from retry-as-is (internal_error).
-Unknown arguments are no longer silently dropped on optional-only tools. Sanitization is
-structural: stack traces and paths can never reach a payload. Every tool description now carries
-a concrete example invocation, each executed against a real graph in the test suite. Success
-payloads are untouched -- correct calls see zero difference. Also fixed: serve against a corrupt
-db fails cleanly instead of crashing. Closes #15. See CHANGELOG.md for details.
+    <PackageReleaseNotes>Bugfix release. analyze progress no longer floods redirected/CI output
+(one line per document became milestone lines: stage changes + every 10 percent; interactive
+terminals keep the single overwriting line) -- #16, found by the first external install audit.
+viz no longer stacks edge-count labels when several edge kinds connect the same two nodes:
+parallel bundles curve apart so lines and counts stay legible at the collapsed level -- #17.
+No graph or tool-behavior changes; upgrading needs no re-analysis.
 Source: https://github.com/EMahmoudNabil/slnmap</PackageReleaseNotes>
   </PropertyGroup>
 

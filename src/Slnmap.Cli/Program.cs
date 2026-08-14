@@ -429,18 +429,55 @@ static async Task<AnalysisSnapshot?> LoadPreviousAsync(
 static string CurrentVersion() =>
     Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "unknown";
 
-/// <summary>Single-line progress display on stderr that warnings can safely interleave with.</summary>
+/// <summary>
+/// Progress display on stderr that warnings can safely interleave with. Interactive terminals get
+/// a single overwriting line (carriage-return rewrite); redirected/piped output (logs, CI,
+/// Tee-Object) gets milestone lines only — stage changes and every 10% — because "\r" does not
+/// overwrite in a capture, so per-update writes flooded captured output with thousands of
+/// progress lines (issue #16, found by the first external install audit).
+/// </summary>
 internal sealed class ConsoleStatusLine : IProgress<AnalysisProgress>
 {
     private const int Width = 70;
     private readonly object _gate = new();
+    private readonly bool _redirected;
+    private string? _lastStage;
+    private int _lastBucket = -1;
+
+    public ConsoleStatusLine()
+        : this(Console.IsErrorRedirected)
+    {
+    }
+
+    /// <summary>Test seam: the redirection decision is injected because a test runner's stderr is always redirected.</summary>
+    internal ConsoleStatusLine(bool redirected) => _redirected = redirected;
 
     public void Report(AnalysisProgress value)
     {
-        string total = value.Total > 0 ? $"/{value.Total}" : string.Empty;
         lock (_gate)
         {
-            Console.Error.Write($"\r{value.Stage} {value.Completed}{total}".PadRight(Width));
+            if (_redirected)
+            {
+                // Milestones only: the first report of each stage, then every 10% when the total
+                // is known. Stages with unknown totals (Loading) print only their first report.
+                int bucket = value.Total > 0 ? value.Completed * 10 / value.Total : -1;
+                bool stageChanged = value.Stage != _lastStage;
+                if (!stageChanged && bucket == _lastBucket)
+                {
+                    return;
+                }
+
+                _lastStage = value.Stage;
+                _lastBucket = bucket;
+                if (stageChanged || bucket > 0)
+                {
+                    Console.Error.WriteLine(Render(value));
+                }
+
+                return;
+            }
+
+            Console.Error.Write(('\r' + Render(value)).PadRight(Width));
         }
     }
 
@@ -448,7 +485,11 @@ internal sealed class ConsoleStatusLine : IProgress<AnalysisProgress>
     {
         lock (_gate)
         {
-            Console.Error.Write('\r' + new string(' ', Width) + '\r');
+            if (!_redirected)
+            {
+                Console.Error.Write('\r' + new string(' ', Width) + '\r');
+            }
+
             Console.Error.WriteLine(message);
         }
     }
@@ -457,7 +498,16 @@ internal sealed class ConsoleStatusLine : IProgress<AnalysisProgress>
     {
         lock (_gate)
         {
-            Console.Error.WriteLine();
+            if (!_redirected)
+            {
+                Console.Error.WriteLine();
+            }
         }
+    }
+
+    private static string Render(AnalysisProgress value)
+    {
+        string total = value.Total > 0 ? $"/{value.Total}" : string.Empty;
+        return $"{value.Stage} {value.Completed}{total}";
     }
 }
