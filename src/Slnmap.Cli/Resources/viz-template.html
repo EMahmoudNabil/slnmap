@@ -162,15 +162,37 @@ function rebuild() {
     const key = a + "|" + b + "|" + k;
     groups.set(key, (groups.get(key) || 0) + 1);
   }
+  // Parallel edges (several kinds between the same node pair, either direction) drew straight
+  // lines on top of each other, stacking their count labels unreadably at the collapsed level
+  // (issue #17). Give each edge of a parallel bundle its own curvature so lines AND labels
+  // separate; unique pairs keep the default straight line.
+  const pairTotals = new Map(); // "lo|hi" -> edge count between the pair, both directions
+  for (const key of groups.keys()) {
+    const [a, b] = key.split("|").map(Number);
+    const pair = Math.min(a, b) + "|" + Math.max(a, b);
+    pairTotals.set(pair, (pairTotals.get(pair) || 0) + 1);
+  }
+  const pairSeen = new Map();
   const vEdges = [];
   for (const [key, count] of groups) {
     const [a, b, k] = key.split("|").map(Number);
-    vEdges.push({
+    const pair = Math.min(a, b) + "|" + Math.max(a, b);
+    const edge = {
       id: key, from: a, to: b,
       label: count > 1 ? String(count) : "",
       width: Math.min(1 + Math.log2(count), 6),
       color: { color: EDGE_COLORS[k], opacity: 0.75 },
-    });
+    };
+    if (pairTotals.get(pair) > 1) {
+      const i = pairSeen.get(pair) || 0;
+      pairSeen.set(pair, i + 1);
+      edge.smooth = {
+        enabled: true,
+        type: i % 2 ? "curvedCCW" : "curvedCW",
+        roundness: 0.12 * (1 + Math.floor(i / 2)),
+      };
+    }
+    vEdges.push(edge);
   }
 
   network.setOptions({ physics: true });

@@ -2,6 +2,20 @@
 
 All notable changes to Slnmap are documented here. Versions follow [SemVer](https://semver.org).
 
+## 0.8.2
+
+### Fixed
+
+- **`analyze` progress no longer floods redirected/CI output** (#16). The single-line progress
+  display relies on carriage-return rewrites that only work on a live terminal — captured output
+  (logs, CI, `Tee-Object`) got one line per analyzed document, thousands per run. Redirected
+  stderr now prints milestone lines only: the first report of each stage plus every 10%.
+  Interactive terminals are unchanged.
+- **`viz` no longer stacks edge-count labels between the same node pair** (#17). Multiple edge
+  kinds between two projects (either direction) drew straight overlapping lines with unreadable
+  overlapping counts at the collapsed level; parallel bundles now curve apart so both the lines
+  and their labels are legible.
+
 ## 0.8.1
 
 ### Changed — MCP failures are now machine-checkable (#15)
