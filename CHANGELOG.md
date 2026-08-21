@@ -2,6 +2,45 @@
 
 All notable changes to Slnmap are documented here. Versions follow [SemVer](https://semver.org).
 
+## 0.10.0
+
+### Added
+
+- **`slnmap watch <solution>`** — the roadmap's top item, shipped. Analyzes once, keeps the
+  Roslyn `MSBuildWorkspace` resident, and re-analyzes on every file save. The expensive part of a
+  re-run was never the analysis — it was reopening the workspace (~90% of the cost, measured) —
+  so watch pays it once: a one-file semantic change on a 10-project solution (eShopOnWeb) lands
+  in the database in ~1 s (`re-analyzed 1 file(s) in 0.93s … saved in 0.17s`), versus a full
+  workspace reload for run-and-exit `analyze`. Each batch prints one line with the re-analysis
+  time, graph size, and save time; Ctrl+C exits cleanly.
+- **Designed to run beside `slnmap serve`** — the server reads the same database file and
+  survives the atomic save swap mid-query (pinned by test before watch existed), so a connected
+  agent's answers stay fresh while you type.
+- **Honest fallbacks, no guessing**: `.cs` content edits ride the warm path; structural changes
+  (`.csproj`/`.sln`/`.slnx`/`.props`/`.targets`/`global.json`) and brand-new files trigger an
+  *announced* full workspace reload — csproj glob semantics make in-snapshot document membership
+  a guess, and Slnmap doesn't guess. The reload itself stays hash-incremental. Editor save storms
+  are debounced (400 ms) and coalesced; a failed batch warns and keeps watching; saves are
+  skipped entirely when the graph is unchanged (a whitespace-only save costs milliseconds).
+
+### Changed
+
+- The analysis core is now shared between the cold path (`analyze`) and the resident path
+  (`watch`) — one implementation, two entry points. Cold-path behavior is unchanged (same graph,
+  same incremental planner, same warnings).
+
+### Notes
+
+- The resident workspace holds compilations in memory — expect hundreds of MB on very large
+  solutions. Watch is an opt-in dev-loop verb; `analyze` remains the CI/one-shot path.
+- On very large graphs (100k+ edges) the database save dominates the loop (~7 s measured);
+  a delta-save is the documented fast-follow.
+
+### Upgrading
+
+Nothing required — existing databases keep working, and `watch` picks up an existing
+same-version database exactly like `analyze` does.
+
 ## 0.9.0
 
 ### Added

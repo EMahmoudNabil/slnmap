@@ -131,13 +131,14 @@ error. Stack traces and file paths never appear in a payload.
 
 ```console
 slnmap analyze <solution>   # build or update the code graph (incremental on re-run)
+slnmap watch <solution>     # analyze once, then keep a warm workspace and re-analyze on save
 slnmap serve                # serve the graph to MCP clients over stdio
 slnmap status               # show node/edge counts and when it was last analyzed
 slnmap viz                  # export the graph as a self-contained interactive HTML file
 slnmap doctor               # check the environment can run Slnmap
 ```
 
-These five verbs are the whole CLI. Symbol, usage, and impact querying is MCP-only — there is no
+These six verbs are the whole CLI. Symbol, usage, and impact querying is MCP-only — there is no
 `find`/`usages`/`impact` command; connect an MCP client to `slnmap serve` to query the graph.
 
 `--db <path>` selects the database file (default `slnmap.db`). `-v`/`--verbose` prints per-document
@@ -224,11 +225,16 @@ number above: field measurements on real-world solutions (antivirus real-time pr
 exclusions) come out at roughly **55–60 seconds per 1,000 analyzed documents**. Treat it as
 approximate — hardware and antivirus overhead move it either way.
 
-**Incremental re-analysis.** Re-analysis re-walks only the changed file and its dependents, but each
-run still pays a full workspace load of the solution — because the CLI is run-and-exit and does not
-keep a warm workspace. In practice that means re-analysis is currently **about as fast as a cold run,
-not faster**. A resident **`watch` mode** that keeps the workspace warm (targeting sub-second
-re-analysis) is the top item on the roadmap.
+**Incremental re-analysis.** Re-analysis re-walks only the changed file and its dependents. A
+run-and-exit `slnmap analyze` still pays a full workspace load each time — so a re-run is about as
+fast as a cold run. **`slnmap watch`** (new in 0.10.0) pays that load once and then applies file
+saves to the warm workspace: on this same eShopOnWeb setup, a one-file semantic change re-analyzed
+in **0.93 s** and saved in **0.17 s** — about a second end to end, versus the ~19 s re-run above.
+On very large graphs (100k+ edges) the database save dominates instead (~7 s measured), so a change
+lands in a few seconds rather than minutes. Run `slnmap serve` beside it — the server reads the
+same file and survives the atomic swap mid-query, so your agent's answers stay fresh while you
+type. Note: the resident workspace holds compilations in memory — expect hundreds of MB on very
+large solutions.
 
 ## Troubleshooting
 

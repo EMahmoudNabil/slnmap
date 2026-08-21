@@ -53,7 +53,10 @@ first-class graph nodes — from ASP.NET Core Minimal APIs (v0.7.0) and attribut
 and get the actual route back.
 
 There's also `slnmap viz`: exports the graph as a single self-contained, interactive HTML file —
-no server, no CDN, works offline.
+no server, no CDN, works offline. And `slnmap watch` (v0.10.0): analyze once, keep the workspace
+warm, and re-analyze on every file save — a one-file change lands in the database in about a
+second on a 10-project solution, and a `slnmap serve` running beside it keeps answering from the
+same file, so your agent's answers stay fresh while you type.
 
 ## Privacy
 

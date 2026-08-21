@@ -152,6 +152,178 @@ analyzeCommand.SetAction(async (parseResult, cancellationToken) =>
     return 0;
 });
 
+var watchCommand = new Command("watch", "Analyze once, then keep a warm workspace and re-analyze on every file save (near-instant on content changes).")
+{
+    solutionArgument,
+    dbOption,
+    verboseOption,
+};
+watchCommand.SetAction(async (parseResult, cancellationToken) =>
+{
+    string solution = Path.GetFullPath(parseResult.GetRequiredValue(solutionArgument));
+    string db = parseResult.GetRequiredValue(dbOption);
+    bool verbose = parseResult.GetValue(verboseOption);
+    var status = new ConsoleStatusLine();
+    var warnings = new WarningReport();
+
+    await using var store = new SqliteGraphStore(db);
+    string currentVersion = CurrentVersion();
+    AnalysisSnapshot? previous = await LoadPreviousAsync(store, currentVersion, status, cancellationToken).ConfigureAwait(false);
+    if (previous is not null)
+    {
+        status.WriteLine($"incremental: reusing {previous.Graph.NodeCount} nodes from {store.DatabasePath}");
+    }
+
+    using var resident = new Slnmap.Analysis.ResidentAnalyzer(warnings.Add);
+    var pal = Palette.Out;
+    var stopwatch = Stopwatch.StartNew();
+    AnalysisSnapshot snapshot;
+    try
+    {
+        snapshot = await resident.InitializeAsync(solution, previous, status, cancellationToken).ConfigureAwait(false);
+    }
+    catch (SdkNotFoundException e)
+    {
+        Console.Error.WriteLine(e.Message);
+        return 1;
+    }
+    catch (OperationCanceledException)
+    {
+        return 0;
+    }
+    finally
+    {
+        status.Finish();
+    }
+
+    await store.SaveAsync(snapshot.Graph, snapshot.Files, BuildMeta(solution, snapshot, currentVersion), cancellationToken).ConfigureAwait(false);
+    stopwatch.Stop();
+    if (warnings.HasWarnings)
+    {
+        if (verbose)
+        {
+            foreach (var line in warnings.RenderVerbose())
+            {
+                status.WriteLine(Palette.Err.Warn(line));
+            }
+        }
+
+        status.WriteLine(Palette.Err.Warn(warnings.SummaryLine(includeVerboseHint: !verbose)));
+    }
+
+    Console.WriteLine(pal.Label("Graph:     ") + pal.Number(snapshot.Graph.NodeCount.ToString(CultureInfo.InvariantCulture)) + pal.Label(" nodes, ") + pal.Number(snapshot.Graph.EdgeCount.ToString(CultureInfo.InvariantCulture)) + pal.Label(" edges"));
+    Console.WriteLine(pal.Label("Elapsed:   ") + pal.Success($"{stopwatch.Elapsed.TotalSeconds.ToString("F1", CultureInfo.InvariantCulture)}s"));
+    Console.WriteLine(pal.Label("Saved:     ") + pal.Label(store.DatabasePath));
+    Console.WriteLine(pal.Label("Watching:  ") + pal.Label(Path.GetDirectoryName(solution)!) + pal.Label("  (Ctrl+C to stop; run 'slnmap serve' beside this — it reads the same file)"));
+
+    string watchRoot = Path.GetDirectoryName(solution)!;
+    var filter = new Slnmap.Cli.WatchFilter(store.DatabasePath);
+    var pendingLock = new object();
+    var pending = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    var lastEvent = Stopwatch.StartNew();
+
+    void Enqueue(string path)
+    {
+        if (filter.Classify(path) == Slnmap.Cli.WatchVerdict.Ignore)
+        {
+            return;
+        }
+
+        lock (pendingLock)
+        {
+            pending.Add(path);
+            lastEvent.Restart();
+        }
+    }
+
+    using var watcher = new FileSystemWatcher(watchRoot)
+    {
+        IncludeSubdirectories = true,
+        NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.Size,
+    };
+    watcher.Changed += (_, e) => Enqueue(e.FullPath);
+    watcher.Created += (_, e) => Enqueue(e.FullPath);
+    watcher.Deleted += (_, e) => Enqueue(e.FullPath);
+    watcher.Renamed += (_, e) => { Enqueue(e.OldFullPath); Enqueue(e.FullPath); };
+    watcher.EnableRaisingEvents = true;
+
+    var current = snapshot;
+    try
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            await Task.Delay(100, cancellationToken).ConfigureAwait(false);
+            List<string> batch;
+            lock (pendingLock)
+            {
+                // Debounce: editors save in bursts; wait for 400ms of quiet, then take the batch.
+                if (pending.Count == 0 || lastEvent.ElapsedMilliseconds < 400)
+                {
+                    continue;
+                }
+
+                batch = [.. pending];
+                pending.Clear();
+            }
+
+            var sw = Stopwatch.StartNew();
+            try
+            {
+                bool structural = batch.Any(p => filter.Classify(p) == Slnmap.Cli.WatchVerdict.Structural);
+                AnalysisSnapshot updated;
+                if (structural)
+                {
+                    Console.WriteLine(pal.Label($"[{DateTime.Now:HH:mm:ss}] project files changed — reloading the workspace..."));
+                    updated = await resident.ReloadAsync(progress: null, cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    var result = await resident.ReanalyzeChangedAsync(batch, cancellationToken).ConfigureAwait(false);
+                    if (result.RequiresReload)
+                    {
+                        Console.WriteLine(pal.Label($"[{DateTime.Now:HH:mm:ss}] files added/removed — reloading the workspace..."));
+                        updated = await resident.ReloadAsync(progress: null, cancellationToken).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        updated = result.Snapshot!;
+                    }
+                }
+
+                sw.Stop();
+                if (GraphsEqual(current.Graph, updated.Graph))
+                {
+                    current = updated;
+                    Console.WriteLine(pal.Label($"[{DateTime.Now:HH:mm:ss}] re-analyzed {batch.Count} file(s) in {sw.Elapsed.TotalSeconds.ToString("F2", CultureInfo.InvariantCulture)}s — graph unchanged, save skipped"));
+                    continue;
+                }
+
+                var saveWatch = Stopwatch.StartNew();
+                await store.SaveAsync(updated.Graph, updated.Files, BuildMeta(solution, updated, currentVersion), cancellationToken).ConfigureAwait(false);
+                saveWatch.Stop();
+                current = updated;
+                Console.WriteLine(pal.Label($"[{DateTime.Now:HH:mm:ss}] re-analyzed {batch.Count} file(s) in {sw.Elapsed.TotalSeconds.ToString("F2", CultureInfo.InvariantCulture)}s — graph ") + pal.Number(updated.Graph.NodeCount.ToString(CultureInfo.InvariantCulture)) + pal.Label(" nodes / ") + pal.Number(updated.Graph.EdgeCount.ToString(CultureInfo.InvariantCulture)) + pal.Label($" edges, saved in {saveWatch.Elapsed.TotalSeconds.ToString("F2", CultureInfo.InvariantCulture)}s"));
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception e)
+            {
+                // One bad batch must not kill the session — report and keep watching.
+                Console.Error.WriteLine(Palette.Err.Warn($"[{DateTime.Now:HH:mm:ss}] re-analysis failed: {e.Message} — still watching."));
+            }
+        }
+    }
+    catch (OperationCanceledException)
+    {
+        // Ctrl+C — clean exit.
+    }
+
+    Console.WriteLine(pal.Label("watch stopped."));
+    return 0;
+});
+
 var serveCommand = new Command("serve", "Serve the code graph to MCP clients over stdio.")
 {
     dbOption,
@@ -375,6 +547,7 @@ doctorCommand.SetAction(async (parseResult, cancellationToken) =>
 var rootCommand = new RootCommand("Slnmap — maps a .NET solution into a queryable code graph.")
 {
     analyzeCommand,
+    watchCommand,
     serveCommand,
     statusCommand,
     vizCommand,
@@ -419,6 +592,24 @@ static async Task<AnalysisSnapshot?> LoadPreviousAsync(
     var files = hashes.Select(pair => new FileRecord(pair.Key, pair.Value)).ToList();
     return new AnalysisSnapshot(graph, files, new AnalysisStats(0, 0, 0));
 }
+
+/// <summary>The meta rows every graph save writes — one builder shared by analyze and watch.</summary>
+static IReadOnlyDictionary<string, string> BuildMeta(string solution, AnalysisSnapshot snapshot, string currentVersion) =>
+    new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        [MetaKeys.SolutionPath] = solution,
+        [MetaKeys.LastAnalyzed] = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture),
+        [MetaKeys.ToolVersion] = currentVersion,
+        [MetaKeys.UnresolvedEndpoints] = snapshot.Stats.UnresolvedEndpoints.ToString(CultureInfo.InvariantCulture),
+        [MetaKeys.ConventionalControllers] = snapshot.Stats.ConventionalControllers.ToString(CultureInfo.InvariantCulture),
+    };
+
+/// <summary>Set equality over nodes and edges — a whitespace-only touch produces an identical graph, and watch skips the save.</summary>
+static bool GraphsEqual(CodeGraph a, CodeGraph b) =>
+    a.NodeCount == b.NodeCount
+    && a.EdgeCount == b.EdgeCount
+    && a.Nodes.ToHashSet().SetEquals(b.Nodes)
+    && a.Edges.ToHashSet().SetEquals(b.Edges);
 
 /// <summary>
 /// The running slnmap assembly's version (e.g. <c>"0.5.0"</c>) — the CLI project's
