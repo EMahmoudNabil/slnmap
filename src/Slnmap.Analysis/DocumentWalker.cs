@@ -84,6 +84,12 @@ internal sealed class DocumentWalker
                 case VariableDeclaratorSyntax declarator when declarator.Parent?.Parent is BaseFieldDeclarationSyntax:
                     GetOrCreateNode(_model.GetDeclaredSymbol(declarator, _cancellationToken));
                     break;
+                // Enum members are declared via their own syntax node, never a field declarator —
+                // without this case only REFERENCED members would materialize (the v0.6.1
+                // census-inconsistency objection that kept them unmodeled, #13).
+                case EnumMemberDeclarationSyntax enumMember:
+                    GetOrCreateNode(_model.GetDeclaredSymbol(enumMember, _cancellationToken));
+                    break;
                 case InvocationExpressionSyntax invocation:
                     HandleInvocation(invocation);
                     break;
@@ -246,14 +252,15 @@ internal sealed class DocumentWalker
             return;
         }
 
-        // Property accesses, field/const reads and writes, method-group references, and plain
-        // type mentions (generic type arguments, typeof(), attribute constructor arguments,
-        // parameter/field/return types) become References edges; invocations are Calls, and a
-        // type's own declaration is covered by Inherits/Implements/Contains instead. Enum
-        // members are IFieldSymbol too but stay edge-less: MapKind deliberately leaves them
-        // unmodeled, so GetOrCreateNode returns null below and the edge is skipped.
+        // Property accesses, field/const reads and writes (enum members included — they're
+        // IFieldSymbol with their own EnumMember nodes since #13), event subscriptions/raisings
+        // (+=, -=, Event?.Invoke — the event NAME is the reference; DelegateInvoke itself stays
+        // deliberately unmodeled, #8), method-group references, and plain type mentions (generic
+        // type arguments, typeof(), attribute constructor arguments, parameter/field/return
+        // types) become References edges; invocations are Calls, and a type's own declaration is
+        // covered by Inherits/Implements/Contains instead.
         var symbol = ResolveSymbol(name);
-        if (symbol is not (IPropertySymbol or IMethodSymbol or INamedTypeSymbol or IFieldSymbol))
+        if (symbol is not (IPropertySymbol or IMethodSymbol or INamedTypeSymbol or IFieldSymbol or IEventSymbol))
         {
             return;
         }
@@ -264,10 +271,44 @@ internal sealed class DocumentWalker
             return;
         }
 
-        if (GetEnclosingMemberNode(name) is { } source && source.Id != target.Id)
+        if (GetEnclosingMemberNode(name) is { } source)
         {
-            _edges.Add(new RelationshipEdge(source.Id, target.Id, RelationshipKind.References));
+            if (source.Id != target.Id)
+            {
+                _edges.Add(new RelationshipEdge(source.Id, target.Id, RelationshipKind.References));
+            }
+
+            return;
         }
+
+        // No enclosing member exists for ASSEMBLY-LEVEL attributes ([assembly: X(typeof(T))]) —
+        // they sit above every declaration, which silently dropped the reference (#11). The
+        // assembly IS the project, so the project node is the honest source. Known limitation:
+        // project-sourced edges survive incremental eviction unconditionally (the project node
+        // has no file), so REMOVING such an attribute leaves the edge until the next full
+        // re-analysis — acceptable for a rare declaration shape, documented in the report.
+        if (IsInsideAssemblyLevelAttribute(name))
+        {
+            _edges.Add(new RelationshipEdge(_projectNodeId, target.Id, RelationshipKind.References));
+        }
+    }
+
+    private static bool IsInsideAssemblyLevelAttribute(SyntaxNode name)
+    {
+        for (var ancestor = name.Parent; ancestor is not null; ancestor = ancestor.Parent)
+        {
+            if (ancestor is AttributeListSyntax attributeList)
+            {
+                return attributeList.Target?.Identifier.ValueText is "assembly" or "module";
+            }
+
+            if (ancestor is MemberDeclarationSyntax)
+            {
+                return false;
+            }
+        }
+
+        return false;
     }
 
     private ISymbol? ResolveSymbol(SyntaxNode node)
@@ -432,7 +473,7 @@ internal sealed class DocumentWalker
         }
 
         _nodes.Add(node);
-        if (node.Kind is NodeKind.Method or NodeKind.Constructor or NodeKind.Property or NodeKind.Field or NodeKind.Event
+        if (node.Kind is NodeKind.Method or NodeKind.Constructor or NodeKind.Property or NodeKind.Field or NodeKind.Event or NodeKind.EnumMember
             && symbol.ContainingType is { } containingType
             && GetOrCreateNode(containingType) is { } typeNode)
         {

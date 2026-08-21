@@ -8,7 +8,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>slnmap</ToolCommandName>
     <PackageId>Slnmap</PackageId>
-    <Version>0.8.2</Version>
+    <Version>0.9.0</Version>
     <RollForward>Major</RollForward>
     <PackageReadmeFile>nuget-readme.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>
@@ -18,12 +18,15 @@
     <PackageProjectUrl>https://slnmap.dev</PackageProjectUrl>
     <RepositoryUrl>https://github.com/EMahmoudNabil/slnmap</RepositoryUrl>
     <PackageTags>dotnet;roslyn;mcp;ai;code-analysis;claude-code;knowledge-graph</PackageTags>
-    <PackageReleaseNotes>Bugfix release. analyze progress no longer floods redirected/CI output
-(one line per document became milestone lines: stage changes + every 10 percent; interactive
-terminals keep the single overwriting line) -- #16, found by the first external install audit.
-viz no longer stacks edge-count labels when several edge kinds connect the same two nodes:
-parallel bundles curve apart so lines and counts stay legible at the collapsed level -- #17.
-No graph or tool-behavior changes; upgrading needs no re-analysis.
+    <PackageReleaseNotes>New: enum members are first-class graph nodes (kind EnumMember) -- every
+member materializes, referenced or not, and find_usages/impact_analysis answer at member
+granularity (MyEnum.Value), the same question v0.6.1 answered for consts. Event usage is now
+tracked: += / -= subscription and Event?.Invoke raising sites produce References edges, so
+find_usages on an event finds its subscribers and raisers. typeof() inside assembly-level
+attributes ([assembly: HostingStartup(typeof(...))]) now produces a reference attributed to the
+project node. Also verified-and-pinned: generic type arguments to external framework methods
+(UseMiddleware of T) already produce edges. Upgrading: just re-run analyze -- the tool-version
+check forces the full rebuild automatically. See CHANGELOG.md for details.
 Source: https://github.com/EMahmoudNabil/slnmap</PackageReleaseNotes>
   </PropertyGroup>
 

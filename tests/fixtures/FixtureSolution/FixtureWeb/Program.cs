@@ -3,6 +3,10 @@ using Fixture.Web;
 var builder = WebApplication.CreateBuilder(args);
 var app = builder.Build();
 
+// Issue #9 probe: a first-party generic type argument to an EXTERNAL generic method (the
+// framework's UseMiddleware<T>) — the most common ASP.NET middleware-registration shape.
+app.UseMiddleware<FixtureMiddleware>();
+
 // A registration in top-level statements: the walker already visits this invocation and
 // attributes it to FixtureWeb.<top-level-statements-entry-point> (the Gap-3 finding).
 app.MapGet("/health", VendorEndpoints.Ping);

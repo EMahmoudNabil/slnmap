@@ -2,6 +2,44 @@
 
 All notable changes to Slnmap are documented here. Versions follow [SemVer](https://semver.org).
 
+## 0.9.0
+
+### Added
+
+- **Enum members are first-class graph nodes** (#13) — new kind `EnumMember`. Every member
+  materializes via the declaration walk, referenced or not (the census-consistency concern that
+  kept them unmodeled), and usage sites produce `References` edges to the member itself — so
+  `find_usages`/`impact_analysis` answer at `MyEnum.Value` granularity, the same "who uses this
+  domain value" question v0.6.1 answered for consts. The enum-TYPE edge is unchanged; member
+  granularity is additive. Enumerants are deliberately NOT labeled `Field`, keeping field
+  censuses honest.
+- **Event usage is tracked** (#8) — `+=`/`-=` subscription sites and `Event?.Invoke(...)` raising
+  sites now produce `References` edges to the event node. `find_usages` on an event finds its
+  subscribers and raisers (previously: "No usages found" for every event, as observed on
+  eShopOnWeb's `RefreshBroadcast.RefreshRequested` — now returns its two subscription sites and
+  the raiser exactly). Both fold into `References`, consistent with the field/const precedent.
+- **`typeof()` inside assembly-level attributes produces a reference** (#11) — attributed to the
+  project node (the assembly IS the project), so
+  `[assembly: HostingStartup(typeof(MyStartup))]` makes `impact_analysis(MyStartup)` answer
+  honestly instead of "nothing depends on it".
+
+### Verified, no change needed
+
+- Generic type arguments to **external** framework methods (`UseMiddleware<T>()`, #9) already
+  produce edges — the issue's reconstructed repro does not reproduce on current code; a pinning
+  test now guards the behavior permanently.
+
+### Known limits
+
+- Removing an assembly-level attribute leaves its project-sourced reference edge until the next
+  full re-analysis (project nodes have no file for incremental eviction to key on). Adding one is
+  incrementally correct.
+
+### Upgrading
+
+Just re-run `slnmap analyze` — the tool-version check forces the one-time full rebuild; enum
+members and event edges appear after it.
+
 ## 0.8.2
 
 ### Fixed
