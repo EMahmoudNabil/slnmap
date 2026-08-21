@@ -8,7 +8,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>slnmap</ToolCommandName>
     <PackageId>Slnmap</PackageId>
-    <Version>0.9.0</Version>
+    <Version>0.10.0</Version>
     <RollForward>Major</RollForward>
     <PackageReadmeFile>nuget-readme.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>
@@ -18,15 +18,16 @@
     <PackageProjectUrl>https://slnmap.dev</PackageProjectUrl>
     <RepositoryUrl>https://github.com/EMahmoudNabil/slnmap</RepositoryUrl>
     <PackageTags>dotnet;roslyn;mcp;ai;code-analysis;claude-code;knowledge-graph</PackageTags>
-    <PackageReleaseNotes>New: enum members are first-class graph nodes (kind EnumMember) -- every
-member materializes, referenced or not, and find_usages/impact_analysis answer at member
-granularity (MyEnum.Value), the same question v0.6.1 answered for consts. Event usage is now
-tracked: += / -= subscription and Event?.Invoke raising sites produce References edges, so
-find_usages on an event finds its subscribers and raisers. typeof() inside assembly-level
-attributes ([assembly: HostingStartup(typeof(...))]) now produces a reference attributed to the
-project node. Also verified-and-pinned: generic type arguments to external framework methods
-(UseMiddleware of T) already produce edges. Upgrading: just re-run analyze -- the tool-version
-check forces the full rebuild automatically. See CHANGELOG.md for details.
+    <PackageReleaseNotes>New: `slnmap watch` -- the roadmap's top item, shipped. Analyze once,
+keep the Roslyn workspace warm, and re-analyze on every file save: a one-file change on a
+10-project solution lands in the database in about a second (measured: re-analyzed in 0.93s,
+saved in 0.17s on eShopOnWeb), versus a full workspace reload for run-and-exit analyze. Run
+`slnmap serve` beside it -- the server reads the same database and survives the atomic swap
+mid-query, so your agent's answers stay fresh while you type. Structural changes (csproj/sln/
+props/targets/global.json, or brand-new files) trigger an announced full reload instead of a
+guess; saves are skipped entirely when the graph is unchanged. Note: the resident workspace
+holds compilations in memory -- expect hundreds of MB on very large solutions. Existing
+databases keep working; no rebuild required. See CHANGELOG.md for details.
 Source: https://github.com/EMahmoudNabil/slnmap</PackageReleaseNotes>
   </PropertyGroup>
 
