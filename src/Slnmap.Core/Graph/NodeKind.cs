@@ -28,4 +28,10 @@ public enum NodeKind
     /// Map* call site. Append-only: viz indexes kinds positionally, never insert mid-enum.
     /// </summary>
     Endpoint = 14,
+
+    /// <summary>
+    /// An enum member (enumerant). Roslyn models these as IFieldSymbol, but they are values of
+    /// a closed set, not mutable state — a distinct kind keeps Field censuses honest (#13).
+    /// </summary>
+    EnumMember = 15,
 }

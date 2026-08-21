@@ -28,7 +28,7 @@ public static class SlnmapTools
     public static Task<string> FindSymbol(
         IGraphStore store,
         [Description("Text matched against symbol name and FQN (case-insensitive substring).")] string query,
-        [Description("Optional kind filter: Namespace, Class, Interface, Struct, Record, Enum, Delegate, Method, Constructor, Property, Field, Event, Endpoint.")] string? kind = null,
+        [Description("Optional kind filter: Namespace, Class, Interface, Struct, Record, Enum, EnumMember, Delegate, Method, Constructor, Property, Field, Event, Endpoint.")] string? kind = null,
         CancellationToken cancellationToken = default)
         => new SlnmapQueries(store).FindSymbolAsync(query, kind, cancellationToken);
 

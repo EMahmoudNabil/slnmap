@@ -20,9 +20,11 @@ public static class VendorActivityTypes
 
 public enum VendorState
 {
+    // Never referenced anywhere — the census-consistency case that kept enum members unmodeled
+    // until v0.9.0: EVERY member must materialize via the declaration walk, referenced or not.
     Active,
-    // Enum members are IFieldSymbol too but deliberately have no nodes (MapKind's documented
-    // exclusion) — usages of Deactivated must NOT fabricate an enum-member node or edge.
+    // Referenced from VendorStateReader.Current below: usage reaches the MEMBER node (#13) and,
+    // via the "VendorState" segment, the enum-type node — both.
     Deactivated,
 }
 
@@ -67,8 +69,8 @@ public sealed class FieldUsageHolder
     public bool IsDeactivation(string type) => type == VendorActivityTypes.Deactivated;
 }
 
-// Enum-member consumer: VendorState.Deactivated must produce a References edge to the ENUM TYPE
-// only (via the "VendorState" segment) — never to a fabricated enum-member node.
+// Enum-member consumer: VendorState.Deactivated produces References edges to BOTH the member
+// node (#13, v0.9.0) and the enum type (via the "VendorState" segment).
 public sealed class VendorStateReader
 {
     public VendorState Current { get; } = VendorState.Deactivated;

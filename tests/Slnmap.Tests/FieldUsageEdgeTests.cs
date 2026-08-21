@@ -109,14 +109,16 @@ public sealed class FieldUsageEdgeTests : IClassFixture<AnalyzedFixtureSolution>
     }
 
     [Fact]
-    public void EnumMemberUsage_CreatesNoEnumMemberNode_EdgeGoesToEnumTypeOnly()
+    public void EnumMemberUsage_ReachesBothTheMemberAndTheEnumType()
     {
-        // Decision pinned (v0.6.1): enum members stay unmodeled (MapKind's documented v0.5.0
-        // exclusion). Accepting IFieldSymbol in the reference filter must not fabricate
-        // enum-member nodes — the usage remains visible at enum-TYPE granularity.
-        Assert.DoesNotContain(Graph.Nodes, n => n.Fqn == "Fixture.Lib.VendorState.Deactivated");
-
+        // Decision REVERSED in v0.9.0 (#13): the v0.6.1 census-consistency objection is resolved
+        // by the EnumMemberDeclarationSyntax declaration walk, so members are first-class
+        // EnumMember nodes now. The enum-TYPE edge (via the "VendorState" segment) is unchanged —
+        // member granularity is additive, exactly like the const fix this file pins.
         var source = GraphAssert.Node(Graph, NodeKind.Property, "Fixture.Lib.VendorStateReader.Current");
+        var member = GraphAssert.Node(Graph, NodeKind.EnumMember, "Fixture.Lib.VendorState.Deactivated");
+        GraphAssert.Edge(Graph, source, member, RelationshipKind.References);
+
         var enumType = GraphAssert.Node(Graph, NodeKind.Enum, "Fixture.Lib.VendorState");
         GraphAssert.Edge(Graph, source, enumType, RelationshipKind.References);
     }
