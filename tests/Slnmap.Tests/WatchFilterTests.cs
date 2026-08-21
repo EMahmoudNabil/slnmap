@@ -13,6 +13,9 @@ public sealed class WatchFilterTests
     private static readonly string Root = Path.Combine(Path.GetTempPath(), "watch-root");
     private readonly WatchFilter _filter = new(Path.Combine(Root, "slnmap.db"));
 
+    // Inline data is written with '\'; real events arrive with the platform's separator.
+    private static string Platform(string relative) => relative.Replace('\\', Path.DirectorySeparatorChar);
+
     [Theory]
     [InlineData("slnmap.db")]
     [InlineData("slnmap.db-wal")]
@@ -28,13 +31,13 @@ public sealed class WatchFilterTests
     [InlineData(@".vs\solution\cache.cs")]
     [InlineData(@"node_modules\pkg\file.cs")]
     public void BuildOutputsAndVcsInternals_AreIgnored(string relative) =>
-        Assert.Equal(WatchVerdict.Ignore, _filter.Classify(Path.Combine(Root, relative)));
+        Assert.Equal(WatchVerdict.Ignore, _filter.Classify(Path.Combine(Root, Platform(relative))));
 
     [Theory]
     [InlineData(@"src\Lib\Shapes.cs")]
     [InlineData(@"src\Lib\SHAPES.CS")]
     public void CSharpSources_AreContent(string relative) =>
-        Assert.Equal(WatchVerdict.Content, _filter.Classify(Path.Combine(Root, relative)));
+        Assert.Equal(WatchVerdict.Content, _filter.Classify(Path.Combine(Root, Platform(relative))));
 
     [Theory]
     [InlineData(@"src\Lib\Lib.csproj")]
@@ -44,12 +47,12 @@ public sealed class WatchFilterTests
     [InlineData(@"src\Lib\Lib.targets")]
     [InlineData(@"global.json")]
     public void SolutionShapeFiles_AreStructural(string relative) =>
-        Assert.Equal(WatchVerdict.Structural, _filter.Classify(Path.Combine(Root, relative)));
+        Assert.Equal(WatchVerdict.Structural, _filter.Classify(Path.Combine(Root, Platform(relative))));
 
     [Theory]
     [InlineData(@"README.md")]
     [InlineData(@"src\Lib\appsettings.json")]
     [InlineData(@"notes.txt")]
     public void UnrelatedFiles_AreIgnored(string relative) =>
-        Assert.Equal(WatchVerdict.Ignore, _filter.Classify(Path.Combine(Root, relative)));
+        Assert.Equal(WatchVerdict.Ignore, _filter.Classify(Path.Combine(Root, Platform(relative))));
 }
