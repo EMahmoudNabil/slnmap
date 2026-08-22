@@ -123,6 +123,8 @@ public sealed class McpErrorBehaviorTests : IClassFixture<AnalyzedFixtureGraphSt
             "get_symbol_source" => _queries.GetSymbolSourceAsync(Str("fqn")!, Int("context_lines", 5)),
             "list_endpoints" => _queries.ListEndpointsAsync(Str("verb"), Str("prefix")),
             "find_endpoint" => _queries.FindEndpointAsync(Str("route")!, Str("verb")),
+            "find_orphan_calls" => _queries.FindOrphanCallsAsync(Str("category")),
+            "list_frontend_callsites" => _queries.ListFrontendCallSitesAsync(Str("verb"), Str("prefix")),
             _ => throw new InvalidOperationException($"example dispatch is missing tool '{tool}'"),
         };
     }

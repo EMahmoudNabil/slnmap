@@ -14,7 +14,7 @@ public static class SlnmapTools
 {
     /// <summary>
     /// Liveness check kept callable in-process (e.g. from tests), but intentionally NOT decorated as an
-    /// MCP tool — the advertised surface is exactly the thirteen documented, read-only tools.
+    /// MCP tool — the advertised surface is exactly the fifteen documented, read-only tools.
     /// </summary>
     public static string Ping() => "pong";
 
@@ -53,7 +53,10 @@ public static class SlnmapTools
         "depends on the given FQN (depth 5): counts first (totals by project and by kind), then the " +
         "dependent list nearest-first. When the target is an interface or an interface member, its " +
         "concrete implementations/overrides and their dependents are included — that is the point of " +
-        "the tool. Pass a fully qualified name. Example: {\"fqn\": \"Fixture.Lib.IShape.Area()\"}")]
+        "the tool. On a C# handler method backing an HTTP endpoint (after `slnmap link` has run), " +
+        "the walk continues through the endpoint to its frontend callers — \"what breaks in the " +
+        "React app if I change this handler?\" is a real, checkable answer, not a separate query. " +
+        "Pass a fully qualified name. Example: {\"fqn\": \"Fixture.Lib.IShape.Area()\"}")]
     public static Task<string> ImpactAnalysis(
         IGraphStore store,
         [Description("Fully qualified name of the symbol under consideration.")] string fqn,
@@ -171,15 +174,46 @@ public static class SlnmapTools
         "Find the endpoint(s) matching a route — an exact template (\"/api/vendors/{id}\") or a " +
         "concrete path (\"/api/vendors/42\"), matched with the framework's own semantics: " +
         "case-insensitive, {param}/{param:constraint} holes bind concrete segments. Returns each " +
-        "match with its handler method and registration file:line; a miss suggests near matches. " +
-        "Use impact_analysis on the handler to see an endpoint's blast radius. " +
-        "Example: {\"route\": \"/api/vendors/42\"}")]
+        "match with its handler method and registration file:line, plus (after `slnmap link` has " +
+        "run) a \"Called from the frontend by:\" line naming its frontend callers; a miss suggests " +
+        "near matches. Use impact_analysis on the handler to see an endpoint's blast radius, " +
+        "including its frontend callers. Example: {\"route\": \"/api/vendors/42\"}")]
     public static Task<string> FindEndpoint(
         IGraphStore store,
         [Description("The route to find: a template or a concrete request path.")] string route,
         [Description("Optional HTTP verb filter: GET, POST, PUT, DELETE, or PATCH.")] string? verb = null,
         CancellationToken cancellationToken = default)
         => new SlnmapQueries(store).FindEndpointAsync(route, verb, cancellationToken);
+
+    [McpServerTool(Name = "find_orphan_calls")]
+    [Description(
+        "Find frontend HTTP call sites (from `slnmap analyze-ts`) with no matching C# endpoint — " +
+        "computed live against the current graph, never stale. Grouped into three disclosed " +
+        "reasons: 'no-match' (nothing on the backend resembles this path at any verb), " +
+        "'verb-mismatch' (an endpoint shares this exact route under a different verb — named in " +
+        "the message, e.g. \"no POST registered; GET /api/OrganizationUsers exists\"), and " +
+        "'verb-unknown' (the extractor couldn't statically determine the HTTP verb). Never a " +
+        "guess: a call site is only ever silent when it truly links. Optionally filter to one " +
+        "category. Example: {\"category\": \"verb-mismatch\"}")]
+    public static Task<string> FindOrphanCalls(
+        IGraphStore store,
+        [Description("Optional category filter: 'no-match', 'verb-mismatch', or 'verb-unknown'.")] string? category = null,
+        CancellationToken cancellationToken = default)
+        => new SlnmapQueries(store).FindOrphanCallsAsync(category, cancellationToken);
+
+    [McpServerTool(Name = "list_frontend_callsites")]
+    [Description(
+        "List frontend HTTP call sites (from `slnmap analyze-ts`), each with its live linking " +
+        "status: the endpoint(s) it hits, a set of endpoints for a truthful fan-out/ambiguity, or " +
+        "its disclosed outcome (NoSkeletonMatch/VerbMismatch/UnknownVerb) when it doesn't link. " +
+        "Optionally filter by verb and/or route prefix, same shape as list_endpoints. For just the " +
+        "unlinked ones use find_orphan_calls. Example: {\"verb\": \"POST\", \"prefix\": \"/vendors\"}")]
+    public static Task<string> ListFrontendCallSites(
+        IGraphStore store,
+        [Description("Optional HTTP verb filter: GET, POST, PUT, DELETE, or PATCH.")] string? verb = null,
+        [Description("Optional route prefix filter, compared against the call site's resolved template.")] string? prefix = null,
+        CancellationToken cancellationToken = default)
+        => new SlnmapQueries(store).ListFrontendCallSitesAsync(verb, prefix, cancellationToken);
 
     [McpServerTool(Name = "get_symbol_source")]
     [Description(

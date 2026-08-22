@@ -41,10 +41,11 @@ the `slnmap.db` you just built:
 
 ## The tools
 
-The server exposes thirteen read-only tools — `find_symbol`, `get_dependencies`, `impact_analysis`,
+The server exposes fifteen read-only tools — `find_symbol`, `get_dependencies`, `impact_analysis`,
 `get_architecture_overview`, `find_usages`, `find_implementations`, `get_type_hierarchy`,
 `find_tests_for_symbol`, `get_project_dependencies`, `find_circular_dependencies`,
-`get_symbol_source`, `list_endpoints`, and `find_endpoint` (full descriptions in the
+`get_symbol_source`, `list_endpoints`, `find_endpoint`, `find_orphan_calls`, and
+`list_frontend_callsites` (full descriptions in the
 [README](https://github.com/EMahmoudNabil/slnmap#what-you-can-ask)).
 For an interface, `impact_analysis` follows both the interface's callers **and** its concrete
 implementations/overrides — across projects, in files nobody has open. HTTP endpoints are
@@ -61,6 +62,11 @@ same file, so your agent's answers stay fresh while you type.
 And `slnmap analyze-ts` (v0.11.0): adds TypeScript/React frontend HTTP call sites to the same
 graph — resolved route templates and an honestly-labeled unresolved bucket, six named reasons,
 never a guess. Requires Node 18+; the extractor itself is fetched via `npx` automatically.
+
+And `slnmap link` (v0.12.0): joins those frontend call sites to the C# endpoints they actually
+hit, deterministically — after which `impact_analysis` on a handler surfaces the exact frontend
+call sites that break, and `find_orphan_calls` names every one that doesn't match anything, by
+exact reason, never a guess.
 
 ## Privacy
 

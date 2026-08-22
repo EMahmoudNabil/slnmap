@@ -4,7 +4,7 @@ using ModelContextProtocol.Server;
 namespace Slnmap.Mcp;
 
 /// <summary>
-/// The single choke point every tool call flows through (all 13 tools are wrapped at registration
+/// The single choke point every tool call flows through (all 15 tools are wrapped at registration
 /// in <see cref="McpServerHost"/>): pre-dispatch argument validation against the tool's own
 /// advertised schema, and a catch-all that converts any escaping exception into the canonical
 /// failure payload. Both paths return NORMAL tool results (never protocol-level isError), so

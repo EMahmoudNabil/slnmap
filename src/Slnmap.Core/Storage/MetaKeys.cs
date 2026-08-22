@@ -49,4 +49,15 @@ public static class MetaKeys
     /// `analyze-ts` has never run.
     /// </summary>
     public const string FrontendUnresolvedCallSites = "frontend_unresolved_call_sites";
+
+    /// <summary>
+    /// Round-trip ("O") timestamp of the last completed `slnmap link` run (the cross-stack
+    /// linker, cross-stack-linker-investigation.md §Q3/§Q6). Neither <c>analyze</c> nor
+    /// <c>analyze-ts</c> clears this key — both preserve whatever meta they don't own — but
+    /// either one changing the graph makes the last `link` run's <c>CallsEndpoint</c> edges
+    /// stale; each prints a one-line note when this key is present, per the same staleness
+    /// pattern <see cref="FrontendLastAnalyzed"/> already established. Absent when `link` has
+    /// never run.
+    /// </summary>
+    public const string LinkerLastRun = "linker_last_run";
 }

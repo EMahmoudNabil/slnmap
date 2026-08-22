@@ -64,7 +64,7 @@ That's it. Ask your agent an architecture question and it will call Slnmap.
 
 ## What you can ask
 
-The server exposes thirteen read-only tools. Give them fully qualified names; results are capped and
+The server exposes fifteen read-only tools. Give them fully qualified names; results are capped and
 counts-first. (A note the tools also carry: an FQN does not reveal whether a member is an explicit
 interface implementation.)
 
@@ -83,6 +83,8 @@ interface implementation.)
 | `get_symbol_source` | "Show me the actual source of `IBasketService`." |
 | `list_endpoints` | "List every HTTP endpoint, or just the `POST`s under `/api/basket`." |
 | `find_endpoint` | "Which endpoint serves `/api/basket/42/items`, and which method handles it?" |
+| `find_orphan_calls` | "Which frontend API calls don't hit any real endpoint?" (after `slnmap link`) |
+| `list_frontend_callsites` | "List every frontend HTTP call site and what it links to." (after `slnmap link`) |
 
 For an interface (or interface member), `impact_analysis` follows both the interface's callers **and**
 its concrete implementations/overrides — so the answer includes code that only touches the interface,
@@ -119,7 +121,9 @@ call.
 | `find_tests_for_symbol` | `fqn` *(required)* | Test members that transitively exercise a symbol, grouped by project with file:line. |
 | `find_circular_dependencies` | `scope` *(optional: `project`/`namespace`, default `project`)* | Dependency cycles reported as path chains, worst offenders first. |
 | `list_endpoints` | `verb` *(optional: `GET`/`POST`/`PUT`/`DELETE`/`PATCH`)*, `prefix` *(optional route prefix, e.g. `/api/vendors`)* | HTTP endpoints (Minimal APIs + attribute-routed controllers) grouped by project: `VERB /route → handler — file:line`; unresolved registrations and conventionally-routed controllers disclosed in trailing notes. |
-| `find_endpoint` | `route` *(required: a template or a concrete path)*, `verb` *(optional)* | Endpoints matching a route — case-insensitive, `{param}` holes bind concrete segments; a miss suggests near matches. |
+| `find_endpoint` | `route` *(required: a template or a concrete path)*, `verb` *(optional)* | Endpoints matching a route — case-insensitive, `{param}` holes bind concrete segments; a miss suggests near matches. After `slnmap link`, also lists its frontend callers. |
+| `find_orphan_calls` | `category` *(optional: `no-match`/`verb-mismatch`/`verb-unknown`)* | Frontend call sites with no matching endpoint, grouped by exact reason — computed live, always current even if `slnmap link` hasn't run since the last change. |
+| `list_frontend_callsites` | `verb` *(optional)*, `prefix` *(optional)* | Every frontend HTTP call site with its live linking status — the endpoint(s) it hits, or why it doesn't. |
 
 A malformed call never returns an opaque error: failures come back as a normal result carrying a
 small JSON payload — `status`/`code`/`message`/`hint` plus the offending parameter and the valid
@@ -132,6 +136,7 @@ error. Stack traces and file paths never appear in a payload.
 ```console
 slnmap analyze <solution>        # build or update the code graph (incremental on re-run)
 slnmap analyze-ts <frontend>     # add TypeScript/React frontend HTTP call sites to the same graph
+slnmap link                      # join frontend call sites to the C# endpoints they hit
 slnmap watch <solution>          # analyze once, then keep a warm workspace and re-analyze on save
 slnmap serve                     # serve the graph to MCP clients over stdio
 slnmap status                    # show node/edge counts and when it was last analyzed
@@ -139,7 +144,7 @@ slnmap viz                       # export the graph as a self-contained interact
 slnmap doctor                    # check the environment can run Slnmap
 ```
 
-These seven verbs are the whole CLI. Symbol, usage, and impact querying is MCP-only — there is no
+These eight verbs are the whole CLI. Symbol, usage, and impact querying is MCP-only — there is no
 `find`/`usages`/`impact` command; connect an MCP client to `slnmap serve` to query the graph.
 
 `--db <path>` selects the database file (default `slnmap.db`). `-v`/`--verbose` prints per-document
@@ -170,9 +175,42 @@ barrel re-exports and template literals with a mix of folded and runtime-only se
 reasons rather than silently dropped or guessed at. Ask your agent to find a frontend call site
 by route the same way it already finds C# symbols.
 
-**This release adds the frontend HALF of the graph — it does not yet link a frontend call site
-to the backend `Endpoint` it hits.** Both node populations live in one database today; drawing
-the edge between them is the next piece of work.
+## Cross-stack linking (`link`)
+
+Joins every frontend call site to the C# `Endpoint` it actually hits — the reason both halves of
+the graph exist. Run it after `analyze` and `analyze-ts`:
+
+```console
+slnmap analyze YourSolution.sln --db slnmap.db
+slnmap analyze-ts path/to/your-frontend --db slnmap.db
+slnmap link --db slnmap.db
+```
+
+```
+Linked:    121/128 call sites (98 unique, 14 via precedence, 9 set-edge)
+Disclosed: 7 (5 no match, 2 verb mismatch)
+```
+
+Matching is deterministic: exact verb equality (an honestly-unresolvable verb is disclosed, never
+guessed), and route-precedence tie-breaking only where it's actually knowable — a literal call
+site beats a parameterized sibling endpoint, the same way ASP.NET's own router would. A call site
+that can genuinely reach more than one endpoint (real runtime fan-out, or an ambiguity nothing
+can resolve statically) gets a truthful edge to every one of them, never a guessed single link.
+Everything that doesn't link is individually disclosed by exact reason — nothing is silently
+dropped.
+
+Once linked, `impact_analysis` and `find_usages` continue straight through a C# handler into its
+frontend callers, with no separate query:
+
+```
+impact_analysis("BasketController.UpdateQuantities"):
+  [Endpoint] PUT /api/basket/{id}/items @depth 1
+  [FrontendCallSite] PUT src/services/basketService.ts:42:10 @depth 2
+```
+
+Change the handler, see the exact React call sites that break — one graph, zero guessing.
+Re-run `slnmap link` after `analyze` or `analyze-ts` changes the graph — a one-line note appears
+on both when the stored links may be stale.
 
 ## Visualizing the graph
 

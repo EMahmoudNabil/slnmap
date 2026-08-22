@@ -31,4 +31,14 @@ public enum RelationshipKind
     /// written by a newer slnmap onto, instead of crashing (see SqliteGraphStore.ParseEnum).
     /// </summary>
     Unknown = 6,
+
+    /// <summary>
+    /// Source frontend call site hits target endpoint (FrontendCallSite —CallsEndpoint→
+    /// Endpoint) — mirrors HandledBy's own source-is-caller convention so a plain incoming-edge
+    /// walk from a changed handler Method reaches its Endpoint, then the Endpoint's frontend
+    /// callers, with zero traversal special-casing (cross-stack-linker-investigation.md §Q1).
+    /// One call site may carry several of these edges (a truthful set: real runtime fan-out, or
+    /// an irreducible ambiguity route precedence can't resolve statically — §Q1/§Q2.2).
+    /// </summary>
+    CallsEndpoint = 7,
 }

@@ -141,7 +141,7 @@ public sealed partial class SlnmapQueries
         }
 
         builder.AppendLine($"{matches.Count} endpoint(s) match '{route}':");
-        await AppendEndpointLinesAsync(builder, matches.Take(EndpointFindCap).ToList(), cancellationToken).ConfigureAwait(false);
+        await AppendEndpointLinesAsync(builder, matches.Take(EndpointFindCap).ToList(), cancellationToken, includeFrontendCallers: true).ConfigureAwait(false);
         if (matches.Count > EndpointFindCap)
         {
             builder.AppendLine($"  ...and {matches.Count - EndpointFindCap} more — give a more specific route or a verb.");
@@ -177,8 +177,15 @@ public sealed partial class SlnmapQueries
         return space > 0 ? endpoint.Fqn[..space] : endpoint.Fqn;
     }
 
-    /// <summary>Renders endpoints grouped by owning project as "VERB template → handler — file:line".</summary>
-    private async Task AppendEndpointLinesAsync(StringBuilder builder, IReadOnlyList<SymbolNode> endpoints, CancellationToken cancellationToken)
+    /// <summary>
+    /// Renders endpoints grouped by owning project as "VERB template → handler — file:line".
+    /// <paramref name="includeFrontendCallers"/> (find_endpoint only — list_endpoints stays as
+    /// dense as it already is) appends a "Called from the frontend by:" line naming every
+    /// FrontendCallSite with an incoming CallsEndpoint edge, per
+    /// cross-stack-linker-implementation.md Part 3.3.
+    /// </summary>
+    private async Task AppendEndpointLinesAsync(
+        StringBuilder builder, IReadOnlyList<SymbolNode> endpoints, CancellationToken cancellationToken, bool includeFrontendCallers = false)
     {
         var attributor = ProjectAttributor.From(
             await _store.GetNodesByKindAsync(NodeKind.Project, cancellationToken).ConfigureAwait(false));
@@ -203,6 +210,17 @@ public sealed partial class SlnmapQueries
                     ? $" — {file}:{resolver.LineOf(file, endpoint.Span?.Start ?? 0)}"
                     : string.Empty;
                 builder.AppendLine($"  {endpoint.Fqn} → {handlerLabel}{location}");
+
+                if (includeFrontendCallers)
+                {
+                    var callerEdges = await _store.GetEdgesAsync(endpoint.Id, EdgeDirection.Incoming, RelationshipKind.CallsEndpoint, cancellationToken).ConfigureAwait(false);
+                    if (callerEdges.Count > 0)
+                    {
+                        var callers = await _store.GetNodesByIdsAsync(callerEdges.Select(e => e.SourceId), cancellationToken).ConfigureAwait(false);
+                        string callerList = string.Join(", ", callers.Select(c => c.Fqn).OrderBy(f => f, StringComparer.Ordinal));
+                        builder.AppendLine($"    Called from the frontend by: {callerList}");
+                    }
+                }
             }
         }
     }

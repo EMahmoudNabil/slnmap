@@ -193,8 +193,16 @@ public static class TsArtifactFacts
     /// <see cref="NodeKind.FrontendCallSite"/>/<see cref="NodeKind.UnresolvedCallSite"/> nodes,
     /// plus <paramref name="newNodes"/>. Expressed as "build a graph without the stale kinds"
     /// rather than adding a removal API to <see cref="CodeGraph"/> — nothing else in slnmap
-    /// needs node removal, and every existing edge carries over unchanged because these two
-    /// kinds carry zero edges in this phase (§Q2.3), so none can be left dangling by the prune.
+    /// needs node removal.
+    ///
+    /// cross-stack-linker-investigation.md §Q3 prerequisite: this used to carry every existing
+    /// edge over unconditionally, correct only while these two kinds carried zero edges. Now
+    /// that the cross-stack linker attaches <c>CallsEndpoint</c> edges to
+    /// <see cref="NodeKind.FrontendCallSite"/> nodes, an edge sourced from (or targeting) a
+    /// pruned node must not survive as a dangling row — nodes are added to <paramref name="merged"/>
+    /// FIRST, then edges are kept only when both endpoints are still present, mirroring
+    /// <c>SolutionAnalysisEngine.PruneDanglingEdges</c>'s already-shipped, kind-agnostic
+    /// existence check for the exact same reason.
     /// </summary>
     public static CodeGraph MergeIntoGraph(CodeGraph existing, IReadOnlyList<SymbolNode> newNodes)
     {
@@ -209,14 +217,17 @@ public static class TsArtifactFacts
             merged.AddNode(node);
         }
 
-        foreach (var edge in existing.Edges)
-        {
-            merged.AddEdge(edge);
-        }
-
         foreach (var node in newNodes)
         {
             merged.AddNode(node);
+        }
+
+        foreach (var edge in existing.Edges)
+        {
+            if (merged.ContainsNode(edge.SourceId) && merged.ContainsNode(edge.TargetId))
+            {
+                merged.AddEdge(edge);
+            }
         }
 
         return merged;

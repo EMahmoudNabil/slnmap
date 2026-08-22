@@ -32,7 +32,7 @@ public static class McpServerHost
             .WithToolsFromAssembly();
 
         // The error-shape choke point: rewrap every registered tool in ShapedFailureTool, so
-        // argument validation and exception sanitization are structural (one class, 13 tools) —
+        // argument validation and exception sanitization are structural (one class, 15 tools) —
         // never per-tool discipline. See reports/mcp-error-shape-report.md.
         foreach (var descriptor in builder.Services.Where(d => d.ServiceType == typeof(McpServerTool)).ToList())
         {
