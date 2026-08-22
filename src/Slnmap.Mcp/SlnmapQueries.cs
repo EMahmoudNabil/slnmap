@@ -21,7 +21,7 @@ public sealed partial class SlnmapQueries
     private const int ProjectDependencyCap = 40;
 
     // HandledBy: an endpoint "uses" its handler, so find_usages(handler) surfaces its endpoints.
-    private static readonly RelationshipKind[] UsageKinds = [RelationshipKind.Calls, RelationshipKind.References, RelationshipKind.HandledBy];
+    private static readonly RelationshipKind[] UsageKinds = [RelationshipKind.Calls, RelationshipKind.References, RelationshipKind.HandledBy, RelationshipKind.CallsEndpoint];
 
     private readonly IGraphStore _store;
 

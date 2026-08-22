@@ -8,7 +8,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>slnmap</ToolCommandName>
     <PackageId>Slnmap</PackageId>
-    <Version>0.11.0</Version>
+    <Version>0.12.0</Version>
     <RollForward>Major</RollForward>
     <PackageReadmeFile>nuget-readme.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>
@@ -18,18 +18,18 @@
     <PackageProjectUrl>https://slnmap.dev</PackageProjectUrl>
     <RepositoryUrl>https://github.com/EMahmoudNabil/slnmap</RepositoryUrl>
     <PackageTags>dotnet;roslyn;mcp;ai;code-analysis;claude-code;knowledge-graph</PackageTags>
-    <PackageReleaseNotes>New: `slnmap analyze-ts` -- frontend HTTP call sites join the same
-graph as your C# code. Point it at a TypeScript/React project root and it walks the program
-with the TS Compiler API (via the companion `slnmap-ts` npm package, pulled automatically
-through `npx` -- Node 18+ required, nothing to install by hand), resolving axios/fetch call
-sites -- including through barrel re-exports and constant folding -- to route templates, and
-disclosing exactly what it can't resolve across six named categories rather than guessing.
-Field-trial verified across 4 codebases (two real production snapshots of the same app, a
-frontend-only static site, and a public sample using a third HTTP client library): zero false
-positives anywhere; one real gap found and fixed (superagent's `.del()` method name for DELETE).
-Honest limits: no cross-stack linking yet (that's next); monorepo/TypeScript project-references
-tsconfigs are not yet field-verified; a URL built from a helper function's own parameter is
-correctly counted unresolved, not guessed from its callers. See CHANGELOG.md for details.
+    <PackageReleaseNotes>New: `slnmap link` -- the cross-stack linker, the final piece of the
+frontend-analysis project. Joins every FrontendCallSite (v0.11.0) to the C# Endpoint (v0.7.0/
+v0.8.0) it actually hits: exact verb matching (an honestly-unresolvable verb is disclosed, never
+guessed), route-precedence tie-breaking scoped to the one case it's actually knowable (a literal
+call site beats a parameterized sibling endpoint), and a truthful set edge for real runtime
+fan-out and irreducible ambiguity alike -- never a guessed single link. impact_analysis and
+find_usages now continue straight through a C# handler into its frontend callers with no
+separate query. Two new MCP tools, find_orphan_calls and list_frontend_callsites, close the
+remaining coverage/listing gaps. Field-trial verified against a real, live production codebase:
+407 of 434 real call sites (93.8%) link deterministically or via the precedence rule; every one
+of the rest is individually disclosed by exact reason, including the specific production bug
+that motivated this entire project. See CHANGELOG.md for details.
 Source: https://github.com/EMahmoudNabil/slnmap</PackageReleaseNotes>
   </PropertyGroup>
 

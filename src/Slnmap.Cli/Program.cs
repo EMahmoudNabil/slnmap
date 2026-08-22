@@ -57,6 +57,15 @@ analyzeCommand.SetAction(async (parseResult, cancellationToken) =>
         status.WriteLine($"incremental: reusing {previous.Graph.NodeCount} nodes from {store.DatabasePath}");
     }
 
+    // Meta keys this command does not own (frontend/linker producer state) must survive its own
+    // rebuild — analyze rebuilds the graph from Roslyn output alone via a full-replace save, so
+    // anything not explicitly carried forward here is silently lost, the same class of bug the
+    // cross-stack-linker-investigation.md §Q3 prerequisite found in MergeIntoGraph's edge
+    // carry-over. Read before this run's own save overwrites the meta table.
+    var existingMeta = File.Exists(store.DatabasePath)
+        ? await store.GetMetaAsync(cancellationToken).ConfigureAwait(false)
+        : new Dictionary<string, string>(StringComparer.Ordinal);
+
     var stopwatch = Stopwatch.StartNew();
     AnalysisSnapshot snapshot;
     try
@@ -98,7 +107,7 @@ analyzeCommand.SetAction(async (parseResult, cancellationToken) =>
         status.Finish();
     }
 
-    var meta = new Dictionary<string, string>(StringComparer.Ordinal)
+    var meta = new Dictionary<string, string>(existingMeta, StringComparer.Ordinal)
     {
         [MetaKeys.SolutionPath] = solution,
         [MetaKeys.LastAnalyzed] = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture),
@@ -150,6 +159,11 @@ analyzeCommand.SetAction(async (parseResult, cancellationToken) =>
     Console.WriteLine(pal.Label("Warnings:  ") + warningsValue);
     Console.WriteLine(pal.Label("Elapsed:   ") + pal.Success($"{stopwatch.Elapsed.TotalSeconds.ToString("F1", CultureInfo.InvariantCulture)}s"));
     Console.WriteLine(pal.Label("Saved:     ") + pal.Label(store.DatabasePath));
+    if (BuildLinkerStalenessNote(existingMeta) is { } linkerNote)
+    {
+        Console.WriteLine(pal.Label(linkerNote));
+    }
+
     return 0;
 });
 
@@ -302,6 +316,11 @@ analyzeTsCommand.SetAction(async (parseResult, cancellationToken) =>
             Console.WriteLine(pal.Label(orderingNote));
         }
 
+        if (BuildLinkerStalenessNote(existingMeta) is { } linkerNote)
+        {
+            Console.WriteLine(pal.Label(linkerNote));
+        }
+
         Console.WriteLine(pal.Label("Saved:     ") + pal.Label(store.DatabasePath));
         return 0;
     }
@@ -319,6 +338,127 @@ analyzeTsCommand.SetAction(async (parseResult, cancellationToken) =>
             }
         }
     }
+});
+
+var linkCommand = new Command(
+    "link",
+    "Compute cross-stack edges between frontend HTTP call sites and their C# endpoints (cross-stack-linker-investigation.md).")
+{
+    dbOption,
+    verboseOption,
+};
+linkCommand.SetAction(async (parseResult, cancellationToken) =>
+{
+    string db = parseResult.GetRequiredValue(dbOption);
+    bool verbose = parseResult.GetValue(verboseOption);
+
+    await using var store = new SqliteGraphStore(db);
+    if (!File.Exists(store.DatabasePath))
+    {
+        Console.Error.WriteLine(Palette.Err.Error($"No graph at {store.DatabasePath}."));
+        Console.Error.WriteLine(Palette.Err.Label("Run 'slnmap analyze <solution>' first."));
+        return 1;
+    }
+
+    await store.InitializeAsync(cancellationToken).ConfigureAwait(false);
+    var graph = await store.LoadGraphAsync(cancellationToken).ConfigureAwait(false);
+    var existingMeta = await store.GetMetaAsync(cancellationToken).ConfigureAwait(false);
+    var existingFiles = await store.GetFileHashesAsync(cancellationToken).ConfigureAwait(false);
+
+    int endpointCount = graph.Nodes.Count(static n => n.Kind == NodeKind.Endpoint);
+    if (endpointCount == 0)
+    {
+        Console.Error.WriteLine(Palette.Err.Error("The graph has no Endpoint nodes."));
+        Console.Error.WriteLine(Palette.Err.Label("Run 'slnmap analyze <solution>' first."));
+        return 1;
+    }
+
+    int callSiteCount = graph.Nodes.Count(static n => n.Kind == NodeKind.FrontendCallSite);
+    if (callSiteCount == 0)
+    {
+        Console.Error.WriteLine(Palette.Err.Error("The graph has no FrontendCallSite nodes."));
+        Console.Error.WriteLine(Palette.Err.Label("Run 'slnmap analyze-ts <frontend-root>' first."));
+        return 1;
+    }
+
+    var stopwatch = Stopwatch.StartNew();
+
+    // Full recompute (investigation §Q3/§Q6): drop every existing CallsEndpoint edge — however
+    // it got there — and rebuild from the current node sets. Cheap at real scale (a few hundred
+    // thousand in-memory string comparisons), so there is no reason to attempt incremental edge
+    // maintenance and inherit its staleness bug surface for a cost this small.
+    var relinked = new CodeGraph();
+    foreach (var node in graph.Nodes)
+    {
+        relinked.AddNode(node);
+    }
+
+    foreach (var edge in graph.Edges.Where(static e => e.Kind != RelationshipKind.CallsEndpoint))
+    {
+        relinked.AddEdge(edge);
+    }
+
+    var results = CrossStackLinker.Link(relinked);
+    foreach (var edge in CrossStackLinker.ToEdges(results))
+    {
+        relinked.AddEdge(edge);
+    }
+
+    stopwatch.Stop();
+
+    var byOutcome = results.ToLookup(r => r.Outcome);
+    int unique = byOutcome[CallSiteLinkOutcome.Unique].Count();
+    int precedence = byOutcome[CallSiteLinkOutcome.PrecedenceResolved].Count();
+    int setEdge = byOutcome[CallSiteLinkOutcome.SetEdge].Count();
+    int noMatch = byOutcome[CallSiteLinkOutcome.NoSkeletonMatch].Count();
+    int verbMismatch = byOutcome[CallSiteLinkOutcome.VerbMismatch].Count();
+    int unknownVerb = byOutcome[CallSiteLinkOutcome.UnknownVerb].Count();
+    int linked = unique + precedence + setEdge;
+    int disclosed = noMatch + verbMismatch + unknownVerb;
+
+    var meta = new Dictionary<string, string>(existingMeta, StringComparer.Ordinal)
+    {
+        [MetaKeys.LinkerLastRun] = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture),
+    };
+    var fileRecords = existingFiles.Select(static pair => new FileRecord(pair.Key, pair.Value)).ToList();
+    await store.SaveAsync(relinked, fileRecords, meta, cancellationToken).ConfigureAwait(false);
+
+    var pal = Palette.Out;
+    Console.WriteLine(
+        pal.Label("Linked:    ")
+        + pal.Number(linked.ToString(CultureInfo.InvariantCulture))
+        + pal.Label($"/{results.Count.ToString(CultureInfo.InvariantCulture)} call sites (")
+        + pal.Number(unique.ToString(CultureInfo.InvariantCulture)) + pal.Label(" unique, ")
+        + pal.Number(precedence.ToString(CultureInfo.InvariantCulture)) + pal.Label(" via precedence, ")
+        + pal.Number(setEdge.ToString(CultureInfo.InvariantCulture)) + pal.Label(" set-edge)"));
+    string unknownVerbSuffix = unknownVerb > 0
+        ? pal.Label(", ") + pal.Number(unknownVerb.ToString(CultureInfo.InvariantCulture)) + pal.Label(" unknown verb")
+        : string.Empty;
+    Console.WriteLine(
+        pal.Label("Disclosed: ")
+        + (disclosed == 0 ? pal.Success("0") : pal.Warn(disclosed.ToString(CultureInfo.InvariantCulture)))
+        + pal.Label(" (")
+        + pal.Number(noMatch.ToString(CultureInfo.InvariantCulture)) + pal.Label(" no match, ")
+        + pal.Number(verbMismatch.ToString(CultureInfo.InvariantCulture)) + pal.Label(" verb mismatch")
+        + unknownVerbSuffix + pal.Label(")"));
+
+    if (verbose)
+    {
+        foreach (var result in results
+            .Where(static r => r.Outcome is CallSiteLinkOutcome.NoSkeletonMatch or CallSiteLinkOutcome.VerbMismatch or CallSiteLinkOutcome.UnknownVerb)
+            .OrderBy(static r => r.CallSite.Fqn, StringComparer.Ordinal))
+        {
+            string callSiteVerb = result.CallSite.Fqn[..result.CallSite.Fqn.IndexOf(' ', StringComparison.Ordinal)];
+            string conflictNote = result.ConflictingVerbEndpoints.Count > 0
+                ? $" — no {callSiteVerb} registered; " + string.Join(", ", result.ConflictingVerbEndpoints.Select(static e => e.Fqn)) + " exists"
+                : string.Empty;
+            Console.WriteLine(pal.Label($"  {result.CallSite.Fqn} — {result.Outcome}{conflictNote}"));
+        }
+    }
+
+    Console.WriteLine(pal.Label("Elapsed:   ") + pal.Success($"{stopwatch.Elapsed.TotalSeconds.ToString("F1", CultureInfo.InvariantCulture)}s"));
+    Console.WriteLine(pal.Label("Saved:     ") + pal.Label(store.DatabasePath));
+    return 0;
 });
 
 var watchCommand = new Command("watch", "Analyze once, then keep a warm workspace and re-analyze on every file save (near-instant on content changes).")
@@ -717,6 +857,7 @@ var rootCommand = new RootCommand("Slnmap — maps a .NET solution into a querya
 {
     analyzeCommand,
     analyzeTsCommand,
+    linkCommand,
     watchCommand,
     serveCommand,
     statusCommand,
@@ -948,6 +1089,19 @@ static string? BuildOrderingNote(IReadOnlyDictionary<string, string> existingMet
         ? "Note: the C# side was re-analyzed more recently than the frontend — this run restores frontend call sites `analyze` would otherwise have dropped."
         : null;
 }
+
+/// <summary>
+/// cross-stack-linker-investigation.md §Q3: neither `analyze` nor `analyze-ts` can write
+/// CallsEndpoint edges themselves, so any change either one makes to the graph leaves the last
+/// `slnmap link` run's edges reflecting an older state. `existingMeta` is read BEFORE this run's
+/// own save, so the presence of <see cref="MetaKeys.LinkerLastRun"/> here means links exist and
+/// are now, by definition, at least as stale as whatever this run just changed — informational,
+/// one line, not a warning (matches <see cref="BuildOrderingNote"/>'s tone).
+/// </summary>
+static string? BuildLinkerStalenessNote(IReadOnlyDictionary<string, string> existingMeta) =>
+    existingMeta.ContainsKey(MetaKeys.LinkerLastRun)
+        ? "Note: cross-stack links were computed before this analysis — run 'slnmap link' to refresh them."
+        : null;
 
 /// <summary>
 /// Progress display on stderr that warnings can safely interleave with. Interactive terminals get

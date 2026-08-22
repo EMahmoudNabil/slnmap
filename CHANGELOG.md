@@ -2,6 +2,61 @@
 
 All notable changes to Slnmap are documented here. Versions follow [SemVer](https://semver.org).
 
+## 0.12.0
+
+### Added
+
+- **`slnmap link`** — the cross-stack linker, the final piece of the frontend-analysis project.
+  Joins every `FrontendCallSite` (0.11.0) to the C# `Endpoint` (0.7.0/0.8.0) it actually hits, via
+  a new `CallsEndpoint` edge: exact verb matching (an honestly-unresolvable verb is disclosed,
+  never guessed), route-precedence tie-breaking scoped to the one case it's actually knowable (a
+  literal call site beats a parameterized sibling endpoint — the same way ASP.NET's own router
+  would, not a general precedence engine), and a truthful set edge for real runtime fan-out and
+  irreducible ambiguity alike — never a guessed single link. Full recompute every run (drops and
+  rebuilds every `CallsEndpoint` edge), cheap even at real scale. Every call site lands in exactly
+  one of six disclosed outcomes; nothing is ever silently dropped.
+- **`impact_analysis` and `find_usages` now continue through a C# handler's endpoint to its
+  frontend callers** once `slnmap link` has run — "what breaks in the React app if I change this
+  handler?" is a real, checkable answer from the same tool, not a separate query. `find_endpoint`
+  gained a "Called from the frontend by:" line for the same reason.
+- **`find_orphan_calls`** and **`list_frontend_callsites`** — two new MCP tools (13 → 15).
+  `find_orphan_calls` groups unlinked call sites by exact reason: no endpoint resembles this path
+  at any verb, an endpoint shares the exact route under a different verb (named in the message,
+  e.g. `"no POST registered; GET /api/OrganizationUsers exists"`), or the extractor genuinely
+  couldn't determine the verb. Both tools compute live against the current graph, so they're
+  never stale even between `slnmap link` runs.
+- **A staleness note on `analyze`/`analyze-ts`** when stored `CallsEndpoint` edges may now be
+  older than the graph — one line, informational, pointing at `slnmap link`.
+
+### Field-trial results
+
+Run against a real, live production codebase (433 `Endpoint` nodes[^658], 0 unresolved
+registrations; 434 frontend call sites extracted): **407 of 434 real call sites (93.8%) link
+deterministically or via the precedence rule.** Every one of the remaining 27 is individually
+disclosed by exact reason (23 no match, 4 verb mismatch) — including the specific production bug
+that motivated this entire project: a frontend `POST` to `/organizationusers` with no matching
+registration, surfacing exactly as designed under `verb-mismatch`, naming the
+`GET /api/OrganizationUsers` registration it happens to share a route shape with. Two additional
+real verb mismatches this project's own investigation phase hadn't previously named turned up in
+the same run.
+
+[^658]: an earlier field-trial report measured 658 endpoints on a separate, larger snapshot of
+the same application; this release's own field-trial checkout measured 433 — a real difference
+between two distinct snapshots, not an inconsistency in this run.
+
+### Notes
+
+- **`slnmap link` requires both `slnmap analyze` and `slnmap analyze-ts` to have run first**, and
+  should be re-run after either one changes the graph — a re-analyze wipes and rebuilds the
+  Endpoint/FrontendCallSite populations it draws edges between, so previously-computed links no
+  longer describe the current graph until `link` runs again.
+- **The route-precedence rule is deliberately narrow**: literal-beats-parameter only when the
+  call site's own segment is a known, concrete value. When it's genuinely unknown (a
+  runtime-chosen value), every matching endpoint gets a truthful set edge rather than a guess —
+  the same treatment as real fan-out, by design; the linker does not distinguish the two.
+- **No general ASP.NET route-precedence engine** (constraint-type ranking beyond literal-vs-hole,
+  catch-all routes, custom `IRouteConstraint`s) — the field-trial data never needed one.
+
 ## 0.11.0
 
 ### Added

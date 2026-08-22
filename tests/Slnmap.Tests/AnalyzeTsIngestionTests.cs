@@ -85,6 +85,47 @@ public sealed class AnalyzeTsIngestionTests
     }
 
     [Fact]
+    public void MergeIntoGraph_PrunesDanglingEdgesFromRemovedFrontendNodes_LeavesCSharpEdgesUntouched()
+    {
+        // cross-stack-linker-investigation.md §Q3 prerequisite: MergeIntoGraph's old contract
+        // ("these two kinds carry zero edges, so none can be left dangling by the prune") breaks
+        // the moment ANY edge is attached to a FrontendCallSite/UnresolvedCallSite node — exactly
+        // what the Phase 3 linker's CallsEndpoint edges do. This test predates
+        // RelationshipKind.CallsEndpoint on purpose (Part 0 is a standalone, bisect-safe fix,
+        // independent of the linker feature that motivated finding it) — it stands in with
+        // RelationshipKind.References, since the bug is about ANY edge sourced from a node the
+        // kind-scoped prune removes, not about CallsEndpoint's specific semantics. The same
+        // mechanism this proves is what makes a real CallsEndpoint edge survive correctly too.
+        var existing = new CodeGraph();
+        var csharpClass = SymbolNode.Create(NodeKind.Class, "Widget", "N.Widget", "Widget.cs", new SourceSpan(0, 10));
+        var csharpMethod = SymbolNode.Create(NodeKind.Method, "Do", "N.Widget.Do()", "Widget.cs", new SourceSpan(11, 20));
+        var staleFrontend = SymbolNode.Create(
+            NodeKind.FrontendCallSite, "/Old", "GET src/old.ts:1:1", "/abs/src/old.ts", new SourceSpan(0, 5));
+        existing.AddNode(csharpClass);
+        existing.AddNode(csharpMethod);
+        existing.AddNode(staleFrontend);
+        existing.AddEdge(new RelationshipEdge(csharpClass.Id, csharpMethod.Id, RelationshipKind.Contains));
+
+        // The edge a future linker would write, sourced from the node about to be pruned.
+        existing.AddEdge(new RelationshipEdge(staleFrontend.Id, csharpMethod.Id, RelationshipKind.References));
+
+        var newNodes = TsArtifactFacts.BuildNodes(SampleArtifact, "/frontend-root");
+        var merged = TsArtifactFacts.MergeIntoGraph(existing, newNodes);
+
+        // The C# edge survives untouched.
+        Assert.Contains(merged.OutgoingEdges(csharpClass.Id, RelationshipKind.Contains), e => e.TargetId == csharpMethod.Id);
+
+        // The edge sourced from the pruned frontend node must NOT survive as a dangling row —
+        // its source id no longer exists anywhere in the merged graph.
+        Assert.False(merged.ContainsNode(staleFrontend.Id));
+        Assert.DoesNotContain(merged.Edges, e => e.SourceId == staleFrontend.Id || e.TargetId == staleFrontend.Id);
+
+        // Exactly the one legitimate C# edge remains; the dangling one is gone, not silently
+        // duplicated or otherwise miscounted.
+        Assert.Equal(1, merged.EdgeCount);
+    }
+
+    [Fact]
     public async Task EndToEnd_ReIngestion_ReplacesStaleFrontendNodesAndLeavesCSharpNodesUntouched()
     {
         string db = Path.Combine(Path.GetTempPath(), $"slnmap-ts-reingest-{Guid.NewGuid():N}.db");
