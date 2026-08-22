@@ -8,7 +8,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>slnmap</ToolCommandName>
     <PackageId>Slnmap</PackageId>
-    <Version>0.10.0</Version>
+    <Version>0.11.0</Version>
     <RollForward>Major</RollForward>
     <PackageReadmeFile>nuget-readme.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>
@@ -18,16 +18,18 @@
     <PackageProjectUrl>https://slnmap.dev</PackageProjectUrl>
     <RepositoryUrl>https://github.com/EMahmoudNabil/slnmap</RepositoryUrl>
     <PackageTags>dotnet;roslyn;mcp;ai;code-analysis;claude-code;knowledge-graph</PackageTags>
-    <PackageReleaseNotes>New: `slnmap watch` -- the roadmap's top item, shipped. Analyze once,
-keep the Roslyn workspace warm, and re-analyze on every file save: a one-file change on a
-10-project solution lands in the database in about a second (measured: re-analyzed in 0.93s,
-saved in 0.17s on eShopOnWeb), versus a full workspace reload for run-and-exit analyze. Run
-`slnmap serve` beside it -- the server reads the same database and survives the atomic swap
-mid-query, so your agent's answers stay fresh while you type. Structural changes (csproj/sln/
-props/targets/global.json, or brand-new files) trigger an announced full reload instead of a
-guess; saves are skipped entirely when the graph is unchanged. Note: the resident workspace
-holds compilations in memory -- expect hundreds of MB on very large solutions. Existing
-databases keep working; no rebuild required. See CHANGELOG.md for details.
+    <PackageReleaseNotes>New: `slnmap analyze-ts` -- frontend HTTP call sites join the same
+graph as your C# code. Point it at a TypeScript/React project root and it walks the program
+with the TS Compiler API (via the companion `slnmap-ts` npm package, pulled automatically
+through `npx` -- Node 18+ required, nothing to install by hand), resolving axios/fetch call
+sites -- including through barrel re-exports and constant folding -- to route templates, and
+disclosing exactly what it can't resolve across six named categories rather than guessing.
+Field-trial verified across 4 codebases (two real production snapshots of the same app, a
+frontend-only static site, and a public sample using a third HTTP client library): zero false
+positives anywhere; one real gap found and fixed (superagent's `.del()` method name for DELETE).
+Honest limits: no cross-stack linking yet (that's next); monorepo/TypeScript project-references
+tsconfigs are not yet field-verified; a URL built from a helper function's own parameter is
+correctly counted unresolved, not guessed from its callers. See CHANGELOG.md for details.
 Source: https://github.com/EMahmoudNabil/slnmap</PackageReleaseNotes>
   </PropertyGroup>
 

@@ -58,10 +58,16 @@ warm, and re-analyze on every file save — a one-file change lands in the datab
 second on a 10-project solution, and a `slnmap serve` running beside it keeps answering from the
 same file, so your agent's answers stay fresh while you type.
 
+And `slnmap analyze-ts` (v0.11.0): adds TypeScript/React frontend HTTP call sites to the same
+graph — resolved route templates and an honestly-labeled unresolved bucket, six named reasons,
+never a guess. Requires Node 18+; the extractor itself is fetched via `npx` automatically.
+
 ## Privacy
 
-**100% local — and now you can verify it.** No telemetry, no network calls, no cloud service; analysis
-works fully offline. Now that the CLI and MCP server are open source, the claim is auditable.
+**100% local — and now you can verify it.** No telemetry, no cloud service; `analyze`/`watch`/
+`serve`/`viz`/`status`/`doctor` make no network calls at all. One documented exception:
+`analyze-ts` fetches its extractor from the public npm registry via `npx` (skip it to stay fully
+offline). Now that the CLI and MCP server are open source, the claim is auditable.
 
 ## License & support
 

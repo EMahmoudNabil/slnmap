@@ -2,6 +2,59 @@
 
 All notable changes to Slnmap are documented here. Versions follow [SemVer](https://semver.org).
 
+## 0.11.0
+
+### Added
+
+- **`slnmap analyze-ts <frontend-root>`** — frontend HTTP call sites now land in the same code
+  graph as your C# code. Walks a TypeScript/React project with the TypeScript Compiler API (via
+  the companion [`slnmap-ts`](https://www.npmjs.com/package/slnmap-ts) npm package) and resolves
+  each call site to a route template, deterministically: literal strings, `const`-through-barrel
+  re-exports, `API_ROUTES`-style object properties, and template literals with a mix of
+  const-folded segments and genuinely runtime holes (rendered as an anonymous `{*}`). Detection
+  covers axios instances (`axios.create()`, tracked by declaration through however many
+  re-export/rename hops) and the ambient global `fetch` (never a locally shadowed one). Two new
+  node kinds, `FrontendCallSite` and `UnresolvedCallSite` — zero database schema changes (`kind`
+  is a plain `TEXT` column; an older `slnmap` binary reading a newer graph degrades unknown kinds
+  to `Unknown` instead of crashing, the same forward-compatibility contract `Endpoint` shipped
+  under in 0.7.0).
+- **The unresolved bucket is disclosed, not hidden**, across six named categories
+  (`dynamic-base-url`, `runtime-computed-segment`, `non-constant-identifier`,
+  `unrecognized-callee`, `dynamic-import-or-indirection`, `resolution-depth-exceeded`) — every
+  call site the extractor can't resolve statically is counted and labeled with why, never
+  silently dropped and never guessed. `analyze-ts --verbose` prints the per-category breakdown
+  alongside the resolved/unresolved summary line.
+- **Node 18+ required for `analyze-ts`** — checked explicitly, with a clean, actionable message
+  (not a stack trace) if missing. The `slnmap-ts` package itself is fetched automatically via
+  `npx` on first use (a local/global install is preferred first if one exists, for
+  air-gapped/CI setups) — nothing to install by hand beyond Node itself.
+
+### Field-trial results
+
+Verified across 4 codebases before shipping — two independent, real production snapshots of the
+same application (~2 weeks/one refactor apart), a frontend-only static site, and a deliberately
+foreign public sample (plain JavaScript, no TypeScript at all, a third HTTP client library):
+**zero false positives anywhere.** 95.0% and 95.5% of call sites resolved on the two real-app
+snapshots respectively — consistent across time, not a one-snapshot fluke. One real gap found and
+fixed pre-release: `superagent`'s official `.del()` method name for DELETE was not in the
+recognized verb set, silently invisible rather than merely unresolved.
+
+### Notes
+
+- **This is the extraction half only — cross-stack linking (matching a frontend call site to the
+  backend `Endpoint` it hits) is not in this release.** Both node populations now live in one
+  graph, and the route-template normalizer needed for the eventual join (`RouteTemplate`,
+  shipped under `find_endpoint` since 0.7.0) is already verified byte-compatible between the two
+  producers — but nothing today draws the edge between them. That's next.
+- **Monorepo / TypeScript project-references tsconfigs are not yet field-verified.** Every
+  project exercised so far uses a single, flat `tsconfig.json`. The loader understands
+  `references` in principle (`ts.parseJsonConfigFileContent`), but this has not been run against
+  an Nx/Turborepo-style setup.
+- **A URL built from a helper function's own parameter is correctly counted unresolved, not
+  guessed from its callers** — resolution is call-site-local by design; tracing every call site
+  of a shared helper to see what its callers pass is a different, larger feature (interprocedural
+  analysis), not attempted here.
+
 ## 0.10.0
 
 ### Added
