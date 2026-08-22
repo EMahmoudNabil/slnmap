@@ -26,6 +26,31 @@ jobs:
         with:
           dotnet-version: ${{ matrix.dotnet }}
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build slnmap-ts (the analyze-ts test suite needs a real dist/cli.js)
+        working-directory: src/slnmap-ts
+        run: |
+          npm ci
+          npm run build
+
+      - name: Warm the npx cache for slnmap-ts (avoids a concurrent cold-install race)
+        # Several test classes shell out to the real CLI, which falls back to `npx --yes
+        # --package=slnmap-ts@<pinned>` since slnmap-ts isn't on PATH here. xUnit runs those
+        # classes in parallel by default, so without this step multiple cold npx installs race
+        # to extract into the same shared npm cache directory at once. Windows can't
+        # rename/delete a directory that still has open handles the way POSIX can, so that race
+        # surfaced as `npm error ENOTEMPTY` on windows-latest only (never on Ubuntu). Installing
+        # once, serialized, before the parallel test run removes the race entirely.
+        # slnmap-ts has no --version flag, so this exits 1 with a usage message — that's fine,
+        # the only goal is to force npm to finish downloading and extracting the package into
+        # the shared cache before any parallel test tries to.
+        shell: bash
+        run: npx --yes --package=slnmap-ts@0.2.1 slnmap-ts --version || true
+
       - name: Restore
         run: dotnet restore
 

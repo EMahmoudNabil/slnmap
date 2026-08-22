@@ -130,20 +130,49 @@ error. Stack traces and file paths never appear in a payload.
 ## CLI
 
 ```console
-slnmap analyze <solution>   # build or update the code graph (incremental on re-run)
-slnmap watch <solution>     # analyze once, then keep a warm workspace and re-analyze on save
-slnmap serve                # serve the graph to MCP clients over stdio
-slnmap status               # show node/edge counts and when it was last analyzed
-slnmap viz                  # export the graph as a self-contained interactive HTML file
-slnmap doctor               # check the environment can run Slnmap
+slnmap analyze <solution>        # build or update the code graph (incremental on re-run)
+slnmap analyze-ts <frontend>     # add TypeScript/React frontend HTTP call sites to the same graph
+slnmap watch <solution>          # analyze once, then keep a warm workspace and re-analyze on save
+slnmap serve                     # serve the graph to MCP clients over stdio
+slnmap status                    # show node/edge counts and when it was last analyzed
+slnmap viz                       # export the graph as a self-contained interactive HTML file
+slnmap doctor                    # check the environment can run Slnmap
 ```
 
-These six verbs are the whole CLI. Symbol, usage, and impact querying is MCP-only — there is no
+These seven verbs are the whole CLI. Symbol, usage, and impact querying is MCP-only — there is no
 `find`/`usages`/`impact` command; connect an MCP client to `slnmap serve` to query the graph.
 
 `--db <path>` selects the database file (default `slnmap.db`). `-v`/`--verbose` prints per-document
 progress on its own line per update — useful in an interactive terminal, but it floods piped or
 redirected output (logs, CI), so omit it there.
+
+## Frontend call sites (`analyze-ts`)
+
+**Requires [Node.js](https://nodejs.org) 18+** — checked explicitly, with a clean error if
+missing, the same way the .NET SDK is checked for `analyze`. Nothing else to install by hand:
+the extractor itself ([`slnmap-ts`](https://www.npmjs.com/package/slnmap-ts) on npm) is fetched
+automatically via `npx` the first time you run the verb.
+
+```console
+slnmap analyze-ts path/to/your-frontend --db slnmap.db
+```
+
+```
+Frontend:  187 call sites resolved, 9 unresolved (95.4% coverage)
+Saved:     slnmap.db
+```
+
+Point it at a TypeScript/React project root (add `--tsconfig` if it isn't at the project root)
+and the same database `analyze` writes to gets two new node kinds: `FrontendCallSite` for every
+HTTP call the extractor could resolve to a route template — including through const-through-
+barrel re-exports and template literals with a mix of folded and runtime-only segments — and
+`UnresolvedCallSite` for every one it honestly can't, each labeled with one of six specific
+reasons rather than silently dropped or guessed at. Ask your agent to find a frontend call site
+by route the same way it already finds C# symbols.
+
+**This release adds the frontend HALF of the graph — it does not yet link a frontend call site
+to the backend `Endpoint` it hits.** Both node populations live in one database today; drawing
+the edge between them is the next piece of work.
 
 ## Visualizing the graph
 
@@ -191,14 +220,22 @@ dotnet run --project src/Slnmap.Cli -- analyze path/to/YourSolution.sln
 
 Analyzes C# solutions targeting .NET 8 and .NET 9 (earlier targets are untested — feedback welcome);
 runs on Windows, macOS, and Linux; works with any MCP client (tested with Claude Code).
+`analyze-ts` additionally requires Node.js 18+ and analyzes TypeScript/React frontends (single,
+flat `tsconfig.json` setups field-verified; monorepo/project-references tsconfigs are not yet).
 
 ## Privacy
 
 **100% local — and now you can verify it.** Slnmap runs on your machine, reads your source with
 Roslyn, and writes a single local SQLite file. The MCP server reads only that local file. There is no
-telemetry, no network calls, and no cloud service — analysis works fully offline. Now that the CLI and
-MCP server are open source, that claim is auditable: read the code, or watch the process — nothing
-leaves your machine.
+telemetry, no cloud service, and `analyze`/`watch`/`serve`/`viz`/`status`/`doctor` make no network
+calls at all — analysis works fully offline. Now that the CLI and MCP server are open source, that
+claim is auditable: read the code, or watch the process — nothing leaves your machine.
+
+**One documented exception**: `analyze-ts` fetches the `slnmap-ts` extractor from the public npm
+registry via `npx` (a local or globally-installed copy is used instead if one already exists — no
+network needed once you've installed it that way). No source code is ever sent anywhere; the only
+network activity is npm's own package download. Skip `analyze-ts` entirely to keep the tool fully
+offline.
 
 ## Performance
 

@@ -1,0 +1,45 @@
+{
+  "name": "slnmap-ts",
+  "version": "0.2.1",
+  "description": "Frontend HTTP call-site extractor for slnmap. Walks a TypeScript/React project with the TS Compiler API and emits a JSON artifact of resolved and unresolved call sites for slnmap's `analyze-ts` verb to ingest.",
+  "keywords": [
+    "slnmap",
+    "typescript",
+    "static-analysis",
+    "code-graph"
+  ],
+  "license": "MIT",
+  "author": "Mahmoud Nabil",
+  "homepage": "https://slnmap.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EMahmoudNabil/slnmap.git",
+    "directory": "src/slnmap-ts"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "slnmap-ts": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "pretest": "tsc -p tsconfig.test.json",
+    "test": "node --test \"dist-test/test/*.test.js\"",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "typescript": "5.9.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0"
+  }
+}

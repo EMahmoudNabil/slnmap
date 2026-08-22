@@ -3,3 +3,13 @@
 
 # Binary assets — never normalize line endings
 *.png binary
+
+# slnmap-ts fixtures/source are byte-exact oracles: the schemaVersion-2 spanStart/spanEnd
+# fields are raw character offsets into these exact files, so a checkout that differs by even
+# one \r per line (Windows core.autocrlf=true vs. Linux/Mac's untranslated LF) shifts every
+# offset after the first line break — found as a real cross-platform CI failure (spanStart 531
+# on Windows vs. 522 on Ubuntu for the identical source position). An explicit eol=lf here
+# overrides core.autocrlf for these paths specifically, so every checkout produces
+# byte-identical content and therefore identical offsets.
+src/slnmap-ts/** text eol=lf
+tests/fixtures-ts/** text eol=lf

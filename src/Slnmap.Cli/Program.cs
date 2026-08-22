@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Reflection;
@@ -150,6 +151,174 @@ analyzeCommand.SetAction(async (parseResult, cancellationToken) =>
     Console.WriteLine(pal.Label("Elapsed:   ") + pal.Success($"{stopwatch.Elapsed.TotalSeconds.ToString("F1", CultureInfo.InvariantCulture)}s"));
     Console.WriteLine(pal.Label("Saved:     ") + pal.Label(store.DatabasePath));
     return 0;
+});
+
+var frontendRootArgument = new Argument<string>("frontend-root")
+{
+    Description = "Path to the frontend project's root directory.",
+};
+
+var tsconfigOption = new Option<string?>("--tsconfig")
+{
+    Description = "Path to the tsconfig.json to use (defaults to <frontend-root>/tsconfig.json).",
+};
+
+var analyzeTsCommand = new Command(
+    "analyze-ts",
+    "Analyze a frontend project's HTTP call sites (via slnmap-ts) and merge them into the code graph.")
+{
+    frontendRootArgument,
+    tsconfigOption,
+    dbOption,
+    verboseOption,
+};
+analyzeTsCommand.SetAction(async (parseResult, cancellationToken) =>
+{
+    string frontendRoot = Path.GetFullPath(parseResult.GetRequiredValue(frontendRootArgument));
+    string db = parseResult.GetRequiredValue(dbOption);
+    bool verbose = parseResult.GetValue(verboseOption);
+    string tsconfig = Path.GetFullPath(
+        parseResult.GetValue(tsconfigOption) ?? Path.Combine(frontendRoot, "tsconfig.json"));
+
+    // Step 1: validate the root + tsconfig presence — corrective, no stack traces
+    // (ts-extractor-investigation.md §Q1.1 step 1; CliErrorHandlingTests.cs conventions).
+    if (!Directory.Exists(frontendRoot))
+    {
+        Console.Error.WriteLine(Palette.Err.Error($"Frontend root not found: {frontendRoot}"));
+        Console.Error.WriteLine(Palette.Err.Label("Check the path and try again."));
+        return 1;
+    }
+
+    if (!File.Exists(tsconfig))
+    {
+        // Two distinct audiences (field trial, reports/analyze-ts-field-trial.md §4.4): a
+        // project whose tsconfig just isn't where expected (the first line), and a genuinely
+        // tsconfig-less plain-JavaScript project (a real, not-hypothetical case — the second
+        // line), which the first line alone left with no path forward. slnmap-ts itself handles
+        // allowJs projects fully once a tsconfig exists (verified against a real plain-JS
+        // codebase in the field trial) — the gap was purely this message never saying so.
+        Console.Error.WriteLine(Palette.Err.Error($"tsconfig not found: {tsconfig}"));
+        Console.Error.WriteLine(Palette.Err.Label("Pass --tsconfig to point at the frontend project's tsconfig.json."));
+        Console.Error.WriteLine(Palette.Err.Label("If this is a plain JavaScript project, create a minimal tsconfig.json with \"allowJs\": true to enable analysis."));
+        return 1;
+    }
+
+    // Step 2: Node presence — a hard failure, not a silent skip, because the user explicitly
+    // asked for this verb (§Q1.1 step 2). Exact wording from the investigation.
+    if (!await IsNodeAvailableAsync(cancellationToken).ConfigureAwait(false))
+    {
+        Console.Error.WriteLine(Palette.Err.Error("Node.js not found."));
+        Console.Error.WriteLine(Palette.Err.Label(
+            "Frontend analysis requires Node 18+ — install it from https://nodejs.org, or run without `analyze-ts` to skip frontend coverage."));
+        return 1;
+    }
+
+    string tempArtifact = Path.Combine(Path.GetTempPath(), $"slnmap-ts-artifact-{Guid.NewGuid():N}.json");
+    try
+    {
+        // Step 3: extraction. Absolute paths throughout (§7.4's lesson — never rely on a shared
+        // CWD between this process and the spawned one).
+        var (exitCode, stdout, stderr) = await RunSlnmapTsExtractAsync(frontendRoot, tsconfig, tempArtifact, cancellationToken)
+            .ConfigureAwait(false);
+        if (exitCode != 0)
+        {
+            Console.Error.WriteLine(Palette.Err.Error("slnmap-ts extraction failed."));
+            Console.Error.WriteLine(string.IsNullOrWhiteSpace(stderr) ? stdout : stderr);
+            if (verbose)
+            {
+                Console.Error.WriteLine();
+                Console.Error.WriteLine($"stdout:\n{stdout}\nstderr:\n{stderr}");
+            }
+
+            return 1;
+        }
+
+        if (!File.Exists(tempArtifact))
+        {
+            Console.Error.WriteLine(Palette.Err.Error("slnmap-ts reported success but produced no output artifact."));
+            return 1;
+        }
+
+        // Step 4: validate the artifact — schemaVersion, producer, shape. A malformed artifact
+        // is a clean error; never a partial ingest (TsArtifactFacts.Parse validates every call
+        // site before returning).
+        string json = await File.ReadAllTextAsync(tempArtifact, cancellationToken).ConfigureAwait(false);
+        TsArtifact artifact;
+        try
+        {
+            artifact = TsArtifactFacts.Parse(json);
+        }
+        catch (TsArtifactException e)
+        {
+            Console.Error.WriteLine(Palette.Err.Error(e.Message));
+            return 1;
+        }
+
+        // Step 5: ingest — kind-scoped prune-and-replace (§Q1.2), reusing LoadGraphAsync/
+        // SaveAsync unmodified; every existing meta/file row is preserved explicitly (SaveAsync
+        // is a full rebuild — anything not passed back in is lost).
+        await using var store = new SqliteGraphStore(db);
+        await store.InitializeAsync(cancellationToken).ConfigureAwait(false);
+        var existingGraph = await store.LoadGraphAsync(cancellationToken).ConfigureAwait(false);
+        var existingMeta = await store.GetMetaAsync(cancellationToken).ConfigureAwait(false);
+        var existingFiles = await store.GetFileHashesAsync(cancellationToken).ConfigureAwait(false);
+
+        var newNodes = TsArtifactFacts.BuildNodes(artifact, frontendRoot);
+        var mergedGraph = TsArtifactFacts.MergeIntoGraph(existingGraph, newNodes);
+
+        string? orderingNote = BuildOrderingNote(existingMeta);
+
+        var mergedMeta = new Dictionary<string, string>(existingMeta, StringComparer.Ordinal)
+        {
+            [MetaKeys.FrontendLastAnalyzed] = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture),
+            [MetaKeys.FrontendUnresolvedCallSites] = (artifact.Stats?.UnresolvedCount ?? 0).ToString(CultureInfo.InvariantCulture),
+        };
+        var fileRecords = existingFiles.Select(pair => new FileRecord(pair.Key, pair.Value)).ToList();
+
+        await store.SaveAsync(mergedGraph, fileRecords, mergedMeta, cancellationToken).ConfigureAwait(false);
+
+        // Step 6: summary, in the existing style.
+        var pal = Palette.Out;
+        int resolved = artifact.Stats?.ResolvedCount ?? 0;
+        int unresolved = artifact.Stats?.UnresolvedCount ?? 0;
+        double coverage = artifact.Stats?.CoveragePercent ?? 0;
+        Console.WriteLine(
+            pal.Label("Frontend:  ")
+            + pal.Number(resolved.ToString(CultureInfo.InvariantCulture))
+            + pal.Label(" call sites resolved, ")
+            + pal.Number(unresolved.ToString(CultureInfo.InvariantCulture))
+            + pal.Label($" unresolved ({coverage.ToString("0.#", CultureInfo.InvariantCulture)}% coverage)"));
+
+        if (verbose && artifact.Stats?.ByCategory is { Count: > 0 } byCategory)
+        {
+            foreach (var (category, count) in byCategory.OrderByDescending(pair => pair.Value))
+            {
+                Console.WriteLine(pal.Label($"    {category}: ") + pal.Number(count.ToString(CultureInfo.InvariantCulture)));
+            }
+        }
+
+        if (orderingNote is not null)
+        {
+            Console.WriteLine(pal.Label(orderingNote));
+        }
+
+        Console.WriteLine(pal.Label("Saved:     ") + pal.Label(store.DatabasePath));
+        return 0;
+    }
+    finally
+    {
+        if (File.Exists(tempArtifact))
+        {
+            try
+            {
+                File.Delete(tempArtifact);
+            }
+            catch (IOException)
+            {
+                // Best-effort cleanup of a temp file.
+            }
+        }
+    }
 });
 
 var watchCommand = new Command("watch", "Analyze once, then keep a warm workspace and re-analyze on every file save (near-instant on content changes).")
@@ -547,6 +716,7 @@ doctorCommand.SetAction(async (parseResult, cancellationToken) =>
 var rootCommand = new RootCommand("Slnmap — maps a .NET solution into a queryable code graph.")
 {
     analyzeCommand,
+    analyzeTsCommand,
     watchCommand,
     serveCommand,
     statusCommand,
@@ -619,6 +789,165 @@ static bool GraphsEqual(CodeGraph a, CodeGraph b) =>
 /// </summary>
 static string CurrentVersion() =>
     Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "unknown";
+
+/// <summary>
+/// The `slnmap-ts` npm version <c>analyze-ts</c> pins for its `npx` fallback path — must track
+/// <c>src/slnmap-ts/package.json</c>'s <c>version</c>. There is no automated check binding the
+/// two today (they live in different toolchains); a version bump on one side without the other
+/// is a real drift risk worth a manual note in the release checklist.
+/// </summary>
+static string PinnedSlnmapTsVersion() => "0.2.1";
+
+/// <summary>Whether `node` is reachable at all — a simple `node --version` probe, 5s ceiling.</summary>
+static async Task<bool> IsNodeAvailableAsync(CancellationToken cancellationToken)
+{
+    string? nodePath = ResolveOnPath("node");
+    if (nodePath is null)
+    {
+        return false;
+    }
+
+    var result = await RunProcessAsync(nodePath, ["--version"], TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
+    return result.ExitCode == 0;
+}
+
+/// <summary>
+/// Runs `slnmap-ts extract` and returns its exit code + captured output. Two paths, in order:
+/// (1) a directly PATH-resolvable `slnmap-ts` binary (a local/global `npm install` or `npm
+/// link` — zero network); (2) `npx --yes --package=slnmap-ts@&lt;pinned&gt;`, exactly as
+/// designed (ts-extractor-investigation.md §Q1.1) — `npx` resolves a local copy first before
+/// reaching the network. Path (1) is not in the investigation's original wording; it exists
+/// because `npx --package=name@version` was verified to force registry resolution regardless of
+/// a local/linked install (a bare `npx name` does prefer local resolution, but that syntax can't
+/// express the version pin the design calls for) — see reports/analyze-ts-verb-report.md for the
+/// empirical trace. This is also what makes the package testable end-to-end before it is ever
+/// published to the npm registry. Both candidates are resolved via <see cref="ResolveOnPath"/>
+/// BEFORE either is spawned, rather than by catching a "not found" exception from
+/// <see cref="Process.Start(ProcessStartInfo)"/> — see that method's own remarks for why.
+/// </summary>
+static async Task<(int ExitCode, string Stdout, string Stderr)> RunSlnmapTsExtractAsync(
+    string frontendRoot, string tsconfig, string outPath, CancellationToken cancellationToken)
+{
+    string[] extractArgs = ["extract", frontendRoot, "--tsconfig", tsconfig, "--out", outPath];
+
+    if (ResolveOnPath("slnmap-ts") is { } directPath)
+    {
+        return await RunProcessAsync(directPath, extractArgs, TimeSpan.FromMinutes(5), cancellationToken).ConfigureAwait(false);
+    }
+
+    if (ResolveOnPath("npx") is not { } npxPath)
+    {
+        return (1, string.Empty, "Neither 'slnmap-ts' nor 'npx' could be found on PATH.");
+    }
+
+    string[] npxArgs = ["--yes", $"--package=slnmap-ts@{PinnedSlnmapTsVersion()}", "slnmap-ts", .. extractArgs];
+    return await RunProcessAsync(npxPath, npxArgs, TimeSpan.FromMinutes(5), cancellationToken).ConfigureAwait(false);
+}
+
+/// <summary>
+/// Manual PATH (+ PATHEXT on Windows) resolution, returning the fully-resolved file path or
+/// <see langword="null"/>. Necessary — and sufficient — because of two things verified
+/// empirically on this machine (reports/analyze-ts-verb-report.md Part 2): npm-installed command
+/// shims (`npx`, and any locally/globally installed bin script such as `slnmap-ts` itself) are
+/// `.cmd` files on Windows, and <see cref="Process.Start(ProcessStartInfo)"/> with
+/// <c>UseShellExecute = false</c> does NOT search PATH/PATHEXT for a bare name the way a shell
+/// does — it throws <see cref="Win32Exception"/> even when the shim is genuinely on PATH. The
+/// first fix attempted (route every spawn through <c>cmd.exe /c</c>) traded that exception for a
+/// worse bug: <c>cmd.exe</c> itself always exists, so <c>Process.Start</c> always succeeds, and a
+/// missing target shows up as `cmd.exe`'s own non-zero exit with a LOCALIZED "is not recognized"
+/// message — indistinguishable from a genuine extraction failure, which silently broke the
+/// slnmap-ts→npx fallback (a missing `slnmap-ts` was reported as a failed run instead of falling
+/// through to `npx`). Resolving the FULL path ourselves sidesteps both problems: a resolved
+/// `...\npx.CMD` starts directly with no shell involved at all (verified — Windows' CreateProcess
+/// launches a `.cmd` file fine once given its complete path; only bare-name PATHEXT SEARCHING is
+/// unsupported), and an unresolved name gives a clean, locale-independent "not found" the caller
+/// can act on before spawning anything.
+/// </summary>
+static string? ResolveOnPath(string name)
+{
+    string pathEnv = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+    string[] extensions = OperatingSystem.IsWindows()
+        ? (Environment.GetEnvironmentVariable("PATHEXT") ?? ".COM;.EXE;.BAT;.CMD").Split(';')
+        : [string.Empty];
+
+    foreach (string directory in pathEnv.Split(Path.PathSeparator))
+    {
+        if (directory.Length == 0)
+        {
+            continue;
+        }
+
+        foreach (string extension in extensions)
+        {
+            string candidate = Path.Combine(directory, name + extension);
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+    }
+
+    return null;
+}
+
+/// <summary>Starts an already-resolved executable and returns its exit code + captured output,
+/// killing it and returning a synthetic timeout result if it runs past <paramref name="timeout"/>.</summary>
+static async Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(
+    string fileName, IReadOnlyList<string> args, TimeSpan timeout, CancellationToken cancellationToken)
+{
+    var psi = new ProcessStartInfo(fileName) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+    foreach (var arg in args)
+    {
+        psi.ArgumentList.Add(arg);
+    }
+
+    using var process = Process.Start(psi) ?? throw new InvalidOperationException($"Failed to start '{fileName}'.");
+
+    var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+    var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+    using var timeoutCts = new CancellationTokenSource(timeout);
+    using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+    try
+    {
+        await process.WaitForExitAsync(linkedCts.Token).ConfigureAwait(false);
+    }
+    catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
+    {
+        process.Kill(entireProcessTree: true);
+        return (1, string.Empty, $"'{fileName}' timed out after {timeout}.");
+    }
+
+    string stdout = await stdoutTask.ConfigureAwait(false);
+    string stderr = await stderrTask.ConfigureAwait(false);
+    return (process.ExitCode, stdout, stderr);
+}
+
+/// <summary>
+/// The run-analyze-ts-after-analyze ordering note (ts-extractor-investigation.md §Q1.2 caveat):
+/// `analyze` rebuilds the graph from Roslyn output alone and silently drops frontend-producer
+/// node kinds on its next full run. When the stored <see cref="MetaKeys.LastAnalyzed"/> is newer
+/// than the stored <see cref="MetaKeys.FrontendLastAnalyzed"/> (or frontend data has never been
+/// ingested at all while a C# analysis exists), this run is restoring exactly what that rebuild
+/// would have dropped — informational, one line, not a warning.
+/// </summary>
+static string? BuildOrderingNote(IReadOnlyDictionary<string, string> existingMeta)
+{
+    if (!existingMeta.TryGetValue(MetaKeys.LastAnalyzed, out var csharpRaw)
+        || !DateTimeOffset.TryParse(csharpRaw, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var csharpTimestamp))
+    {
+        return null;
+    }
+
+    if (!existingMeta.TryGetValue(MetaKeys.FrontendLastAnalyzed, out var frontendRaw)
+        || !DateTimeOffset.TryParse(frontendRaw, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var frontendTimestamp))
+    {
+        return "Note: this db has C# analysis but no prior frontend data — nothing was restored, this is the first analyze-ts run.";
+    }
+
+    return csharpTimestamp > frontendTimestamp
+        ? "Note: the C# side was re-analyzed more recently than the frontend — this run restores frontend call sites `analyze` would otherwise have dropped."
+        : null;
+}
 
 /// <summary>
 /// Progress display on stderr that warnings can safely interleave with. Interactive terminals get

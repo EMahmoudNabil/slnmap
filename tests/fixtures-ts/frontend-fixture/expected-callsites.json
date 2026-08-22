@@ -1,0 +1,145 @@
+{
+  "schemaVersion": 2,
+  "producer": "slnmap-ts",
+  "producerVersion": "0.2.1",
+  "project": {
+    "root": ".",
+    "tsconfig": "tsconfig.json"
+  },
+  "stats": {
+    "resolvedCount": 5,
+    "unresolvedCount": 6,
+    "coveragePercent": 45.5,
+    "byCategory": {
+      "dynamic-base-url": 1,
+      "runtime-computed-segment": 1,
+      "non-constant-identifier": 1,
+      "unrecognized-callee": 1,
+      "dynamic-import-or-indirection": 1,
+      "resolution-depth-exceeded": 1
+    }
+  },
+  "callSites": [
+    {
+      "kind": "FrontendCallSite",
+      "verb": "POST",
+      "template": "/organizationusers",
+      "resolutionTier": "literal",
+      "file": "src/hooks/useOrganizationUsers.ts",
+      "line": 10,
+      "column": 12,
+      "spanStart": 522,
+      "spanEnd": 567
+    },
+    {
+      "kind": "FrontendCallSite",
+      "verb": "GET",
+      "template": "/UserProfiles/current",
+      "resolutionTier": "literal",
+      "file": "src/hooks/useUserProfile.ts",
+      "line": 9,
+      "column": 10,
+      "spanStart": 536,
+      "spanEnd": 574
+    },
+    {
+      "kind": "FrontendCallSite",
+      "verb": "GET",
+      "template": "/UserTasks/assigned-tasks-with-summary",
+      "resolutionTier": "const-resolved",
+      "file": "src/hooks/useUserTaskCenter.ts",
+      "line": 17,
+      "column": 12,
+      "spanStart": 673,
+      "spanEnd": 715
+    },
+    {
+      "kind": "FrontendCallSite",
+      "verb": "POST",
+      "template": "/TaskCenter/{*}/{*}/reminder",
+      "resolutionTier": "template-param-holes",
+      "file": "src/hooks/useUserTaskCenter.ts",
+      "line": 24,
+      "column": 12,
+      "spanStart": 1025,
+      "spanEnd": 1095
+    },
+    {
+      "kind": "FrontendCallSite",
+      "verb": "GET",
+      "template": "/Committees",
+      "resolutionTier": "const-resolved",
+      "file": "src/services/boardMeetingsService.ts",
+      "line": 9,
+      "column": 24,
+      "spanStart": 331,
+      "spanEnd": 356
+    },
+    {
+      "kind": "UnresolvedCallSite",
+      "verb": "GET",
+      "category": "dynamic-base-url",
+      "reason": "value is read from 'process.env.NEXT_PUBLIC_API_BASE', an environment/runtime-configured value",
+      "file": "src/services/dynamicService.ts",
+      "line": 10,
+      "column": 10,
+      "spanStart": 520,
+      "spanEnd": 548
+    },
+    {
+      "kind": "UnresolvedCallSite",
+      "verb": "GET",
+      "category": "runtime-computed-segment",
+      "reason": "'new Date().getFullYear()' is not a compile-time-resolvable expression",
+      "file": "src/services/dynamicService.ts",
+      "line": 18,
+      "column": 10,
+      "spanStart": 877,
+      "spanEnd": 900
+    },
+    {
+      "kind": "UnresolvedCallSite",
+      "verb": "GET",
+      "category": "non-constant-identifier",
+      "reason": "'currentEndpoint' is not declared 'const' — a mutable binding is never treated as a compile-time constant",
+      "file": "src/services/dynamicService.ts",
+      "line": 27,
+      "column": 10,
+      "spanStart": 1226,
+      "spanEnd": 1256
+    },
+    {
+      "kind": "UnresolvedCallSite",
+      "verb": "GET",
+      "category": "unrecognized-callee",
+      "reason": "receiver 'customClient' does not resolve to a known HTTP client (an axios.create() instance)",
+      "file": "src/services/dynamicService.ts",
+      "line": 37,
+      "column": 10,
+      "spanStart": 1834,
+      "spanEnd": 1870
+    },
+    {
+      "kind": "UnresolvedCallSite",
+      "verb": "GET",
+      "category": "dynamic-import-or-indirection",
+      "reason": "receiver flows through a dynamic import/require: 'client.default'",
+      "file": "src/services/dynamicService.ts",
+      "line": 44,
+      "column": 10,
+      "spanStart": 2127,
+      "spanEnd": 2167
+    },
+    {
+      "kind": "UnresolvedCallSite",
+      "verb": "GET",
+      "category": "resolution-depth-exceeded",
+      "reason": "resolution exceeded 8 hops at 'chain2'",
+      "file": "src/services/dynamicService.ts",
+      "line": 62,
+      "column": 10,
+      "spanStart": 2817,
+      "spanEnd": 2839
+    }
+  ]
+}
