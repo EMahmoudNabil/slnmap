@@ -26,6 +26,17 @@ jobs:
         with:
           dotnet-version: ${{ matrix.dotnet }}
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build slnmap-ts (the analyze-ts test suite needs a real dist/cli.js)
+        working-directory: src/slnmap-ts
+        run: |
+          npm ci
+          npm run build
+
       - name: Restore
         run: dotnet restore
 

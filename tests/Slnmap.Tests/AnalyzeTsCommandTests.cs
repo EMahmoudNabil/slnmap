@@ -47,7 +47,7 @@ public sealed class AnalyzeTsCommandTests
     public void NoNodeOnPath_FailsCleanlyWithTheInvestigationsExactMessage()
     {
         string fixtureDir = Path.Combine(TestPaths.RepoRoot, "tests", "fixtures-ts", "frontend-fixture");
-        string pathWithoutNode = StripDirectoriesContaining("node.exe");
+        string pathWithoutNode = StripDirectoriesContaining("node");
 
         var (exit, stdout, stderr) = RunCli(
             ["analyze-ts", fixtureDir, "--db", TempDbPath()],
@@ -116,14 +116,21 @@ public sealed class AnalyzeTsCommandTests
     private static string TempDbPath() =>
         Path.Combine(Path.GetTempPath(), $"slnmap-ts-verb-{Guid.NewGuid():N}.db");
 
-    /// <summary>Removes every PATH entry containing <paramref name="fileName"/> — used to
-    /// simulate "Node.js not found" without touching the real machine's PATH.</summary>
-    private static string StripDirectoriesContaining(string fileName)
+    /// <summary>Removes every PATH entry containing an executable named <paramref name="baseName"/>
+    /// — used to simulate "Node.js not found" without touching the real machine's PATH. Checks
+    /// both the Windows (`.exe`) and Unix (bare name) forms unconditionally rather than branching
+    /// on <see cref="OperatingSystem"/> — cheaper than getting the branch wrong, and this is
+    /// exactly the kind of OS-specific detail that silently no-ops instead of failing loudly when
+    /// missed (found on Ubuntu CI, reports/analyze-ts-verb-report.md's Part C incident: the
+    /// original Windows-only "node.exe" check matched nothing on Linux, so PATH was never
+    /// actually stripped and the test's real assertion never ran against the intended condition).</summary>
+    private static string StripDirectoriesContaining(string baseName)
     {
         string path = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
         var kept = path
             .Split(Path.PathSeparator)
-            .Where(dir => dir.Length == 0 || !File.Exists(Path.Combine(dir, fileName)));
+            .Where(dir => dir.Length == 0
+                || (!File.Exists(Path.Combine(dir, baseName + ".exe")) && !File.Exists(Path.Combine(dir, baseName))));
         return string.Join(Path.PathSeparator, kept);
     }
 
@@ -231,10 +238,29 @@ public sealed class FakeSlnmapTs : IDisposable
             fs.writeFileSync(outPath, process.env.FAKE_SLNMAP_TS_ARTIFACT ?? '{}');
             """);
 
+        // Windows finds this shim via its own PATHEXT-aware resolution (a bare ".cmd" is enough);
+        // Unix needs a same-named, no-extension, executable-bit-set script instead — ResolveOnPath
+        // (src/Slnmap.Cli/Program.cs) looks for the literal name "slnmap-ts" with no extension on
+        // non-Windows. Writing both unconditionally (rather than branching on the current OS) is
+        // exactly the same "don't guess which platform's rule applies" fix as
+        // StripDirectoriesContaining above — the original single-shim version only worked on
+        // Windows and silently never got resolved on Ubuntu CI, so the intended artifact-shape
+        // failure never actually happened; the CLI fell through to a real, live npx pull instead.
         File.WriteAllText(Path.Combine(directory, "slnmap-ts.cmd"), """
             @echo off
             node "%~dp0fake-extract.mjs" %*
             """);
+
+        string unixShimPath = Path.Combine(directory, "slnmap-ts");
+        File.WriteAllText(unixShimPath, "#!/bin/sh\nexec node \"$(dirname \"$0\")/fake-extract.mjs\" \"$@\"\n");
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(
+                unixShimPath,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+                | UnixFileMode.GroupRead | UnixFileMode.GroupExecute
+                | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        }
 
         return new FakeSlnmapTs(directory, artifactContent);
     }
