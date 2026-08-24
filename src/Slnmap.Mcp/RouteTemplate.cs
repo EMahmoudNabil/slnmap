@@ -54,6 +54,23 @@ internal static partial class RouteTemplate
     /// segment pair is equal or either side is a <c>{x}</c> hole (a hole matches a hole or a
     /// concrete segment — so a query may use a concrete value where the template has a parameter,
     /// and vice versa).
+    ///
+    /// v0.12.1 fix (a real, field-trial-found false-ambiguity bug, cross-stack-linker-v0121-fix
+    /// report): a hole absorbing the OTHER side's literal is only trustworthy when it happens in
+    /// ONE direction for the whole comparison. Two segments each independently excusing a
+    /// mismatch — template's hole absorbing the query's literal at one position, AND the query's
+    /// hole absorbing the template's literal at a different position — means neither side's fixed
+    /// segments actually line up with anything on the other side; the only "overlap" is a
+    /// coincidence of two unrelated literals happening to both be strings. A frontend call site's
+    /// hole matching several sibling endpoints that all share ITS OWN fixed segments (real
+    /// fan-out — e.g. TaskCenter's `{*}/{*}/reminder` against three `compliances|risks|
+    /// governances/{taskId}/reminder` endpoints, where only the call site's holes ever do any
+    /// absorbing) is unaffected: that is a single, consistent direction. So is the reverse — a
+    /// literal call site matching several parameterized endpoint siblings (route precedence's own
+    /// "row 4" shape) — the template's holes absorb the query's literals, one direction only.
+    /// Criss-crossed, both-direction absorption is specifically the shape that lets two
+    /// completely unrelated literal-anchored routes (e.g. `/Vendors/{*}/profile` and
+    /// `/Vendors/haris-summary/{analysisId}`) coincidentally skeleton-match — rejected here.
     /// </summary>
     public static bool Matches(string normalizedTemplate, string normalizedQuery)
     {
@@ -69,14 +86,36 @@ internal static partial class RouteTemplate
             return false;
         }
 
+        bool templateHoleAbsorbedQueryLiteral = false;
+        bool queryHoleAbsorbedTemplateLiteral = false;
+
         for (int i = 0; i < templateSegments.Length; i++)
         {
-            if (templateSegments[i] != querySegments[i] && templateSegments[i] != "{x}" && querySegments[i] != "{x}")
+            if (templateSegments[i] == querySegments[i])
             {
+                continue;
+            }
+
+            bool templateIsHole = templateSegments[i] == "{x}";
+            bool queryIsHole = querySegments[i] == "{x}";
+            if (!templateIsHole && !queryIsHole)
+            {
+                // Two different literal segments — never bind to each other, no matter what
+                // happens elsewhere in the route.
                 return false;
+            }
+
+            if (templateIsHole)
+            {
+                templateHoleAbsorbedQueryLiteral = true;
+            }
+
+            if (queryIsHole)
+            {
+                queryHoleAbsorbedTemplateLiteral = true;
             }
         }
 
-        return true;
+        return !(templateHoleAbsorbedQueryLiteral && queryHoleAbsorbedTemplateLiteral);
     }
 }

@@ -2,6 +2,23 @@
 
 All notable changes to Slnmap are documented here. Versions follow [SemVer](https://semver.org).
 
+## 0.12.1
+
+### Fixed
+
+- **The cross-stack linker no longer reports false ambiguity between unrelated,
+  literal-anchored routes.** Caught by a pre-launch field trial on a second, larger codebase:
+  cross-position literal absorption produced false ambiguity edges, and `impact_analysis`
+  over-reported blast radius on the affected sites. `RouteTemplate.Matches` treated a hole
+  absorbing the other side's literal as independently excusable at each segment position,
+  regardless of direction — so two completely unrelated routes could coincidentally
+  skeleton-match when a call site's hole absorbed one endpoint's literal at one position while
+  that same endpoint's hole absorbed a different call-site literal at another position. Absorption
+  is now required to run in one direction per comparison; genuine fan-out and route-precedence
+  shapes are unaffected. Re-measured on the reference field-trial pair: 24 → 11 false set-edges
+  resolve to their one correct endpoint; linked/disclosed totals are unchanged (407/434 either
+  way) — this corrects **how** call sites resolve, not whether they do.
+
 ## 0.12.0
 
 ### Added

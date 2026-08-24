@@ -8,7 +8,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>slnmap</ToolCommandName>
     <PackageId>Slnmap</PackageId>
-    <Version>0.12.0</Version>
+    <Version>0.12.1</Version>
     <RollForward>Major</RollForward>
     <PackageReadmeFile>nuget-readme.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>
@@ -18,18 +18,18 @@
     <PackageProjectUrl>https://slnmap.dev</PackageProjectUrl>
     <RepositoryUrl>https://github.com/EMahmoudNabil/slnmap</RepositoryUrl>
     <PackageTags>dotnet;roslyn;mcp;ai;code-analysis;claude-code;knowledge-graph</PackageTags>
-    <PackageReleaseNotes>New: `slnmap link` -- the cross-stack linker, the final piece of the
-frontend-analysis project. Joins every FrontendCallSite (v0.11.0) to the C# Endpoint (v0.7.0/
-v0.8.0) it actually hits: exact verb matching (an honestly-unresolvable verb is disclosed, never
-guessed), route-precedence tie-breaking scoped to the one case it's actually knowable (a literal
-call site beats a parameterized sibling endpoint), and a truthful set edge for real runtime
-fan-out and irreducible ambiguity alike -- never a guessed single link. impact_analysis and
-find_usages now continue straight through a C# handler into its frontend callers with no
-separate query. Two new MCP tools, find_orphan_calls and list_frontend_callsites, close the
-remaining coverage/listing gaps. Field-trial verified against a real, live production codebase:
-407 of 434 real call sites (93.8%) link deterministically or via the precedence rule; every one
-of the rest is individually disclosed by exact reason, including the specific production bug
-that motivated this entire project. See CHANGELOG.md for details.
+    <PackageReleaseNotes>Fix: the cross-stack linker no longer reports false ambiguity between
+unrelated, literal-anchored routes. A hole on one side absorbing the other side's literal was
+treated as independently excusable regardless of direction, so two unrelated routes could
+coincidentally skeleton-match when a call site's hole absorbed one endpoint's literal while
+that SAME endpoint's hole absorbed a DIFFERENT call-site literal at another position -- a
+coincidence of two unrelated literals hiding behind different holes, not a real relationship
+ASP.NET could ever produce. Caught by a pre-launch field trial on a second, larger codebase.
+Absorption is now required to run in one direction per comparison; genuine fan-out is
+unaffected, verified against the real TaskCenter 3-way fan-out byte-for-byte before and after.
+Re-measured on the reference field-trial pair: 24 -> 11 false set-edges resolve to their one
+correct endpoint; linked/disclosed totals unchanged (407/434 either way) -- this corrects HOW
+call sites resolve, not whether they do. See CHANGELOG.md for details.
 Source: https://github.com/EMahmoudNabil/slnmap</PackageReleaseNotes>
   </PropertyGroup>
 
