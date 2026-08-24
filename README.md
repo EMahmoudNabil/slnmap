@@ -199,6 +199,14 @@ can resolve statically) gets a truthful edge to every one of them, never a guess
 Everything that doesn't link is individually disclosed by exact reason — nothing is silently
 dropped.
 
+**Known limits:** a BFF-style proxy call site whose own template starts with a dynamic hole
+rather than a literal path segment — e.g. a Next.js catch-all API route forwarder such as
+`app/api/[...path]/route.ts` producing a call-site template like `{*}/Authentication/refresh` —
+can't be correctly aligned by the linker's base-path-prefix concatenation, and shows up as a
+disclosed no-match rather than a link. This is infrastructure (a proxy forwarding whatever path
+it's given), not a real frontend→backend call site, so it's a correctly disclosed non-link, not a
+bug to fix.
+
 Once linked, `impact_analysis` and `find_usages` continue straight through a C# handler into its
 frontend callers, with no separate query:
 
