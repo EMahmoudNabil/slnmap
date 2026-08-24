@@ -114,6 +114,8 @@ analyzeCommand.SetAction(async (parseResult, cancellationToken) =>
         [MetaKeys.ToolVersion] = currentVersion,
         [MetaKeys.UnresolvedEndpoints] = snapshot.Stats.UnresolvedEndpoints.ToString(CultureInfo.InvariantCulture),
         [MetaKeys.ConventionalControllers] = snapshot.Stats.ConventionalControllers.ToString(CultureInfo.InvariantCulture),
+        [MetaKeys.RazorPagesNotModeled] = snapshot.Stats.RazorPagesNotModeled.ToString(CultureInfo.InvariantCulture),
+        [MetaKeys.RazorFilesDetected] = snapshot.Stats.RazorFilesDetected.ToString(CultureInfo.InvariantCulture),
     };
     await store.SaveAsync(snapshot.Graph, snapshot.Files, meta, cancellationToken).ConfigureAwait(false);
     stopwatch.Stop();
@@ -142,10 +144,13 @@ analyzeCommand.SetAction(async (parseResult, cancellationToken) =>
         ? pal.Success("0")
         : pal.Warn(warnings.Count.ToString(CultureInfo.InvariantCulture));
     Console.WriteLine(pal.Label("Projects:  ") + pal.Number(stats.ProjectCount.ToString(CultureInfo.InvariantCulture)));
-    Console.WriteLine(pal.Label("Documents: ") + pal.Number(stats.DocumentsAnalyzed.ToString(CultureInfo.InvariantCulture)) + pal.Label(" analyzed, ") + pal.Number(stats.DocumentsSkipped.ToString(CultureInfo.InvariantCulture)) + pal.Label(" skipped"));
+    string razorFilesNote = stats.RazorFilesDetected > 0
+        ? pal.Label(", ") + pal.Warn(stats.RazorFilesDetected.ToString(CultureInfo.InvariantCulture)) + pal.Label(" .razor file(s) detected — Blazor markup is not analyzed (github.com/EMahmoudNabil/slnmap issue #30)")
+        : string.Empty;
+    Console.WriteLine(pal.Label("Documents: ") + pal.Number(stats.DocumentsAnalyzed.ToString(CultureInfo.InvariantCulture)) + pal.Label(" analyzed, ") + pal.Number(stats.DocumentsSkipped.ToString(CultureInfo.InvariantCulture)) + pal.Label(" skipped") + razorFilesNote);
     Console.WriteLine(pal.Label("Graph:     ") + pal.Number(graph.NodeCount.ToString(CultureInfo.InvariantCulture)) + pal.Label(" nodes, ") + pal.Number(graph.EdgeCount.ToString(CultureInfo.InvariantCulture)) + pal.Label(" edges"));
     int endpointCount = graph.Nodes.Count(static n => n.Kind == NodeKind.Endpoint);
-    if (endpointCount > 0 || stats.UnresolvedEndpoints > 0 || stats.ConventionalControllers > 0)
+    if (endpointCount > 0 || stats.UnresolvedEndpoints > 0 || stats.ConventionalControllers > 0 || stats.RazorPagesNotModeled > 0)
     {
         string unresolvedValue = stats.UnresolvedEndpoints == 0
             ? pal.Success("0")
@@ -153,7 +158,10 @@ analyzeCommand.SetAction(async (parseResult, cancellationToken) =>
         string conventionalNote = stats.ConventionalControllers > 0
             ? pal.Label(", ") + pal.Warn(stats.ConventionalControllers.ToString(CultureInfo.InvariantCulture)) + pal.Label(" conventionally-routed controller(s) not modeled")
             : string.Empty;
-        Console.WriteLine(pal.Label("Endpoints: ") + pal.Number(endpointCount.ToString(CultureInfo.InvariantCulture)) + pal.Label(" mapped, ") + unresolvedValue + pal.Label(" unresolved" + (stats.UnresolvedEndpoints > 0 ? " (see warnings; run --verbose for locations)" : "")) + conventionalNote);
+        string razorPagesNote = stats.RazorPagesNotModeled > 0
+            ? pal.Label(", ") + pal.Warn(stats.RazorPagesNotModeled.ToString(CultureInfo.InvariantCulture)) + pal.Label(" Razor Page(s) not modeled")
+            : string.Empty;
+        Console.WriteLine(pal.Label("Endpoints: ") + pal.Number(endpointCount.ToString(CultureInfo.InvariantCulture)) + pal.Label(" mapped, ") + unresolvedValue + pal.Label(" unresolved" + (stats.UnresolvedEndpoints > 0 ? " (see warnings; run --verbose for locations)" : "")) + conventionalNote + razorPagesNote);
     }
     Console.WriteLine(pal.Label("Files:     ") + pal.Number(snapshot.Files.Count.ToString(CultureInfo.InvariantCulture)) + pal.Label(" hashed"));
     Console.WriteLine(pal.Label("Warnings:  ") + warningsValue);
@@ -913,6 +921,8 @@ static IReadOnlyDictionary<string, string> BuildMeta(string solution, AnalysisSn
         [MetaKeys.ToolVersion] = currentVersion,
         [MetaKeys.UnresolvedEndpoints] = snapshot.Stats.UnresolvedEndpoints.ToString(CultureInfo.InvariantCulture),
         [MetaKeys.ConventionalControllers] = snapshot.Stats.ConventionalControllers.ToString(CultureInfo.InvariantCulture),
+        [MetaKeys.RazorPagesNotModeled] = snapshot.Stats.RazorPagesNotModeled.ToString(CultureInfo.InvariantCulture),
+        [MetaKeys.RazorFilesDetected] = snapshot.Stats.RazorFilesDetected.ToString(CultureInfo.InvariantCulture),
     };
 
 /// <summary>Set equality over nodes and edges — a whitespace-only touch produces an identical graph, and watch skips the save.</summary>
@@ -937,7 +947,7 @@ static string CurrentVersion() =>
 /// two today (they live in different toolchains); a version bump on one side without the other
 /// is a real drift risk worth a manual note in the release checklist.
 /// </summary>
-static string PinnedSlnmapTsVersion() => "0.2.1";
+static string PinnedSlnmapTsVersion() => "0.2.2";
 
 /// <summary>Whether `node` is reachable at all — a simple `node --version` probe, 5s ceiling.</summary>
 static async Task<bool> IsNodeAvailableAsync(CancellationToken cancellationToken)

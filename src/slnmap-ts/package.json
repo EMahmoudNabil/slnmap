@@ -1,6 +1,6 @@
 {
   "name": "slnmap-ts",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Frontend HTTP call-site extractor for slnmap. Walks a TypeScript/React project with the TS Compiler API and emits a JSON artifact of resolved and unresolved call sites for slnmap's `analyze-ts` verb to ingest.",
   "keywords": [
     "slnmap",

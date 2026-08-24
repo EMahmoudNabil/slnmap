@@ -45,7 +45,24 @@ test('dynamic-base-url: URL built from an environment/runtime config value', () 
   assert.equal(site.category, 'dynamic-base-url');
 });
 
-test('runtime-computed-segment: segment built from a non-literal-preserving runtime computation', () => {
+test('runtime-computed-segment: a bare, non-concatenated call expression result', () => {
+  const root = project({
+    'src/apiClient.ts': AXIOS_CLIENT,
+    'src/call.ts': `
+      import apiClient from './apiClient';
+      export function call() {
+        const basePath = String(new Date().getFullYear());
+        return apiClient.get(basePath);
+      }
+    `,
+  });
+  const site = singleUnresolved(root);
+  assert.equal(site.category, 'runtime-computed-segment');
+});
+
+test('string-concatenation (v0.12.2): a `+`-built URL with a non-constant operand is DISCLOSED, not silently dropped', () => {
+  // Was `runtime-computed-segment` before v0.12.2 — reclassified because the concatenation
+  // SHAPE is itself the more specific, more actionable fact (foreign-patterns-trial finding #3).
   const root = project({
     'src/apiClient.ts': AXIOS_CLIENT,
     'src/call.ts': `
@@ -57,7 +74,73 @@ test('runtime-computed-segment: segment built from a non-literal-preserving runt
     `,
   });
   const site = singleUnresolved(root);
-  assert.equal(site.category, 'runtime-computed-segment');
+  assert.equal(site.category, 'string-concatenation');
+});
+
+test('string-concatenation: the exact reported shape — known client, base variable + literal suffix', () => {
+  const root = project({
+    'src/apiClient.ts': AXIOS_CLIENT,
+    'src/call.ts': `
+      import apiClient from './apiClient';
+      export function call(base: string) {
+        return apiClient.get(base + '/users');
+      }
+    `,
+  });
+  const site = singleUnresolved(root);
+  assert.equal(site.category, 'string-concatenation');
+  assert.equal(site.verb, 'GET');
+});
+
+test('string-concatenation: three-operand chain on an UNKNOWN receiver is disclosed as unrecognized-callee, not dropped', () => {
+  // The real Angular shape from the foreign-patterns trial: '/profiles/' + username + '/follow'
+  // on `this.http`, a receiver the extractor doesn't recognize as a known HTTP client. Before
+  // v0.12.2 this call site produced NO node at all — not even counted unresolved.
+  const root = project({
+    'src/call.ts': `
+      class ProfileService {
+        constructor(private http: { post: (url: string, body: unknown) => Promise<unknown> }) {}
+        follow(username: string) {
+          return this.http.post('/profiles/' + username + '/follow', {});
+        }
+      }
+    `,
+  });
+  const site = singleUnresolved(root);
+  assert.equal(site.category, 'unrecognized-callee');
+  assert.equal(site.verb, 'POST');
+});
+
+test('fully-constant concatenation still resolves normally — the fix does not regress the working case', () => {
+  const root = project({
+    'src/apiClient.ts': AXIOS_CLIENT,
+    'src/call.ts': `
+      import apiClient from './apiClient';
+      const BASE = '/api';
+      export function call() { return apiClient.get(BASE + '/users'); }
+    `,
+  });
+  const artifact = extract({ projectRoot: root });
+  const site = artifact.callSites[0]!;
+  assert.equal(site.kind, 'FrontendCallSite');
+  assert.equal((site as { template: string }).template, '/api/users');
+});
+
+test('a concatenation-shaped template hole still folds to {*}, not string-concatenation (no regression)', () => {
+  const root = project({
+    'src/apiClient.ts': AXIOS_CLIENT,
+    'src/call.ts': `
+      import apiClient from './apiClient';
+      export function call(prefix: string, id: string) {
+        return apiClient.get(\`/Items/\${prefix + id}\`);
+      }
+    `,
+  });
+  const artifact = extract({ projectRoot: root });
+  const site = artifact.callSites[0]!;
+  assert.equal(site.kind, 'FrontendCallSite');
+  assert.equal((site as { template: string }).template, '/Items/{*}');
+  assert.equal((site as { resolutionTier: string }).resolutionTier, 'template-param-holes');
 });
 
 test('non-constant-identifier: let-declared binding, even when every assignment is a literal', () => {
@@ -116,6 +199,46 @@ test('resolution-depth-exceeded: a const chain deeper than the self-imposed recu
   });
   const site = singleUnresolved(root);
   assert.equal(site.category, 'resolution-depth-exceeded');
+});
+
+test('fluent chain (v0.12.2): two verb-named links on one statement get DISTINCT positions, not a collision', () => {
+  // The real Turborepo kitchen-sink shape from the foreign-patterns trial: two `.get(...)`
+  // registrations chained onto the same Express app statement. Before v0.12.2, both reported
+  // the exact same line/column/spanStart (the chain's own leftmost token), which collapsed the
+  // second call site into the first downstream (4 reported, 3 persisted) since node identity
+  // keys on that position.
+  const root = project({
+    'src/server.ts': `
+      import express from 'express';
+      export function createServer() {
+        const app = express();
+        app
+          .disable('x-powered-by')
+          .get('/message/:name', (req: unknown, res: { json: (b: unknown) => void }) => {
+            return res.json({ ok: true });
+          })
+          .get('/status', (_req: unknown, res: { json: (b: unknown) => void }) => {
+            return res.json({ ok: true });
+          });
+        return app;
+      }
+    `,
+  });
+
+  const artifact = extract({ projectRoot: root });
+  const sites = artifact.callSites.filter((c) => c.kind === 'UnresolvedCallSite') as Array<{
+    line: number;
+    column: number;
+    spanStart: number;
+  }>;
+
+  assert.equal(sites.length, 2, `both chained .get() calls must be extracted as distinct call sites; got: ${JSON.stringify(artifact.callSites, null, 2)}`);
+  assert.notEqual(
+    `${sites[0]!.line}:${sites[0]!.column}`,
+    `${sites[1]!.line}:${sites[1]!.column}`,
+    'two distinct links in a fluent chain must never report the same line:column',
+  );
+  assert.notEqual(sites[0]!.spanStart, sites[1]!.spanStart, 'two distinct links in a fluent chain must never share spanStart');
 });
 
 test('a shadowed local variable named "fetch" is silently excluded, not reported unresolved', () => {

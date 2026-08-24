@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "producer": "slnmap-ts",
-  "producerVersion": "0.2.1",
+  "producerVersion": "0.2.2",
   "project": {
     "root": ".",
     "tsconfig": "tsconfig.json"
@@ -12,7 +12,7 @@
     "coveragePercent": 45.5,
     "byCategory": {
       "dynamic-base-url": 1,
-      "runtime-computed-segment": 1,
+      "string-concatenation": 1,
       "non-constant-identifier": 1,
       "unrecognized-callee": 1,
       "dynamic-import-or-indirection": 1,
@@ -89,13 +89,13 @@
     {
       "kind": "UnresolvedCallSite",
       "verb": "GET",
-      "category": "runtime-computed-segment",
-      "reason": "'new Date().getFullYear()' is not a compile-time-resolvable expression",
+      "category": "string-concatenation",
+      "reason": "URL is built via string concatenation with a non-constant part: ''/Reports/' + new Date().getFullYear()'",
       "file": "src/services/dynamicService.ts",
-      "line": 18,
+      "line": 20,
       "column": 10,
-      "spanStart": 877,
-      "spanEnd": 900
+      "spanStart": 1098,
+      "spanEnd": 1121
     },
     {
       "kind": "UnresolvedCallSite",
@@ -103,10 +103,10 @@
       "category": "non-constant-identifier",
       "reason": "'currentEndpoint' is not declared 'const' — a mutable binding is never treated as a compile-time constant",
       "file": "src/services/dynamicService.ts",
-      "line": 27,
+      "line": 29,
       "column": 10,
-      "spanStart": 1226,
-      "spanEnd": 1256
+      "spanStart": 1447,
+      "spanEnd": 1477
     },
     {
       "kind": "UnresolvedCallSite",
@@ -114,10 +114,10 @@
       "category": "unrecognized-callee",
       "reason": "receiver 'customClient' does not resolve to a known HTTP client (an axios.create() instance)",
       "file": "src/services/dynamicService.ts",
-      "line": 37,
+      "line": 39,
       "column": 10,
-      "spanStart": 1834,
-      "spanEnd": 1870
+      "spanStart": 2055,
+      "spanEnd": 2091
     },
     {
       "kind": "UnresolvedCallSite",
@@ -125,10 +125,10 @@
       "category": "dynamic-import-or-indirection",
       "reason": "receiver flows through a dynamic import/require: 'client.default'",
       "file": "src/services/dynamicService.ts",
-      "line": 44,
+      "line": 46,
       "column": 10,
-      "spanStart": 2127,
-      "spanEnd": 2167
+      "spanStart": 2348,
+      "spanEnd": 2388
     },
     {
       "kind": "UnresolvedCallSite",
@@ -136,10 +136,10 @@
       "category": "resolution-depth-exceeded",
       "reason": "resolution exceeded 8 hops at 'chain2'",
       "file": "src/services/dynamicService.ts",
-      "line": 62,
+      "line": 64,
       "column": 10,
-      "spanStart": 2817,
-      "spanEnd": 2839
+      "spanStart": 3038,
+      "spanEnd": 3060
     }
   ]
 }

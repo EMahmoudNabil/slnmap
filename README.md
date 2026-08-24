@@ -98,8 +98,13 @@ templates are resolved statically — `MapGroup` prefixes, `const` patterns, the
 CleanArchitecture registration conventions, class-level `[Route]` (including inherited ones and
 `[controller]`/`[action]` tokens), and controller base classes reached through packages
 (Ardalis.ApiEndpoints works out of the box). Anything that can't be resolved statically is counted
-and reported, never guessed — and controllers routed *conventionally* (`MapControllerRoute`, no
-route attributes) are detected and disclosed rather than silently absent.
+and reported, never guessed — controllers routed *conventionally* (`MapControllerRoute`, no route
+attributes) are detected and disclosed rather than silently absent, and so are **Razor Pages**
+(`PageModel`-derived classes with `OnGet`/`OnPost`/… handlers — they route by file location, a
+different routing system `analyze` counts and notes rather than modeling). **Blazor `.razor`
+markup is not analyzed** — `analyze` detects and reports how many `.razor` files exist in the
+solution rather than silently excluding them from the document count; component-usage edges
+aren't modeled yet ([#30](https://github.com/EMahmoudNabil/slnmap/issues/30) tracks that).
 
 ## MCP tools reference
 
@@ -171,9 +176,20 @@ Point it at a TypeScript/React project root (add `--tsconfig` if it isn't at the
 and the same database `analyze` writes to gets two new node kinds: `FrontendCallSite` for every
 HTTP call the extractor could resolve to a route template — including through const-through-
 barrel re-exports and template literals with a mix of folded and runtime-only segments — and
-`UnresolvedCallSite` for every one it honestly can't, each labeled with one of six specific
-reasons rather than silently dropped or guessed at. Ask your agent to find a frontend call site
-by route the same way it already finds C# symbols.
+`UnresolvedCallSite` for every one it honestly can't, each labeled with one of seven specific
+reasons (including `string-concatenation`, for a `+`-built URL argument with a non-constant part,
+such as `axios.get(base + '/users')` — disclosed, never silently dropped) rather than silently
+dropped or guessed at. A fluent method chain (two HTTP-verb-named calls registered on one
+statement, e.g. an Express `app.use(...).get(A).get(B)` shape) is disambiguated per link, never
+collapsed. Ask your agent to find a frontend call site by route the same way it already finds C#
+symbols.
+
+**Known limits:** a fully-constant `+`-built URL (every operand a literal or `const`, e.g.
+`'/api' + '/users'`) still folds to a real route template, same as always — but the moment any
+operand isn't statically constant (a parameter, a mutable binding, a computed value), the whole
+call site is disclosed as `string-concatenation` rather than partially folded the way a template
+literal's holes are. Deliberate, not a gap: partial concatenation folding would need the same
+per-segment machinery template-literal holes already have, and this hasn't been built yet.
 
 ## Cross-stack linking (`link`)
 
