@@ -32,6 +32,20 @@ public static class MetaKeys
     public const string ConventionalControllers = "conventional_controllers";
 
     /// <summary>
+    /// Count of Razor Pages (PageModel-derived classes with OnGet/OnPost/... handlers) the last
+    /// analysis detected — route by file location, a different routing system, disclosed for the
+    /// same reason as <see cref="ConventionalControllers"/> (v0.12.2). Absent or "0" when none exist.
+    /// </summary>
+    public const string RazorPagesNotModeled = "razor_pages_not_modeled";
+
+    /// <summary>
+    /// Count of <c>.razor</c> files the last analysis found on disk under an analyzed project's
+    /// directory — Blazor component markup is not walked as an analyzer document at all, so this
+    /// is a file-system count, not a graph one (v0.12.2). Absent or "0" when none exist.
+    /// </summary>
+    public const string RazorFilesDetected = "razor_files_detected";
+
+    /// <summary>
     /// Round-trip ("O") timestamp of the last completed `analyze-ts` run. Compared against
     /// <see cref="LastAnalyzed"/> to surface the ts-extractor-investigation.md §Q1.2 ordering
     /// note: `analyze` rebuilds the graph from Roslyn output alone and does not know about

@@ -53,6 +53,55 @@ public sealed class AnalyzeTsIngestionTests
         Assert.Equal(new SourceSpan(200, 230), unresolved.Span);
     }
 
+    /// <summary>
+    /// v0.12.2 regression (foreign-patterns-trial finding #3): node identity is `(kind, fqn)`,
+    /// and fqn embeds `line:column` — so two call sites that legitimately land at DIFFERENT
+    /// positions must persist as two distinct graph nodes. The Turborepo kitchen-sink bug (4
+    /// reported, 3 persisted) was never a defect here — this ingestion step has always
+    /// deduplicated correctly by identity; the defect was upstream in slnmap-ts reporting two
+    /// distinct fluent-chain call sites at the SAME line:column (fixed in walk.ts's
+    /// <c>positionOf</c>/<c>anchorStart</c>). This test pins the ingestion half of that
+    /// contract directly, independent of the TS extractor: given two artifact records that
+    /// already carry distinct positions (as the fixed extractor now always produces), both
+    /// must come through as separate nodes with an "identity count == reported count" tally.
+    /// </summary>
+    [Fact]
+    public void BuildNodes_TwoUnresolvedCallSitesAtDistinctPositions_PersistAsTwoDistinctNodes()
+    {
+        // Same verb/category/file — the exact shape of two chained Express `.get(...)` calls
+        // classified as unrecognized-callee — differing ONLY in line/column, as the fixed
+        // extractor now guarantees for every link in a fluent chain.
+        var artifact = new TsArtifact(
+            SchemaVersion: 2,
+            Producer: "slnmap-ts",
+            ProducerVersion: "0.2.2",
+            Stats: new TsArtifactStats(0, 2, 0.0, new Dictionary<string, int> { ["unrecognized-callee"] = 2 }),
+            CallSites:
+            [
+                new TsArtifactCallSite(
+                    Kind: "UnresolvedCallSite", Verb: "GET", Template: null, ResolutionTier: null,
+                    Category: "unrecognized-callee", Reason: "receiver 'app' does not resolve to a known HTTP client",
+                    File: "src/server.ts", Line: 6, Column: 6, SpanStart: 137, SpanEnd: 223),
+                new TsArtifactCallSite(
+                    Kind: "UnresolvedCallSite", Verb: "GET", Template: null, ResolutionTier: null,
+                    Category: "unrecognized-callee", Reason: "receiver 'app' does not resolve to a known HTTP client",
+                    File: "src/server.ts", Line: 9, Column: 6, SpanStart: 229, SpanEnd: 301),
+            ]);
+
+        string frontendRoot = Path.Combine(Path.GetTempPath(), $"slnmap-ts-root-{Guid.NewGuid():N}");
+        var nodes = TsArtifactFacts.BuildNodes(artifact, frontendRoot);
+        Assert.Equal(2, nodes.Count);
+        Assert.Equal(2, nodes.Select(n => n.Fqn).Distinct().Count());
+
+        var graph = new CodeGraph();
+        foreach (var node in nodes)
+        {
+            Assert.True(graph.AddNode(node), $"expected '{node.Fqn}' to be added as a new node, not collapsed into an existing one");
+        }
+
+        Assert.Equal(2, graph.Nodes.Count(n => n.Kind == NodeKind.UnresolvedCallSite));
+    }
+
     [Fact]
     public void MergeIntoGraph_PrunesOnlyFrontendKinds_LeavesEverythingElseUntouched()
     {

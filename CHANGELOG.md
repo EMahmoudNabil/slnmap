@@ -2,6 +2,35 @@
 
 All notable changes to Slnmap are documented here. Versions follow [SemVer](https://semver.org).
 
+## 0.12.2
+
+### Fixed
+
+- **Two real cross-stack-linker/TS-extractor bugs, caught by the same pre-launch discipline that
+  found v0.12.1's linker bug** — a foreign-pattern trial deliberately outside the tool's usual
+  React+.NET test corpus. Neither reaches OSSUS_Frontend or the published RealWorld sample;
+  both are confirmed exact-match (reported == persisted) on both before and after this fix.
+  - A fluent method chain (two HTTP-verb-named calls on one statement, e.g. an Express
+    `app.use(...).get(A).get(B)` route-registration idiom) reported byte-identical position data
+    for every link, silently collapsing the second call site into the first downstream. Fixed by
+    anchoring each link's position to its own callee name instead of the whole chain's start.
+  - A `+`-built URL argument on an unrecognized HTTP-client receiver (e.g. Angular's
+    `this.http.post('/x/' + id + '/y', ...)`) was silently dropped instead of disclosed whenever
+    it didn't fully constant-fold — the same free pass a template literal already got, now
+    extended to string concatenation. A new `string-concatenation` unresolved category covers the
+    equivalent case on a recognized client (`axios.get(base + '/users')`). Disclosure only, by
+    design — a non-constant concatenation operand is still never resolved to a template.
+
+### Added
+
+- **`analyze` now detects and discloses two previously-silent gaps** instead of reporting a clean
+  "0 skipped": `.razor` files present on disk (Blazor component markup is not analyzed — a
+  file-system-level check, since Roslyn's own document set unreliably excludes them) and Razor
+  Pages (`PageModel`-derived classes with `OnGet`/`OnPost`/... handlers — route by file location,
+  a different routing system, disclosed the same way conventionally-routed MVC controllers
+  already are). Neither is modeled; both are now honestly counted, with a note on `analyze`'s
+  summary and the same disclosure `find_endpoint`/`list_endpoints` give conventional routing.
+
 ## 0.12.1
 
 ### Fixed

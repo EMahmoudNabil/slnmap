@@ -99,6 +99,7 @@ public sealed class TsExtractorGapTests
                     {
                         "dynamic-base-url", "runtime-computed-segment", "non-constant-identifier",
                         "unrecognized-callee", "dynamic-import-or-indirection", "resolution-depth-exceeded",
+                        "string-concatenation",
                     });
                 Assert.True(callSite.TryGetProperty("reason", out _), "An unresolved call site must carry a human-readable reason.");
             }

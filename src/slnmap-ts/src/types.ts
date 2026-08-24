@@ -5,14 +5,18 @@
  * extended here with a `stats.byCategory` breakdown (Task A Part 2.6).
  */
 
-/** The six closed unresolved categories — investigation §Q3.3. Nothing falls through uncategorized. */
+/** The seven closed unresolved categories — investigation §Q3.3, plus `string-concatenation`
+ * (v0.12.2, foreign-patterns-trial finding #3: a `+`-built URL with a non-constant operand was
+ * previously silently dropped instead of disclosed — see resolve.ts). Nothing falls through
+ * uncategorized. */
 export type UnresolvedCategory =
   | 'dynamic-base-url'
   | 'runtime-computed-segment'
   | 'non-constant-identifier'
   | 'unrecognized-callee'
   | 'dynamic-import-or-indirection'
-  | 'resolution-depth-exceeded';
+  | 'resolution-depth-exceeded'
+  | 'string-concatenation';
 
 /** The four resolution tiers from the spike's classification (§Q3.2) — derivable from the
  * template string alone (presence/count of `{*}`), but recorded for readability and for the

@@ -162,6 +162,7 @@ internal static class SolutionAnalysisEngine
 
         int unresolvedEndpoints = 0;
         int conventionalControllers = 0;
+        int razorPagesNotModeled = 0;
         foreach (var result in results)
         {
             foreach (var node in result.Nodes)
@@ -176,11 +177,14 @@ internal static class SolutionAnalysisEngine
 
             unresolvedEndpoints += result.UnresolvedEndpoints;
             conventionalControllers += result.ConventionalControllers;
+            razorPagesNotModeled += result.RazorPagesNotModeled;
             foreach (var warning in result.Warnings)
             {
                 warningSink?.Invoke(warning);
             }
         }
+
+        int razorFilesDetected = CountRazorFiles(projects);
 
         // Order matters: dangling edges must go first, so orphan-namespace detection never
         // miscounts a namespace as "still has children" via an edge to a node that no longer
@@ -189,9 +193,47 @@ internal static class SolutionAnalysisEngine
         graph = PruneOrphanNamespaces(graph);
 
         var files = currentHashes.Select(static kv => new FileRecord(kv.Key, kv.Value)).ToList();
-        var stats = new AnalysisStats(projects.Count, analyzedCount, candidateDocuments - totalDocuments, unresolvedEndpoints, conventionalControllers);
+        var stats = new AnalysisStats(
+            projects.Count, analyzedCount, candidateDocuments - totalDocuments, unresolvedEndpoints,
+            conventionalControllers, razorPagesNotModeled, razorFilesDetected);
         return new AnalysisSnapshot(graph, files, stats);
     }
+
+    /// <summary>
+    /// Counts <c>.razor</c> files on disk under each analyzed project's directory (v0.12.2,
+    /// foreign-patterns-trial finding #1). A file-system scan, not a Roslyn document query: the
+    /// whole point is that these files are NOT walked as analyzer documents — MSBuildWorkspace's
+    /// design-time build often fails to materialize the Razor source generator's output at all
+    /// (confirmed on two independent Blazor codebases during the trial, one losing every `.razor`
+    /// file, the other losing roughly half), so `project.Documents` cannot be trusted to reveal
+    /// their existence. Excludes `bin`/`obj` (build output, not source).
+    /// </summary>
+    private static int CountRazorFiles(IReadOnlyList<Project> projects)
+    {
+        int count = 0;
+        var seenDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var project in projects)
+        {
+            if (project.FilePath is not { } path || Path.GetDirectoryName(path) is not { } directory)
+            {
+                continue;
+            }
+
+            if (!seenDirectories.Add(directory) || !Directory.Exists(directory))
+            {
+                continue;
+            }
+
+            count += Directory.EnumerateFiles(directory, "*.razor", SearchOption.AllDirectories)
+                .Count(static file => !IsUnderBuildOutput(file));
+        }
+
+        return count;
+    }
+
+    private static bool IsUnderBuildOutput(string path) =>
+        path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .Any(static segment => segment is "bin" or "obj");
 
     /// <summary>
     /// Drops any edge whose source or target node id is absent from the merged graph. The

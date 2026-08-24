@@ -1,7 +1,7 @@
 import ts from 'typescript';
 import type { LoadedProgram } from './program.js';
 import { isAmbientGlobalFetch, isKnownHttpClient } from './detection.js';
-import { foldUrlArgument, tracesThroughDynamicImportOrRequire } from './resolve.js';
+import { foldUrlArgument, tracesThroughDynamicImportOrRequire, unwrap } from './resolve.js';
 import type { CallSiteRecord, UnresolvedCallSiteRecord, UnresolvedCategory } from './types.js';
 
 /**
@@ -28,11 +28,37 @@ interface Position {
   spanEnd: number;
 }
 
+/**
+ * The position to anchor a call expression's report to. Ordinarily this is the call's own
+ * start — but a FLUENT CHAIN (`x.a().b().c()`) nests each link's CallExpression inside the next,
+ * and `getStart()` walks back through the receiver to the leftmost token of the WHOLE chain
+ * (e.g. `x`), which is identical for every link. Two verb-named links in the same chain
+ * (`app.use(...).get(A, ...).get(B, ...)`, the real shape from the foreign-patterns trial's
+ * Turborepo target) then report byte-identical line/column/spanStart — and since downstream
+ * node identity keys on exactly that position, the second link silently collapsed into the
+ * first (v0.12.2, foreign-patterns-trial finding #3: 4 call sites reported, 3 persisted).
+ *
+ * When the receiver is itself a call expression, anchor to the callee's own property-name token
+ * instead — every link in a chain has a distinct property-access name token, so this is always
+ * unique per link. This leaves the ordinary (non-chained) case — the receiver is a plain
+ * identifier or property access, not another call — completely unchanged, matching every
+ * existing golden fixture.
+ */
+function anchorStart(node: ts.CallExpression, sourceFile: ts.SourceFile): number {
+  const callee = node.expression;
+  if (ts.isPropertyAccessExpression(callee) && ts.isCallExpression(callee.expression)) {
+    return callee.name.getStart(sourceFile);
+  }
+  return node.getStart(sourceFile);
+}
+
 /** Line/column (1-based, human-facing) AND character-offset span (Roslyn `TextSpan` units,
- * schemaVersion 2) for the call expression as a whole — matching how the C# Endpoint node's span
- * is the whole `Map*` invocation, not just the callee identifier. */
-function positionOf(node: ts.Node, sourceFile: ts.SourceFile): Position {
-  const spanStart = node.getStart(sourceFile);
+ * schemaVersion 2) for the call expression — matching how the C# Endpoint node's span is the
+ * whole `Map*` invocation, not just the callee identifier, except where a fluent chain requires
+ * anchoring to the callee name instead (see `anchorStart`). `spanEnd` is always this call's own
+ * end, which already differs per link in a chain regardless of the anchor fix. */
+function positionOf(node: ts.CallExpression, sourceFile: ts.SourceFile): Position {
+  const spanStart = anchorStart(node, sourceFile);
   const { line, character } = sourceFile.getLineAndCharacterOfPosition(spanStart);
   return { line: line + 1, column: character + 1, spanStart, spanEnd: node.getEnd() };
 }
@@ -45,8 +71,22 @@ function truncate(text: string, max = 60): string {
 /** Whether `expr` — the first argument of a verb-shaped call on an unverified receiver — looks
  * like a URL at all (resolves, fully or with `{*}` holes, to a string starting with '/'). Reuses
  * the same folder the real HTTP-client path uses, so "looks URL-shaped" and "is a route
- * template" are exactly the same notion, not two divergent heuristics. */
+ * template" are exactly the same notion, not two divergent heuristics.
+ *
+ * A top-level string-concatenation (`base + '/users'`) gets the same free pass a template
+ * literal already does (v0.12.2, foreign-patterns-trial finding #3): using `+` to build the
+ * first argument to a verb-named method is itself strong evidence of URL-building, regardless of
+ * whether every operand happens to fold. Before this, a concatenation that didn't fully resolve
+ * fell through to "not URL-shaped" and the whole call site was silently dropped — never even
+ * counted unresolved — the same "proven not relevant" treatment reserved for things like
+ * `response.headers.get(...)`, which this plainly isn't. The receiver is still unrecognized
+ * either way, so the eventual disclosed category remains `unrecognized-callee` (below) — this
+ * only fixes whether the call site is disclosed at all. */
 function isUrlShaped(expr: ts.Expression, checker: ts.TypeChecker): boolean {
+  const e = unwrap(expr);
+  if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    return true;
+  }
   const result = foldUrlArgument(expr, checker);
   return result.ok && result.value.startsWith('/');
 }

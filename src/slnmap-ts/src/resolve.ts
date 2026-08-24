@@ -27,7 +27,31 @@ function truncate(text: string, max = 60): string {
   return collapsed.length <= max ? collapsed : `${collapsed.slice(0, max)}…`;
 }
 
-function unwrap(expr: ts.Expression): ts.Expression {
+/**
+ * v0.12.2 (foreign-patterns-trial finding #3): a `+`-built URL argument whose failing operand is
+ * one of the two GENERIC "just a normal runtime value" categories is a recognizable SHAPE —
+ * string concatenation — worth naming specifically rather than reporting the operand's own
+ * generic reason. A MORE SPECIFIC failure (dynamic-base-url, dynamic-import-or-indirection,
+ * resolution-depth-exceeded) is a qualitatively more informative diagnosis and always wins,
+ * unchanged — the same "specific beats generic" precedent `foldUrlArgument`'s template-hole
+ * handling already applies below.
+ */
+const GENERIC_RUNTIME_CATEGORIES: ReadonlySet<UnresolvedCategory> = new Set([
+  'runtime-computed-segment',
+  'non-constant-identifier',
+]);
+
+function asConcatenationFailure(failure: FoldFailure, node: ts.BinaryExpression): FoldFailure {
+  if (!GENERIC_RUNTIME_CATEGORIES.has(failure.category)) {
+    return failure;
+  }
+  return {
+    category: 'string-concatenation',
+    detail: `URL is built via string concatenation with a non-constant part: '${truncate(node.getText())}'`,
+  };
+}
+
+export function unwrap(expr: ts.Expression): ts.Expression {
   for (;;) {
     if (ts.isParenthesizedExpression(expr)) {
       expr = expr.expression;
@@ -203,11 +227,11 @@ export function resolveConstantExpression(
   if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.PlusToken) {
     const left = resolveConstantExpression(e.left, checker, depth - 1);
     if (!left.ok) {
-      return left;
+      return { ok: false, failure: asConcatenationFailure(left.failure, e) };
     }
     const right = resolveConstantExpression(e.right, checker, depth - 1);
     if (!right.ok) {
-      return right;
+      return { ok: false, failure: asConcatenationFailure(right.failure, e) };
     }
     return { ok: true, value: left.value + right.value };
   }
@@ -301,10 +325,11 @@ export function foldUrlArgument(expr: ts.Expression, checker: ts.TypeChecker): U
       const hole = resolveConstantExpression(span.expression, checker);
       if (hole.ok) {
         out += hole.value;
-      } else if (hole.failure.category === 'runtime-computed-segment') {
-        // The generic "some runtime value flows in" bucket is exactly an ordinary template
-        // hole (§Q3.2 row 6 / Case B's `${module}`/`${taskId}`) — becomes an anonymous {*}
-        // token and the template still resolves as a whole.
+      } else if (hole.failure.category === 'runtime-computed-segment' || hole.failure.category === 'string-concatenation') {
+        // The generic "some runtime value flows in" bucket — including a concatenation-shaped
+        // one, v0.12.2 — is exactly an ordinary template hole (§Q3.2 row 6 / Case B's
+        // `${module}`/`${taskId}`) — becomes an anonymous {*} token and the template still
+        // resolves as a whole.
         out += '{*}';
         hasHole = true;
       } else {

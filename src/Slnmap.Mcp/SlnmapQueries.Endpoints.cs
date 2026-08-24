@@ -167,6 +167,15 @@ public sealed partial class SlnmapQueries
                 + "routed by MapControllerRoute patterns) — those are a different routing system and are not modeled.");
         }
 
+        if (meta.TryGetValue(MetaKeys.RazorPagesNotModeled, out var razorPagesRaw)
+            && int.TryParse(razorPagesRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out int razorPages)
+            && razorPages > 0)
+        {
+            builder.Append(
+                $" Note: this solution has {razorPages} Razor Page(s) (PageModel-derived, OnGet/OnPost/... handlers) — "
+                + "those route by file location, a different routing system, and are not modeled.");
+        }
+
         return builder.ToString();
     }
 
@@ -240,6 +249,13 @@ public sealed partial class SlnmapQueries
             && conventional > 0)
         {
             builder.AppendLine($"note: {conventional} conventionally-routed controller(s) (no route attributes) are not modeled — a different routing system, not an extraction failure.");
+        }
+
+        if (meta.TryGetValue(MetaKeys.RazorPagesNotModeled, out var razorPagesRaw)
+            && int.TryParse(razorPagesRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out int razorPages)
+            && razorPages > 0)
+        {
+            builder.AppendLine($"note: {razorPages} Razor Page(s) (PageModel-derived) are not modeled — they route by file location, a different routing system, not an extraction failure.");
         }
     }
 

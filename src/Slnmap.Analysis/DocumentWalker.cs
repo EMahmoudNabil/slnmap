@@ -9,7 +9,8 @@ internal sealed record DocumentResult(
     IReadOnlyList<RelationshipEdge> Edges,
     IReadOnlyList<string> Warnings,
     int UnresolvedEndpoints,
-    int ConventionalControllers);
+    int ConventionalControllers,
+    int RazorPagesNotModeled);
 
 /// <summary>
 /// Extracts nodes and edges from a single document. Declarations produce nodes and
@@ -26,6 +27,7 @@ internal sealed class DocumentWalker
     private readonly List<RelationshipEdge> _edges = [];
     private readonly List<string> _warnings = [];
     private readonly HashSet<INamedTypeSymbol> _conventionalControllers = new(SymbolEqualityComparer.Default);
+    private readonly HashSet<INamedTypeSymbol> _razorPagesNotModeled = new(SymbolEqualityComparer.Default);
     private int _unresolvedEndpoints;
 
     private DocumentWalker(SemanticModel model, string projectNodeId, CancellationToken cancellationToken)
@@ -47,7 +49,8 @@ internal sealed class DocumentWalker
         var walker = new DocumentWalker(model, projectNodeId, cancellationToken);
         walker.Visit(root);
         return new DocumentResult(
-            walker._nodes, walker._edges, walker._warnings, walker._unresolvedEndpoints, walker._conventionalControllers.Count);
+            walker._nodes, walker._edges, walker._warnings, walker._unresolvedEndpoints,
+            walker._conventionalControllers.Count, walker._razorPagesNotModeled.Count);
     }
 
     private void Visit(SyntaxNode root)
@@ -70,6 +73,7 @@ internal sealed class DocumentWalker
                         && method.Parent is ClassDeclarationSyntax { BaseList: not null })
                     {
                         HandleControllerAction(method, methodSymbol);
+                        HandleRazorPageHandler(methodSymbol);
                     }
 
                     break;
@@ -596,6 +600,28 @@ internal sealed class DocumentWalker
             {
                 _edges.Add(new RelationshipEdge(node.Id, handlerNode.Id, RelationshipKind.HandledBy));
             }
+        }
+    }
+
+    /// <summary>
+    /// Razor Pages handler methods (v0.12.2, foreign-patterns-trial finding #2): no route
+    /// extraction — a page's real route is its file location under <c>Pages/</c>, a build-time
+    /// convention this tool cannot resolve from syntax/semantics alone. Disclosure only, noted
+    /// once per class, mirroring <see cref="HandleControllerAction"/>'s conventionally-routed
+    /// case exactly.
+    /// </summary>
+    private void HandleRazorPageHandler(IMethodSymbol method)
+    {
+        if (!RazorPageFacts.IsPageHandler(method))
+        {
+            return;
+        }
+
+        if (_razorPagesNotModeled.Add(method.ContainingType))
+        {
+            _warnings.Add(
+                $"Page '{method.ContainingType.Name}' (Razor Pages) has handler methods (OnGet/OnPost/...) — "
+                + "Razor Pages route by file location, not by attribute, so its handlers are not modeled as endpoints.");
         }
     }
 

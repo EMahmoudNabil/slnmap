@@ -10,9 +10,11 @@ export function fetchFromConfiguredBase(path: string) {
   return fetch(`${API_BASE}/${path}`);
 }
 
-// Category: runtime-computed-segment -- the segment is produced by a runtime computation
-// (function call, Date, etc.); the checker's literal type for this expression widens to
-// `string`/`number`, never a literal.
+// Category: string-concatenation (v0.12.2; was runtime-computed-segment before the
+// foreign-patterns-trial fix) -- the URL is built via `+` concatenation and the right-hand
+// operand is a runtime computation (function call, Date, etc.), never a literal. Concatenation
+// is now its own disclosed category rather than being folded into the generic
+// runtime-computed-segment bucket, since it's the more specific, more actionable fact.
 export function fetchYearlyReport() {
   const basePath = '/Reports/' + new Date().getFullYear();
   return apiClient.get(basePath);
