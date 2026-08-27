@@ -237,6 +237,97 @@ public sealed class LinkCommandTests
         }
     }
 
+    [Fact]
+    public async Task Link_BasePathDefault_DoubleprefixRepro_NowLinksInsteadOfNoMatch()
+    {
+        // v0.12.3 fix, CLI end-to-end: the investigation's exact repro (byte-identical /api
+        // paths on both sides), driven through the real command-line parser, not just the
+        // library call — proves the --base-path option and its default both wire correctly.
+        string workDir = Path.Combine(Path.GetTempPath(), $"slnmap-link-basepath-default-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workDir);
+        string db = Path.Combine(workDir, "doubleprefix.db");
+        try
+        {
+            var graph = new CodeGraph();
+            graph.AddNode(SymbolNode.Create(NodeKind.Endpoint, "/api/orders", "GET /api/orders", "Endpoints.cs", new SourceSpan(0, 1)));
+            graph.AddNode(SymbolNode.Create(NodeKind.FrontendCallSite, "/api/orders", "GET src/x.ts:1:1", "x.ts", new SourceSpan(0, 1)));
+            await using (var store = new SqliteGraphStore(db))
+            {
+                await store.SaveAsync(graph, [], new Dictionary<string, string>(StringComparer.Ordinal));
+            }
+
+            var link = RunCli(workDir, "link", "--db", db, "--verbose");
+            Assert.True(link.ExitCode == 0, $"link failed: {link.Stdout}\n{link.Stderr}");
+            Assert.Contains("Linked:    1/1", link.Stdout, StringComparison.Ordinal);
+            Assert.Contains("Disclosed: 0", link.Stdout, StringComparison.Ordinal);
+            Assert.DoesNotContain("NoSkeletonMatch", link.Stdout, StringComparison.Ordinal);
+        }
+        finally
+        {
+            TryDeleteDirectory(workDir);
+        }
+    }
+
+    [Fact]
+    public async Task Link_BasePathEmpty_DisablesThePrefix_ViaTheRealCommandLine()
+    {
+        string workDir = Path.Combine(Path.GetTempPath(), $"slnmap-link-basepath-empty-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workDir);
+        string db = Path.Combine(workDir, "noprefix.db");
+        try
+        {
+            var graph = new CodeGraph();
+            graph.AddNode(SymbolNode.Create(NodeKind.Endpoint, "/orders", "GET /orders", "Endpoints.cs", new SourceSpan(0, 1)));
+            graph.AddNode(SymbolNode.Create(NodeKind.FrontendCallSite, "/orders", "GET src/x.ts:1:1", "x.ts", new SourceSpan(0, 1)));
+            await using (var store = new SqliteGraphStore(db))
+            {
+                await store.SaveAsync(graph, [], new Dictionary<string, string>(StringComparer.Ordinal));
+            }
+
+            var link = RunCli(workDir, "link", "--db", db, "--base-path", "");
+            Assert.True(link.ExitCode == 0, $"link failed: {link.Stdout}\n{link.Stderr}");
+            Assert.Contains("Linked:    1/1", link.Stdout, StringComparison.Ordinal);
+
+            await using var store2 = new SqliteGraphStore(db);
+            var meta = await store2.GetMetaAsync();
+            Assert.Equal(string.Empty, meta[MetaKeys.LinkerBasePathPrefix]);
+        }
+        finally
+        {
+            TryDeleteDirectory(workDir);
+        }
+    }
+
+    [Fact]
+    public async Task Link_BasePathCustom_PersistsToMetaForLaterMcpQueries()
+    {
+        string workDir = Path.Combine(Path.GetTempPath(), $"slnmap-link-basepath-custom-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workDir);
+        string db = Path.Combine(workDir, "custom.db");
+        try
+        {
+            var graph = new CodeGraph();
+            graph.AddNode(SymbolNode.Create(NodeKind.Endpoint, "/gateway/orders", "GET /gateway/orders", "Endpoints.cs", new SourceSpan(0, 1)));
+            graph.AddNode(SymbolNode.Create(NodeKind.FrontendCallSite, "/orders", "GET src/x.ts:1:1", "x.ts", new SourceSpan(0, 1)));
+            await using (var store = new SqliteGraphStore(db))
+            {
+                await store.SaveAsync(graph, [], new Dictionary<string, string>(StringComparer.Ordinal));
+            }
+
+            var link = RunCli(workDir, "link", "--db", db, "--base-path", "/gateway");
+            Assert.True(link.ExitCode == 0, $"link failed: {link.Stdout}\n{link.Stderr}");
+            Assert.Contains("Linked:    1/1", link.Stdout, StringComparison.Ordinal);
+
+            await using var store2 = new SqliteGraphStore(db);
+            var meta = await store2.GetMetaAsync();
+            Assert.Equal("/gateway", meta[MetaKeys.LinkerBasePathPrefix]);
+        }
+        finally
+        {
+            TryDeleteDirectory(workDir);
+        }
+    }
+
     private static void AssertNoStackTrace(string stdout, string stderr)
     {
         string combined = $"{stdout}\n{stderr}";

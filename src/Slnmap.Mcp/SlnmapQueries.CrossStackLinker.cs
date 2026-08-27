@@ -38,7 +38,15 @@ public sealed partial class SlnmapQueries
             graph.AddNode(node);
         }
 
-        return CrossStackLinker.Link(graph);
+        // Uses whatever base path the last `slnmap link --base-path` run was given, not always
+        // the hardcoded default — otherwise this live recompute would silently disagree with the
+        // persisted CallsEndpoint edges the moment someone configures a non-default prefix.
+        var meta = await _store.GetMetaAsync(cancellationToken).ConfigureAwait(false);
+        string basePathPrefix = meta.TryGetValue(MetaKeys.LinkerBasePathPrefix, out var stored)
+            ? stored
+            : CrossStackLinker.DefaultBasePathPrefix;
+
+        return CrossStackLinker.Link(graph, basePathPrefix);
     }
 
     /// <summary>
@@ -180,6 +188,8 @@ public sealed partial class SlnmapQueries
             string status = result.Outcome switch
             {
                 CallSiteLinkOutcome.Unique or CallSiteLinkOutcome.PrecedenceResolved => $"-> {result.Endpoints[0].Fqn}",
+                CallSiteLinkOutcome.SetEdge when result.AmbiguityReason is { } reason =>
+                    $"-> {result.Endpoints.Count} endpoints: " + string.Join(", ", result.Endpoints.Select(e => e.Fqn)) + $" ({reason})",
                 CallSiteLinkOutcome.SetEdge => $"-> {result.Endpoints.Count} endpoints: " + string.Join(", ", result.Endpoints.Select(e => e.Fqn)),
                 _ => $"[{result.Outcome}]",
             };

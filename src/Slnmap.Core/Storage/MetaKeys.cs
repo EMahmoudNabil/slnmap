@@ -74,4 +74,15 @@ public static class MetaKeys
     /// never run.
     /// </summary>
     public const string LinkerLastRun = "linker_last_run";
+
+    /// <summary>
+    /// The base-path prefix the last `slnmap link` run was given (`--base-path`, v0.12.3;
+    /// defaults to <c>"/api"</c> when the flag isn't passed). Persisted so the live-recomputing
+    /// MCP query tools (`find_orphan_calls`, `list_frontend_callsites`) match what `link`
+    /// actually used rather than silently reverting to the hardcoded default — see
+    /// cross-stack-linker-implementation.md Part 3's "never stale relative to the current node
+    /// set" guarantee, which would otherwise quietly stop being true for a non-default prefix.
+    /// Absent when `link` has never run (or predates this key).
+    /// </summary>
+    public const string LinkerBasePathPrefix = "linker_base_path_prefix";
 }

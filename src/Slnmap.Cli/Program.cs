@@ -26,6 +26,14 @@ var verboseOption = new Option<bool>("--verbose", "-v")
     Description = "Print the full, grouped warning breakdown instead of a single summary line.",
 };
 
+var basePathOption = new Option<string>("--base-path")
+{
+    Description = "Prefix prepended to a frontend call site's own path before matching it against " +
+        "endpoints (e.g. \"/api\", matching an axios baseURL that isn't visible in the call site " +
+        "literal itself). Pass \"\" to disable — use when call sites already include the full path.",
+    DefaultValueFactory = _ => CrossStackLinker.DefaultBasePathPrefix,
+};
+
 var analyzeCommand = new Command("analyze", "Analyze a solution and build (or update) its code graph.")
 {
     solutionArgument,
@@ -354,11 +362,13 @@ var linkCommand = new Command(
 {
     dbOption,
     verboseOption,
+    basePathOption,
 };
 linkCommand.SetAction(async (parseResult, cancellationToken) =>
 {
     string db = parseResult.GetRequiredValue(dbOption);
     bool verbose = parseResult.GetValue(verboseOption);
+    string basePath = parseResult.GetRequiredValue(basePathOption);
 
     await using var store = new SqliteGraphStore(db);
     if (!File.Exists(store.DatabasePath))
@@ -406,7 +416,7 @@ linkCommand.SetAction(async (parseResult, cancellationToken) =>
         relinked.AddEdge(edge);
     }
 
-    var results = CrossStackLinker.Link(relinked);
+    var results = CrossStackLinker.Link(relinked, basePath);
     foreach (var edge in CrossStackLinker.ToEdges(results))
     {
         relinked.AddEdge(edge);
@@ -423,22 +433,28 @@ linkCommand.SetAction(async (parseResult, cancellationToken) =>
     int unknownVerb = byOutcome[CallSiteLinkOutcome.UnknownVerb].Count();
     int linked = unique + precedence + setEdge;
     int disclosed = noMatch + verbMismatch + unknownVerb;
+    int prefixAmbiguous = byOutcome[CallSiteLinkOutcome.SetEdge].Count(static r => r.AmbiguityReason is not null);
 
     var meta = new Dictionary<string, string>(existingMeta, StringComparer.Ordinal)
     {
         [MetaKeys.LinkerLastRun] = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture),
+        [MetaKeys.LinkerBasePathPrefix] = basePath,
     };
     var fileRecords = existingFiles.Select(static pair => new FileRecord(pair.Key, pair.Value)).ToList();
     await store.SaveAsync(relinked, fileRecords, meta, cancellationToken).ConfigureAwait(false);
 
     var pal = Palette.Out;
+    string prefixAmbiguousSuffix = prefixAmbiguous > 0
+        ? pal.Label(", ") + pal.Warn(prefixAmbiguous.ToString(CultureInfo.InvariantCulture)) + pal.Label(" prefix-ambiguous")
+        : string.Empty;
     Console.WriteLine(
         pal.Label("Linked:    ")
         + pal.Number(linked.ToString(CultureInfo.InvariantCulture))
         + pal.Label($"/{results.Count.ToString(CultureInfo.InvariantCulture)} call sites (")
         + pal.Number(unique.ToString(CultureInfo.InvariantCulture)) + pal.Label(" unique, ")
         + pal.Number(precedence.ToString(CultureInfo.InvariantCulture)) + pal.Label(" via precedence, ")
-        + pal.Number(setEdge.ToString(CultureInfo.InvariantCulture)) + pal.Label(" set-edge)"));
+        + pal.Number(setEdge.ToString(CultureInfo.InvariantCulture)) + pal.Label(" set-edge")
+        + prefixAmbiguousSuffix + pal.Label(")"));
     string unknownVerbSuffix = unknownVerb > 0
         ? pal.Label(", ") + pal.Number(unknownVerb.ToString(CultureInfo.InvariantCulture)) + pal.Label(" unknown verb")
         : string.Empty;
@@ -453,14 +469,16 @@ linkCommand.SetAction(async (parseResult, cancellationToken) =>
     if (verbose)
     {
         foreach (var result in results
-            .Where(static r => r.Outcome is CallSiteLinkOutcome.NoSkeletonMatch or CallSiteLinkOutcome.VerbMismatch or CallSiteLinkOutcome.UnknownVerb)
+            .Where(static r => r.Outcome is CallSiteLinkOutcome.NoSkeletonMatch or CallSiteLinkOutcome.VerbMismatch or CallSiteLinkOutcome.UnknownVerb
+                || r.AmbiguityReason is not null)
             .OrderBy(static r => r.CallSite.Fqn, StringComparer.Ordinal))
         {
             string callSiteVerb = result.CallSite.Fqn[..result.CallSite.Fqn.IndexOf(' ', StringComparison.Ordinal)];
             string conflictNote = result.ConflictingVerbEndpoints.Count > 0
                 ? $" — no {callSiteVerb} registered; " + string.Join(", ", result.ConflictingVerbEndpoints.Select(static e => e.Fqn)) + " exists"
                 : string.Empty;
-            Console.WriteLine(pal.Label($"  {result.CallSite.Fqn} — {result.Outcome}{conflictNote}"));
+            string ambiguityNote = result.AmbiguityReason is { } reason ? $" — {reason}" : string.Empty;
+            Console.WriteLine(pal.Label($"  {result.CallSite.Fqn} — {result.Outcome}{conflictNote}{ambiguityNote}"));
         }
     }
 

@@ -2,6 +2,32 @@
 
 All notable changes to Slnmap are documented here. Versions follow [SemVer](https://semver.org).
 
+## 0.12.3
+
+### Fixed
+
+- **The cross-stack linker double-prefixed call sites whose own path already included the base
+  path**, reporting `NoSkeletonMatch` on every one — including byte-identical literal paths (a
+  frontend `fetch('/api/orders')` against a real `/api/orders` endpoint). The linker
+  unconditionally prepended its `/api` base-path prefix before matching; a call site that already
+  carried the prefix (any codebase that doesn't route it through an axios `baseURL` — a bare
+  `fetch()`/`XMLHttpRequest` call, or any client without base-URL config) got matched as
+  `/api/api/orders`, which can never skeleton-match `/api/orders` — different segment count,
+  rejected before any string comparison happens. Confirmed present, unchanged, in every published
+  version through 0.12.2, and not caught by prior field trials because their codebase's own
+  convention (axios `baseURL` absorbs the prefix, call sites never carry it literally) never
+  exercised the failing shape. Fixed by trying both the call site's raw path and its
+  prefixed path as independent match candidates: if exactly one matches, link through it as
+  before (no change for the already-working case); if both independently match a real endpoint,
+  that's disclosed as a set edge with its own reason rather than silently guessing; if neither
+  matches, `NoSkeletonMatch` as before.
+
+### Added
+
+- **`slnmap link --base-path <prefix>`** — the base path is now configurable (default `/api`,
+  matching prior behavior). Pass `--base-path ""` to disable it entirely for a codebase whose
+  call sites already carry their full path.
+
 ## 0.12.2
 
 ### Fixed

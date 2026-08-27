@@ -49,12 +49,18 @@ public enum CallSiteLinkOutcome
 /// <see cref="CallSiteLinkOutcome.VerbMismatch"/> — the endpoint(s) that share this exact
 /// skeleton under a different verb, so a disclosure message can name them ("no POST registered;
 /// GET /api/OrganizationUsers exists") instead of just saying "no match" — empty otherwise.
+/// <paramref name="AmbiguityReason"/> is populated only for the base-path double-match case of
+/// <see cref="CallSiteLinkOutcome.SetEdge"/> (v0.12.3) — distinguishes "this call site's raw
+/// path AND its base-path-prefixed path both independently matched a real endpoint" from
+/// genuine runtime fan-out/irreducible ambiguity, which leaves this null. Null for every other
+/// outcome, including the ordinary SetEdge case.
 /// </summary>
 public sealed record CallSiteLinkResult(
     SymbolNode CallSite,
     CallSiteLinkOutcome Outcome,
     IReadOnlyList<SymbolNode> Endpoints,
-    IReadOnlyList<SymbolNode> ConflictingVerbEndpoints);
+    IReadOnlyList<SymbolNode> ConflictingVerbEndpoints,
+    string? AmbiguityReason = null);
 
 /// <summary>
 /// Phase 3: joins <see cref="NodeKind.FrontendCallSite"/> nodes to <see cref="NodeKind.Endpoint"/>
@@ -80,14 +86,14 @@ public static class CrossStackLinker
     private const string UnknownVerb = "UNKNOWN";
 
     /// <summary>
-    /// The linker's configured base-path prefix (investigation §Q4 of
+    /// The linker's default base-path prefix (investigation §Q4 of
     /// ts-extractor-investigation.md): <see cref="NodeKind.FrontendCallSite"/>.Name stores the
-    /// call site's literal/resolved path with no invented prefix; prepended here before calling
-    /// the shipped, unmodified <see cref="RouteTemplate"/>. A single, explicit, project-level
-    /// convention — not per-call-site, not inferred (§Q6: multi-base-path config is explicitly
-    /// out of v1 scope).
+    /// call site's literal/resolved path with no invented prefix; prepended before calling the
+    /// shipped, unmodified <see cref="RouteTemplate"/>. Configurable per <see cref="Link"/>'s
+    /// <c>basePathPrefix</c> parameter (`slnmap link --base-path`, v0.12.3) — this is only the
+    /// back-compat default when the caller doesn't override it.
     /// </summary>
-    private const string BasePathPrefix = "/api";
+    public const string DefaultBasePathPrefix = "/api";
 
     /// <summary>
     /// Links every <see cref="NodeKind.FrontendCallSite"/> node in <paramref name="graph"/>
@@ -96,15 +102,16 @@ public static class CrossStackLinker
     /// identity), never by insertion order — a `link` run on the same graph is idempotent by
     /// construction (§Q3/§Q6).
     /// </summary>
-    public static IReadOnlyList<CallSiteLinkResult> Link(CodeGraph graph)
+    public static IReadOnlyList<CallSiteLinkResult> Link(CodeGraph graph, string basePathPrefix = DefaultBasePathPrefix)
     {
         ArgumentNullException.ThrowIfNull(graph);
+        ArgumentNullException.ThrowIfNull(basePathPrefix);
 
         var endpoints = graph.Nodes.Where(n => n.Kind == NodeKind.Endpoint).ToList();
         return graph.Nodes
             .Where(n => n.Kind == NodeKind.FrontendCallSite)
             .OrderBy(n => n.Id, StringComparer.Ordinal)
-            .Select(callSite => LinkOne(callSite, endpoints))
+            .Select(callSite => LinkOne(callSite, endpoints, basePathPrefix))
             .ToList();
     }
 
@@ -114,7 +121,24 @@ public static class CrossStackLinker
             .SelectMany(r => r.Endpoints.Select(e => new RelationshipEdge(r.CallSite.Id, e.Id, RelationshipKind.CallsEndpoint)))
             .ToList();
 
-    private static CallSiteLinkResult LinkOne(SymbolNode callSite, IReadOnlyList<SymbolNode> endpoints)
+    /// <summary>
+    /// v0.12.3 fix (reports/link-noskeletonmatch-investigation-report.md): the linker used to
+    /// unconditionally match against <c>basePathPrefix + callSite.Name</c> alone. A call site
+    /// whose OWN literal already includes the prefix (e.g. a bare `fetch('/api/orders')`, with
+    /// no axios `baseURL` absorbing it) got double-prefixed to `/api/api/orders`, which can
+    /// never skeleton-match the real `/api/orders` endpoint — <see cref="RouteTemplate.Matches"/>
+    /// rejects on segment count before any string comparison. Fixed by trying BOTH the raw path
+    /// and the prefixed path as independent candidate skeletons: if exactly one yields same-verb
+    /// matches, resolve normally against that one (this is what makes OSSUS's own convention —
+    /// axios `baseURL` absorbs the prefix, call sites never carry it literally — keep working
+    /// unchanged); if BOTH independently match, that is a genuine new ambiguity (not the same
+    /// shape as ordinary fan-out, so disclosed with its own <see cref="CallSiteLinkResult.AmbiguityReason"/>
+    /// rather than silently preferring one); if NEITHER matches, <see cref="CallSiteLinkOutcome.NoSkeletonMatch"/>
+    /// as before. When <paramref name="basePathPrefix"/> is empty (`--base-path ""`) the two
+    /// candidates are identical by construction — collapses to the single-candidate path with no
+    /// possibility of a spurious ambiguity verdict.
+    /// </summary>
+    private static CallSiteLinkResult LinkOne(SymbolNode callSite, IReadOnlyList<SymbolNode> endpoints, string basePathPrefix)
     {
         string verb = VerbOf(callSite.Fqn);
         if (verb == UnknownVerb)
@@ -122,22 +146,64 @@ public static class CrossStackLinker
             return new CallSiteLinkResult(callSite, CallSiteLinkOutcome.UnknownVerb, [], []);
         }
 
-        string skeleton = RouteTemplate.Normalize(BasePathPrefix + callSite.Name);
-        var sameVerbMatches = endpoints
+        string rawSkeleton = RouteTemplate.Normalize(callSite.Name);
+        string prefixedSkeleton = RouteTemplate.Normalize(basePathPrefix + callSite.Name);
+        bool singleCandidate = rawSkeleton == prefixedSkeleton;
+
+        var rawMatches = MatchSameVerb(endpoints, verb, rawSkeleton);
+        var prefixedMatches = singleCandidate ? rawMatches : MatchSameVerb(endpoints, verb, prefixedSkeleton);
+
+        if (!singleCandidate && rawMatches.Count > 0 && prefixedMatches.Count > 0)
+        {
+            var combined = rawMatches.Concat(prefixedMatches)
+                .GroupBy(e => e.Id, StringComparer.Ordinal)
+                .Select(g => g.First())
+                .OrderBy(e => e.Id, StringComparer.Ordinal)
+                .ToList();
+            return new CallSiteLinkResult(
+                callSite, CallSiteLinkOutcome.SetEdge, combined, [],
+                AmbiguityReason: $"prefix-ambiguous: '{callSite.Name}' matches an endpoint both as-is and with the '{basePathPrefix}' prefix applied — not resolved automatically");
+        }
+
+        if (rawMatches.Count > 0)
+        {
+            return ResolveForSkeleton(callSite, rawSkeleton, rawMatches);
+        }
+
+        if (prefixedMatches.Count > 0)
+        {
+            return ResolveForSkeleton(callSite, prefixedSkeleton, prefixedMatches);
+        }
+
+        var otherVerbMatches = MatchAnyVerb(endpoints, rawSkeleton);
+        if (!singleCandidate)
+        {
+            otherVerbMatches = otherVerbMatches
+                .Concat(MatchAnyVerb(endpoints, prefixedSkeleton))
+                .GroupBy(e => e.Id, StringComparer.Ordinal)
+                .Select(g => g.First())
+                .OrderBy(e => e.Id, StringComparer.Ordinal)
+                .ToList();
+        }
+
+        var outcome = otherVerbMatches.Count > 0 ? CallSiteLinkOutcome.VerbMismatch : CallSiteLinkOutcome.NoSkeletonMatch;
+        return new CallSiteLinkResult(callSite, outcome, [], otherVerbMatches);
+    }
+
+    private static List<SymbolNode> MatchSameVerb(IReadOnlyList<SymbolNode> endpoints, string verb, string skeleton) =>
+        endpoints
             .Where(e => VerbOf(e.Fqn) == verb && RouteTemplate.Matches(RouteTemplate.Normalize(e.Name), skeleton))
             .OrderBy(e => e.Id, StringComparer.Ordinal)
             .ToList();
 
-        if (sameVerbMatches.Count == 0)
-        {
-            var otherVerbMatches = endpoints
-                .Where(e => RouteTemplate.Matches(RouteTemplate.Normalize(e.Name), skeleton))
-                .OrderBy(e => e.Id, StringComparer.Ordinal)
-                .ToList();
-            var outcome = otherVerbMatches.Count > 0 ? CallSiteLinkOutcome.VerbMismatch : CallSiteLinkOutcome.NoSkeletonMatch;
-            return new CallSiteLinkResult(callSite, outcome, [], otherVerbMatches);
-        }
+    private static List<SymbolNode> MatchAnyVerb(IReadOnlyList<SymbolNode> endpoints, string skeleton) =>
+        endpoints
+            .Where(e => RouteTemplate.Matches(RouteTemplate.Normalize(e.Name), skeleton))
+            .OrderBy(e => e.Id, StringComparer.Ordinal)
+            .ToList();
 
+    private static CallSiteLinkResult ResolveForSkeleton(SymbolNode callSite, string skeleton, IReadOnlyList<SymbolNode> sameVerbMatches)
+    {
         if (sameVerbMatches.Count == 1)
         {
             return new CallSiteLinkResult(callSite, CallSiteLinkOutcome.Unique, sameVerbMatches, []);
