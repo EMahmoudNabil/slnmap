@@ -14,6 +14,7 @@ public sealed partial class SlnmapQueries
         ("no-match", CallSiteLinkOutcome.NoSkeletonMatch),
         ("verb-mismatch", CallSiteLinkOutcome.VerbMismatch),
         ("verb-unknown", CallSiteLinkOutcome.UnknownVerb),
+        ("ambiguous-host", CallSiteLinkOutcome.AmbiguousHost),
     ];
 
     /// <summary>
@@ -107,7 +108,7 @@ public sealed partial class SlnmapQueries
         }
 
         var disclosed = results
-            .Where(r => r.Outcome is CallSiteLinkOutcome.NoSkeletonMatch or CallSiteLinkOutcome.VerbMismatch or CallSiteLinkOutcome.UnknownVerb)
+            .Where(r => r.Outcome is CallSiteLinkOutcome.NoSkeletonMatch or CallSiteLinkOutcome.VerbMismatch or CallSiteLinkOutcome.UnknownVerb or CallSiteLinkOutcome.AmbiguousHost)
             .Where(r => outcomeFilter is null || r.Outcome == outcomeFilter)
             .ToList();
 
@@ -130,7 +131,7 @@ public sealed partial class SlnmapQueries
             {
                 string conflict = result.ConflictingVerbEndpoints.Count > 0
                     ? $" — no {VerbOfCallSite(result.CallSite)} registered; " + string.Join(", ", result.ConflictingVerbEndpoints.Select(e => e.Fqn)) + " exists"
-                    : string.Empty;
+                    : result.AmbiguityReason is { } reason ? $" — {reason}" : string.Empty;
                 builder.AppendLine($"    {result.CallSite.Fqn} ({result.CallSite.Name}){conflict}");
             }
         }
@@ -191,9 +192,14 @@ public sealed partial class SlnmapQueries
                 CallSiteLinkOutcome.SetEdge when result.AmbiguityReason is { } reason =>
                     $"-> {result.Endpoints.Count} endpoints: " + string.Join(", ", result.Endpoints.Select(e => e.Fqn)) + $" ({reason})",
                 CallSiteLinkOutcome.SetEdge => $"-> {result.Endpoints.Count} endpoints: " + string.Join(", ", result.Endpoints.Select(e => e.Fqn)),
+                CallSiteLinkOutcome.AmbiguousHost => $"[AmbiguousHost] {result.AmbiguityReason}",
                 _ => $"[{result.Outcome}]",
             };
-            builder.AppendLine($"  {result.CallSite.Fqn} ({result.CallSite.Name}) {status}");
+            // v0.13.0: "carry its host visibly" — an absolute-URL call site shows its host
+            // regardless of link outcome, including a genuinely external API that still links
+            // by path (CallSiteLinkResult.Host's own doc comment).
+            string hostNote = result.Host is { } host ? $" [host: {host}]" : string.Empty;
+            builder.AppendLine($"  {result.CallSite.Fqn} ({result.CallSite.Name}) {status}{hostNote}");
         }
 
         if (filtered.Count > CrossStackListCap)

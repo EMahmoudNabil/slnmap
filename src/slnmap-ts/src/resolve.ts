@@ -159,8 +159,10 @@ function isProcessEnvAccess(expr: ts.Expression): boolean {
 /** Whether the (simple-identifier) root of a property-access chain is itself `const`-declared —
  * an object's literal property is only trustworthy if the binding holding the object can't be
  * reassigned wholesale. Non-identifier roots (a nested call, etc.) are not blocked by this check;
- * they fail resolution on their own terms further down the recursion. */
-function isConstRootedOrNotApplicable(expr: ts.Expression, checker: ts.TypeChecker): boolean {
+ * they fail resolution on their own terms further down the recursion. Exported for reuse by
+ * detection.ts's HTTP-wrapper resolution (a wrapper's receiver must be as const-rooted as any
+ * other object-literal property access). */
+export function isConstRootedOrNotApplicable(expr: ts.Expression, checker: ts.TypeChecker): boolean {
   const e = unwrap(expr);
   if (!ts.isIdentifier(e)) {
     return true;
@@ -179,13 +181,29 @@ function isConstRootedOrNotApplicable(expr: ts.Expression, checker: ts.TypeCheck
  * category. Handles: string/numeric literals, `+` concatenation, const identifiers (through
  * their initializer), and object-literal property access (API_ROUTES-style, §Q3.2 row 3), all
  * recursively up to MAX_RESOLUTION_DEPTH hops.
+ *
+ * `substitutions`, when supplied, is checked before any other identifier handling: if an
+ * identifier's symbol is a key, its already-folded text is used verbatim instead of resolving
+ * the identifier's own declaration. This is how the HTTP-wrapper resolution path (detection.ts's
+ * `resolveHttpWrapper`) splices an original call site's folded URL argument into the wrapper
+ * function's OWN parameter reference — e.g. `requests.get: url => superagent.get(\`${API_ROOT}${url}\`)`
+ * — without reimplementing template/constant folding: the wrapper's own template is folded
+ * normally, and only the one identifier that IS the wrapper's parameter resolves differently.
  */
 export function resolveConstantExpression(
   expr: ts.Expression,
   checker: ts.TypeChecker,
   depth = MAX_RESOLUTION_DEPTH,
+  substitutions?: ReadonlyMap<ts.Symbol, string>,
 ): FoldResult {
   const e = unwrap(expr);
+
+  if (substitutions && ts.isIdentifier(e)) {
+    const symbol = checker.getSymbolAtLocation(e);
+    if (symbol && substitutions.has(symbol)) {
+      return { ok: true, value: substitutions.get(symbol)! };
+    }
+  }
 
   if (depth <= 0) {
     return {
@@ -225,11 +243,11 @@ export function resolveConstantExpression(
   }
 
   if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.PlusToken) {
-    const left = resolveConstantExpression(e.left, checker, depth - 1);
+    const left = resolveConstantExpression(e.left, checker, depth - 1, substitutions);
     if (!left.ok) {
       return { ok: false, failure: asConcatenationFailure(left.failure, e) };
     }
-    const right = resolveConstantExpression(e.right, checker, depth - 1);
+    const right = resolveConstantExpression(e.right, checker, depth - 1, substitutions);
     if (!right.ok) {
       return { ok: false, failure: asConcatenationFailure(right.failure, e) };
     }
@@ -271,7 +289,7 @@ export function resolveConstantExpression(
           },
         };
       }
-      return resolveConstantExpression(decl.initializer, checker, depth - 1);
+      return resolveConstantExpression(decl.initializer, checker, depth - 1, substitutions);
     }
 
     if (decl && ts.isPropertyAssignment(decl) && decl.initializer && ts.isPropertyAccessExpression(e)) {
@@ -284,7 +302,7 @@ export function resolveConstantExpression(
           },
         };
       }
-      return resolveConstantExpression(decl.initializer, checker, depth - 1);
+      return resolveConstantExpression(decl.initializer, checker, depth - 1, substitutions);
     }
 
     return {
@@ -310,8 +328,14 @@ export function resolveConstantExpression(
  * ALWAYS succeeds (investigation §Q3.2 row 6): literal segments are kept verbatim and every
  * unresolvable hole becomes an anonymous `{*}` token — only a bare (non-template) argument that
  * fails to resolve at all pushes the call site to the declared-unresolvable bucket.
+ *
+ * `substitutions` forwards straight through to `resolveConstantExpression` — see its doc comment.
  */
-export function foldUrlArgument(expr: ts.Expression, checker: ts.TypeChecker): UrlFoldResult {
+export function foldUrlArgument(
+  expr: ts.Expression,
+  checker: ts.TypeChecker,
+  substitutions?: ReadonlyMap<ts.Symbol, string>,
+): UrlFoldResult {
   const e = unwrap(expr);
 
   if (ts.isNoSubstitutionTemplateLiteral(e)) {
@@ -322,7 +346,7 @@ export function foldUrlArgument(expr: ts.Expression, checker: ts.TypeChecker): U
     let out = e.head.text;
     let hasHole = false;
     for (const span of e.templateSpans) {
-      const hole = resolveConstantExpression(span.expression, checker);
+      const hole = resolveConstantExpression(span.expression, checker, MAX_RESOLUTION_DEPTH, substitutions);
       if (hole.ok) {
         out += hole.value;
       } else if (hole.failure.category === 'runtime-computed-segment' || hole.failure.category === 'string-concatenation') {
@@ -345,7 +369,7 @@ export function foldUrlArgument(expr: ts.Expression, checker: ts.TypeChecker): U
     return { ok: true, value: out, resolutionTier: hasHole ? 'template-param-holes' : 'template-folded' };
   }
 
-  const result = resolveConstantExpression(e, checker);
+  const result = resolveConstantExpression(e, checker, MAX_RESOLUTION_DEPTH, substitutions);
   if (!result.ok) {
     return result;
   }

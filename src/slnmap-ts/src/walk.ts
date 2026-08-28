@@ -1,25 +1,8 @@
 import ts from 'typescript';
 import type { LoadedProgram } from './program.js';
-import { isAmbientGlobalFetch, isKnownHttpClient } from './detection.js';
+import { HTTP_VERB_METHODS, isAmbientGlobalFetch, isKnownHttpClient, resolveHttpWrapper } from './detection.js';
 import { foldUrlArgument, tracesThroughDynamicImportOrRequire, unwrap } from './resolve.js';
-import type { CallSiteRecord, UnresolvedCallSiteRecord, UnresolvedCategory } from './types.js';
-
-/**
- * The verb-shaped method names the detection set recognizes (investigation §Q3.1), mapped to
- * the verb they report. `del` is superagent's own official method name for DELETE (not an
- * app-specific quirk — verified against a real codebase during the pre-publish field trial,
- * reports/analyze-ts-field-trial.md: a superagent-wrapped API layer's four `.del(...)` call
- * sites were silently invisible to the tool — not even counted as unresolved — before this was
- * recognized as an alias).
- */
-const HTTP_VERB_METHODS = new Map([
-  ['get', 'GET'],
-  ['post', 'POST'],
-  ['put', 'PUT'],
-  ['delete', 'DELETE'],
-  ['del', 'DELETE'],
-  ['patch', 'PATCH'],
-]);
+import type { CallSiteRecord, ResolutionTier, UnresolvedCallSiteRecord, UnresolvedCategory } from './types.js';
 
 interface Position {
   line: number;
@@ -142,6 +125,70 @@ function classifyUrlArgument(
 }
 
 /**
+ * Attempts to resolve a verb-named call whose receiver ISN'T a known HTTP client by tracing one
+ * level through a locally-declared wrapper (`detection.ts`'s `resolveHttpWrapper` — the
+ * `requests.get: url => superagent.get(...)` shape). Returns `null` when `resolveHttpWrapper`
+ * itself finds no such wrapper at all (the caller falls through to the existing
+ * `isUrlShaped`/`unrecognized-callee` handling) — but once a wrapper IS structurally confirmed,
+ * this always returns a definite record (resolved, or unresolved under a SPECIFIC category from
+ * folding either side), never falls through further: a confirmed wrapper is strong positive
+ * evidence this call site is real, so a folding failure past this point is reported precisely
+ * rather than degraded to the generic `unrecognized-callee`.
+ */
+function classifyWrapperForward(
+  node: ts.CallExpression,
+  callee: ts.PropertyAccessExpression,
+  verb: string,
+  file: string,
+  position: Position,
+  checker: ts.TypeChecker,
+): CallSiteRecord | null {
+  const wrapper = resolveHttpWrapper(callee, checker);
+  if (!wrapper) {
+    return null;
+  }
+
+  const urlArg = node.arguments[0];
+  if (!urlArg) {
+    return unresolved(verb, 'runtime-computed-segment', 'call has no URL argument', file, position);
+  }
+
+  // Fold the ORIGINAL call site's own argument first, entirely independently of the wrapper —
+  // this is exactly the same fold every direct (non-wrapped) call site already gets.
+  const originalFold = foldUrlArgument(urlArg, checker);
+  if (!originalFold.ok) {
+    return unresolved(verb, originalFold.failure.category, originalFold.failure.detail, file, position);
+  }
+
+  // Then fold the WRAPPER's own URL template, substituting its parameter reference with the
+  // original call's already-folded text — reuses foldUrlArgument/resolveConstantExpression's
+  // template/constant-folding wholesale rather than reimplementing it.
+  const substitutions = new Map<ts.Symbol, string>([[wrapper.paramSymbol, originalFold.value]]);
+  const wrapperFold = foldUrlArgument(wrapper.urlArg, checker, substitutions);
+  if (!wrapperFold.ok) {
+    return unresolved(verb, wrapperFold.failure.category, wrapperFold.failure.detail, file, position);
+  }
+
+  // Resolution tiers are derivable from the template string alone (types.ts) — a substituted
+  // parameter never itself contributes a hole (substitution always succeeds), but the substituted
+  // TEXT may already contain a `{*}` from the original call's own unresolved parts, so the tier is
+  // re-derived from the final string rather than trusted from wrapperFold in isolation.
+  const resolutionTier: ResolutionTier = wrapperFold.value.includes('{*}') ? 'template-param-holes' : wrapperFold.resolutionTier;
+
+  return {
+    kind: 'FrontendCallSite',
+    verb,
+    template: wrapperFold.value,
+    resolutionTier,
+    file,
+    line: position.line,
+    column: position.column,
+    spanStart: position.spanStart,
+    spanEnd: position.spanEnd,
+  };
+}
+
+/**
  * Classifies one call expression as a call site (resolved or unresolved) or `null` — not a
  * candidate at all. Two detection shapes (§Q3.1):
  *   1. A verb-named property-access call (`apiClient.get(...)`) — receiver identity is checked
@@ -174,6 +221,11 @@ function classifyCallExpression(
     }
 
     if (!isKnownHttpClient(receiver, checker)) {
+      const wrapperResult = classifyWrapperForward(node, callee, verb, file, position, checker);
+      if (wrapperResult) {
+        return wrapperResult;
+      }
+
       // The verb-named-method shape alone is a WEAK signal: `.get`/`.post`/etc. are also real
       // methods on `Headers`, `Map`, `URLSearchParams`, and plenty of other everyday objects —
       // at OSSUS_Frontend scale, an unfiltered shape check produced 284 false candidates (mostly
@@ -240,12 +292,56 @@ function compareRecords(a: CallSiteRecord, b: CallSiteRecord): number {
   return a.column - b.column;
 }
 
+/**
+ * Every verb-shaped call whose receiver resolves through `resolveHttpWrapper` to a locally-
+ * declared wrapper's inner low-level HTTP-client call (e.g. the `superagent.get(...)` inside
+ * `requests.get`'s own body) — collected up front, over the WHOLE in-project file set, before
+ * classification runs. `resolveHttpWrapper` only inspects a wrapper's own declaration/body, so
+ * this is order-independent: it finds the same set regardless of whether a wrapper's definition
+ * appears before or after the outer call site(s) that use it (usually before, in source order —
+ * which is exactly why suppression can't just be "skip it once already resolved during the same
+ * walk" and needs its own pass).
+ *
+ * Without this, the SAME inner call gets classified TWICE: once correctly folded into whichever
+ * outer, application-level call site(s) resolve through the wrapper, and once independently, on
+ * its own terms, as the walker visits it like any other call expression in the file — where its
+ * own argument is just the wrapper's bare parameter, which never resolves on its own and produces
+ * a spurious extra `unrecognized-callee`/`runtime-computed-segment` record for what is really
+ * wrapper-internal plumbing, not a second real call site.
+ */
+function collectWrapperInternalCalls(loaded: LoadedProgram): Set<ts.CallExpression> {
+  const { program, checker, inProject } = loaded;
+  const consumed = new Set<ts.CallExpression>();
+
+  for (const sourceFile of program.getSourceFiles()) {
+    if (!inProject(sourceFile.fileName)) {
+      continue;
+    }
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node)) {
+        const callee = node.expression;
+        if (ts.isPropertyAccessExpression(callee) && HTTP_VERB_METHODS.has(callee.name.text) && !isKnownHttpClient(callee.expression, checker)) {
+          const wrapper = resolveHttpWrapper(callee, checker);
+          if (wrapper) {
+            consumed.add(wrapper.forwardedCall);
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    ts.forEachChild(sourceFile, visit);
+  }
+
+  return consumed;
+}
+
 /** Walks every in-project source file's call expressions and returns call-site records sorted
  * by (file, line, column) — deterministic, byte-identical output across runs on unchanged input
  * (the investigation's determinism contract, §Q1/§Q2.2). */
 export function extractCallSites(loaded: LoadedProgram): CallSiteRecord[] {
   const { program, checker, inProject, relativePath } = loaded;
   const records: CallSiteRecord[] = [];
+  const wrapperInternalCalls = collectWrapperInternalCalls(loaded);
 
   for (const sourceFile of program.getSourceFiles()) {
     if (!inProject(sourceFile.fileName)) {
@@ -254,7 +350,7 @@ export function extractCallSites(loaded: LoadedProgram): CallSiteRecord[] {
     const file = relativePath(sourceFile.fileName).replace(/\\/g, '/');
 
     const visit = (node: ts.Node): void => {
-      if (ts.isCallExpression(node)) {
+      if (ts.isCallExpression(node) && !wrapperInternalCalls.has(node)) {
         const record = classifyCallExpression(node, sourceFile, checker, file);
         if (record) {
           records.push(record);

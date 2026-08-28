@@ -208,11 +208,12 @@ public sealed class AnalyzeTsIngestionTests
             Assert.True(graph.TryGetNode(csharpNode.Id, out var reloadedCsharp));
             Assert.Equal(csharpNode, reloadedCsharp);
 
-            // Stale frontend node gone; fresh set present (matching Task A's known fixture counts).
+            // Stale frontend node gone; fresh set present (matching Task A's known fixture counts,
+            // 2026-08-28: 8/7 after the resolveHttpWrapper fixture addition, httpAgent.ts).
             Assert.False(graph.ContainsNode(staleFrontendNode.Id));
-            Assert.Equal(5, graph.Nodes.Count(n => n.Kind == NodeKind.FrontendCallSite));
-            Assert.Equal(6, graph.Nodes.Count(n => n.Kind == NodeKind.UnresolvedCallSite));
-            Assert.Equal(1 + 5 + 6, graph.NodeCount);
+            Assert.Equal(8, graph.Nodes.Count(n => n.Kind == NodeKind.FrontendCallSite));
+            Assert.Equal(7, graph.Nodes.Count(n => n.Kind == NodeKind.UnresolvedCallSite));
+            Assert.Equal(1 + 8 + 7, graph.NodeCount);
         }
         finally
         {

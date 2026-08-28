@@ -149,6 +149,86 @@ public sealed class CrossStackLinkerTests
         Assert.Empty(result.Endpoints);
     }
 
+    // ── v0.13.0: absolute-URL call sites (reports/ts-http-wrapper-resolution-report.md's
+    // follow-up finding — resolveHttpWrapper can now resolve a template like
+    // `https://host/api/x`, which the linker previously could never match at all) ──────────
+
+    [Fact]
+    public void AbsoluteUrl_CallSite_LinksToARelativeEndpoint_HostStrippedForMatching()
+    {
+        // The exact regression the follow-up asked for: an absolute-URL call site MUST link to
+        // its relative backend endpoint.
+        var endpoint = Endpoint("GET", "/api/articles/{slug}");
+        var callSite = CallSite("GET", "https://conduit.productionready.io/api/articles/{*}");
+
+        var result = LinkSingle(callSite, endpoint);
+
+        Assert.Equal(CallSiteLinkOutcome.Unique, result.Outcome);
+        Assert.Equal([endpoint], result.Endpoints);
+        Assert.Equal("conduit.productionready.io", result.Host);
+    }
+
+    [Fact]
+    public void AbsoluteUrl_CallSite_DoesNotGetTheBasePathPrefixAppliedToIt()
+    {
+        // An absolute URL already specifies its own root -- prepending the assumed "/api" base
+        // path the way a bare relative call site would get is wrong for an absolute URL (it
+        // would have to match "/api/api/articles", which the real endpoint never registers).
+        var endpoint = Endpoint("GET", "/api/articles");
+        var callSite = CallSite("GET", "https://conduit.productionready.io/articles");
+
+        var result = LinkSingle(callSite, endpoint);
+
+        // The call site's OWN path is "/articles" (no /api) -- matching it against the
+        // "/api"-prefixed endpoint fails, exactly as a relative "/articles" call site would if
+        // basePathPrefix weren't applied. This proves the base-path dance is skipped, not
+        // silently double-applied to produce a false match.
+        Assert.Equal(CallSiteLinkOutcome.NoSkeletonMatch, result.Outcome);
+    }
+
+    [Fact]
+    public void AbsoluteUrl_GenuinelyExternalHost_StillLinksByPath_ButCarriesItsHostVisibly()
+    {
+        // A call site that happens to hit a COMPLETELY different, external API (not this
+        // backend at all) -- the linker has no way to know "which host is the real backend", so
+        // it links purely structurally by path, and the mismatched host is surfaced on the
+        // result rather than silently hidden, so a human can notice something is off.
+        var endpoint = Endpoint("POST", "/api/charges");
+        var callSite = CallSite("POST", "https://api.totally-unrelated-payments.example/api/charges");
+
+        var result = LinkSingle(callSite, endpoint);
+
+        Assert.Equal(CallSiteLinkOutcome.Unique, result.Outcome);
+        Assert.Equal([endpoint], result.Endpoints);
+        Assert.Equal("api.totally-unrelated-payments.example", result.Host);
+    }
+
+    [Fact]
+    public void AbsoluteUrl_AmbiguousHost_EmptyHost_NeverGuessed_NotLinkedToAnything()
+    {
+        var endpoint = Endpoint("GET", "/api/vendors");
+        var callSite = CallSite("GET", "https:///api/vendors"); // empty host
+
+        var result = LinkSingle(callSite, endpoint);
+
+        Assert.Equal(CallSiteLinkOutcome.AmbiguousHost, result.Outcome);
+        Assert.Empty(result.Endpoints);
+        Assert.Null(result.Host);
+        Assert.NotNull(result.AmbiguityReason);
+    }
+
+    [Fact]
+    public void AbsoluteUrl_OrdinaryRelativeCallSite_HasNoHost_UnaffectedByThisFeature()
+    {
+        var endpoint = Endpoint("GET", "/api/vendors");
+        var callSite = CallSite("GET", "/vendors");
+
+        var result = LinkSingle(callSite, endpoint);
+
+        Assert.Equal(CallSiteLinkOutcome.Unique, result.Outcome);
+        Assert.Null(result.Host);
+    }
+
     [Fact]
     public void Link_IsIdempotent_SameGraphTwiceProducesIdenticalResults()
     {

@@ -431,9 +431,13 @@ linkCommand.SetAction(async (parseResult, cancellationToken) =>
     int noMatch = byOutcome[CallSiteLinkOutcome.NoSkeletonMatch].Count();
     int verbMismatch = byOutcome[CallSiteLinkOutcome.VerbMismatch].Count();
     int unknownVerb = byOutcome[CallSiteLinkOutcome.UnknownVerb].Count();
+    int ambiguousHost = byOutcome[CallSiteLinkOutcome.AmbiguousHost].Count();
     int linked = unique + precedence + setEdge;
-    int disclosed = noMatch + verbMismatch + unknownVerb;
+    int disclosed = noMatch + verbMismatch + unknownVerb + ambiguousHost;
     int prefixAmbiguous = byOutcome[CallSiteLinkOutcome.SetEdge].Count(static r => r.AmbiguityReason is not null);
+    // v0.13.0: call sites resolved to an absolute URL (Host set regardless of link outcome — the
+    // "carry its host visibly" disclosure, CallSiteLinkResult.Host's own doc comment).
+    int withHost = results.Count(static r => r.Host is not null);
 
     var meta = new Dictionary<string, string>(existingMeta, StringComparer.Ordinal)
     {
@@ -458,19 +462,29 @@ linkCommand.SetAction(async (parseResult, cancellationToken) =>
     string unknownVerbSuffix = unknownVerb > 0
         ? pal.Label(", ") + pal.Number(unknownVerb.ToString(CultureInfo.InvariantCulture)) + pal.Label(" unknown verb")
         : string.Empty;
+    string ambiguousHostSuffix = ambiguousHost > 0
+        ? pal.Label(", ") + pal.Warn(ambiguousHost.ToString(CultureInfo.InvariantCulture)) + pal.Label(" ambiguous host")
+        : string.Empty;
     Console.WriteLine(
         pal.Label("Disclosed: ")
         + (disclosed == 0 ? pal.Success("0") : pal.Warn(disclosed.ToString(CultureInfo.InvariantCulture)))
         + pal.Label(" (")
         + pal.Number(noMatch.ToString(CultureInfo.InvariantCulture)) + pal.Label(" no match, ")
         + pal.Number(verbMismatch.ToString(CultureInfo.InvariantCulture)) + pal.Label(" verb mismatch")
-        + unknownVerbSuffix + pal.Label(")"));
+        + unknownVerbSuffix + ambiguousHostSuffix + pal.Label(")"));
+    if (withHost > 0)
+    {
+        Console.WriteLine(
+            pal.Label("Hosts:     ")
+            + pal.Number(withHost.ToString(CultureInfo.InvariantCulture))
+            + pal.Label(" call site(s) resolved to an absolute URL — matched by path only; run with --verbose or 'list_frontend_callsites' to see each host"));
+    }
 
     if (verbose)
     {
         foreach (var result in results
             .Where(static r => r.Outcome is CallSiteLinkOutcome.NoSkeletonMatch or CallSiteLinkOutcome.VerbMismatch or CallSiteLinkOutcome.UnknownVerb
-                || r.AmbiguityReason is not null)
+                || r.AmbiguityReason is not null || r.Host is not null)
             .OrderBy(static r => r.CallSite.Fqn, StringComparer.Ordinal))
         {
             string callSiteVerb = result.CallSite.Fqn[..result.CallSite.Fqn.IndexOf(' ', StringComparison.Ordinal)];
@@ -478,7 +492,8 @@ linkCommand.SetAction(async (parseResult, cancellationToken) =>
                 ? $" — no {callSiteVerb} registered; " + string.Join(", ", result.ConflictingVerbEndpoints.Select(static e => e.Fqn)) + " exists"
                 : string.Empty;
             string ambiguityNote = result.AmbiguityReason is { } reason ? $" — {reason}" : string.Empty;
-            Console.WriteLine(pal.Label($"  {result.CallSite.Fqn} — {result.Outcome}{conflictNote}{ambiguityNote}"));
+            string hostNote = result.Host is { } host ? $" [host: {host}]" : string.Empty;
+            Console.WriteLine(pal.Label($"  {result.CallSite.Fqn} — {result.Outcome}{conflictNote}{ambiguityNote}{hostNote}"));
         }
     }
 
@@ -965,7 +980,7 @@ static string CurrentVersion() =>
 /// two today (they live in different toolchains); a version bump on one side without the other
 /// is a real drift risk worth a manual note in the release checklist.
 /// </summary>
-static string PinnedSlnmapTsVersion() => "0.2.2";
+static string PinnedSlnmapTsVersion() => "0.3.0";
 
 /// <summary>Whether `node` is reachable at all — a simple `node --version` probe, 5s ceiling.</summary>
 static async Task<bool> IsNodeAvailableAsync(CancellationToken cancellationToken)

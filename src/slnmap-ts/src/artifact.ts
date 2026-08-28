@@ -2,7 +2,7 @@ import type { CallSiteRecord, ExtractionArtifact } from './types.js';
 
 /** Bump alongside package.json's version; kept separate so the emitted artifact records exactly
  * which extractor build produced it even if the schema itself hasn't changed. */
-const PRODUCER_VERSION = '0.2.2';
+const PRODUCER_VERSION = '0.3.0';
 
 export function buildArtifact(tsconfigRelative: string, callSites: CallSiteRecord[]): ExtractionArtifact {
   const resolvedCount = callSites.filter((c) => c.kind === 'FrontendCallSite').length;

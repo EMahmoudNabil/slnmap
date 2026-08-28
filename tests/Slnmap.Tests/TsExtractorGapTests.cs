@@ -45,8 +45,11 @@ public sealed class TsExtractorGapTests
 
         await using var store = new SqliteGraphStore(db);
         var graph = await store.LoadGraphAsync();
-        Assert.Equal(5, graph.Nodes.Count(n => n.Kind == NodeKind.FrontendCallSite));
-        Assert.Equal(6, graph.Nodes.Count(n => n.Kind == NodeKind.UnresolvedCallSite));
+        // 2026-08-28: +3 resolved / +1 unresolved from src/services/httpAgent.ts, the
+        // resolveHttpWrapper fixture (a `requests.<verb>` wrapper modeled on the real
+        // gothinkster/react-redux-realworld-example-app agent.js shape).
+        Assert.Equal(8, graph.Nodes.Count(n => n.Kind == NodeKind.FrontendCallSite));
+        Assert.Equal(7, graph.Nodes.Count(n => n.Kind == NodeKind.UnresolvedCallSite));
     }
 
     [Fact]

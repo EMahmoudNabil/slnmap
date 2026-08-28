@@ -17,18 +17,91 @@ internal static partial class RouteTemplate
     [GeneratedRegex(@"/{2,}")]
     private static partial Regex MultipleSlashes();
 
+    /// <summary>Anchor-only check: does <c>route</c> START with a <c>scheme://</c> prefix at all?
+    /// Deliberately narrower than "contains '://' anywhere" — a perfectly ordinary relative call
+    /// site can carry an embedded absolute URL inside its OWN query string (e.g.
+    /// <c>/redirect?to=http://evil.com</c>); that must normalize exactly as it always has, not get
+    /// diverted into absolute-URL handling. Only a string that itself BEGINS with a scheme is a
+    /// candidate at all.</summary>
+    [GeneratedRegex(@"^[a-zA-Z][a-zA-Z0-9+.\-]*://")]
+    private static partial Regex AbsoluteUrlPrefix();
+
+    /// <summary>The full split: scheme + non-empty host (stops at the first <c>/</c>, <c>?</c>, or
+    /// <c>#</c>) + everything after. A route whose host would be empty (<c>https:///foo</c>) does
+    /// NOT match this — see <see cref="TrySplitAbsoluteUrl"/>.</summary>
+    [GeneratedRegex(@"^[a-zA-Z][a-zA-Z0-9+.\-]*://(?<host>[^/?#]+)(?<rest>[/?#].*)?$")]
+    private static partial Regex AbsoluteUrl();
+
     /// <summary>
-    /// Normalizes a route or template to its comparable skeleton: query string and hash fragment
-    /// stripped, case-folded, every <c>{...}</c> hole collapsed to <c>{x}</c>, duplicate slashes
-    /// collapsed, leading/trailing slashes trimmed. The root route normalizes to "".
-    /// (Constraints with braces of their own, e.g. <c>{id:regex(^\d{3}$)}</c>, are not supported —
-    /// no such constraint has appeared in the field; only <c>:int</c> has.)
+    /// Outcome of <see cref="TrySplitAbsoluteUrl"/>: whether <c>route</c> is an ordinary relative
+    /// path/template (the overwhelming majority — including every backend <see
+    /// cref="Slnmap.Core.Graph.NodeKind.Endpoint"/> template, which is never absolute), a
+    /// cleanly-split absolute URL, or one that LOOKS like an attempted absolute URL (starts with
+    /// <c>scheme://</c>) but whose host could not be cleanly isolated (e.g. an empty host).
+    /// </summary>
+    public enum AbsoluteUrlSplitResult
+    {
+        NotAbsolute,
+        Clean,
+        Ambiguous,
+    }
+
+    /// <summary>
+    /// Splits a resolved frontend call-site template into its host (when it is a well-formed
+    /// absolute URL — the real-world `API_ROOT = 'https://host/api'` shape, v0.13.0) and the
+    /// path-and-rest remainder that skeleton-matching should actually operate on. Never guesses:
+    /// an ordinary relative path is untouched (<see cref="AbsoluteUrlSplitResult.NotAbsolute"/>,
+    /// <paramref name="pathAndRest"/> echoes <paramref name="route"/> verbatim), and a string that
+    /// only LOOKS absolute (starts with <c>scheme://</c>) but has an empty or otherwise
+    /// unparseable host is reported as <see cref="AbsoluteUrlSplitResult.Ambiguous"/> rather than
+    /// silently guessed at either way — <paramref name="host"/> is null and <paramref
+    /// name="pathAndRest"/> echoes the original string in that case too, so a caller that ignores
+    /// the return value still gets the previous (pre-this-feature) behavior, not a crash or blank.
+    /// </summary>
+    public static AbsoluteUrlSplitResult TrySplitAbsoluteUrl(string? route, out string? host, out string pathAndRest)
+    {
+        host = null;
+        pathAndRest = route ?? string.Empty;
+        if (string.IsNullOrEmpty(route) || !AbsoluteUrlPrefix().IsMatch(route))
+        {
+            return AbsoluteUrlSplitResult.NotAbsolute;
+        }
+
+        var match = AbsoluteUrl().Match(route);
+        if (!match.Success || match.Groups["host"].Value.Contains("://", StringComparison.Ordinal))
+        {
+            // Starts with a scheme-shaped prefix but the host segment is empty (`https:///foo`)
+            // or itself contains another `://` (a pathologically-nested case the permissive
+            // `[^/?#]+` host class would otherwise silently swallow) — a genuine "looks like a
+            // URL but isn't cleanly one" case, not a guess either way.
+            return AbsoluteUrlSplitResult.Ambiguous;
+        }
+
+        host = match.Groups["host"].Value;
+        pathAndRest = match.Groups["rest"].Success ? match.Groups["rest"].Value : string.Empty;
+        return AbsoluteUrlSplitResult.Clean;
+    }
+
+    /// <summary>
+    /// Normalizes a route or template to its comparable skeleton: a leading <c>scheme://host</c>
+    /// stripped first when cleanly separable (v0.13.0 — see <see cref="TrySplitAbsoluteUrl"/>;
+    /// callers that need the host itself, e.g. <see cref="CrossStackLinker"/>, call that directly
+    /// — this method's contract stays "string in, comparable skeleton string out"), then query
+    /// string and hash fragment stripped, case-folded, every <c>{...}</c> hole collapsed to
+    /// <c>{x}</c>, duplicate slashes collapsed, leading/trailing slashes trimmed. The root route
+    /// normalizes to "". (Constraints with braces of their own, e.g. <c>{id:regex(^\d{3}$)}</c>,
+    /// are not supported — no such constraint has appeared in the field; only <c>:int</c> has.)
     /// </summary>
     public static string Normalize(string route)
     {
         if (string.IsNullOrWhiteSpace(route))
         {
             return string.Empty;
+        }
+
+        if (TrySplitAbsoluteUrl(route, out _, out string pathOnly) == AbsoluteUrlSplitResult.Clean)
+        {
+            route = pathOnly;
         }
 
         int query = route.IndexOf('?', StringComparison.Ordinal);

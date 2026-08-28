@@ -41,6 +41,15 @@ public enum CallSiteLinkOutcome
     /// `resolveFetchVerb`). Never guessed as GET or as whatever verb happens to skeleton-match.
     /// </summary>
     UnknownVerb,
+
+    /// <summary>
+    /// v0.13.0: the call site's own template starts with a <c>scheme://</c> prefix (an absolute
+    /// URL — the real-world <c>API_ROOT = 'https://host/api'</c> shape) but <see
+    /// cref="RouteTemplate.TrySplitAbsoluteUrl"/> could not cleanly isolate its host (e.g. an
+    /// empty host, <c>https:///foo</c>). Never guessed at either way — not matched against any
+    /// endpoint, disclosed via <see cref="CallSiteLinkResult.AmbiguityReason"/> instead.
+    /// </summary>
+    AmbiguousHost,
 }
 
 /// <summary>
@@ -54,13 +63,20 @@ public enum CallSiteLinkOutcome
 /// path AND its base-path-prefixed path both independently matched a real endpoint" from
 /// genuine runtime fan-out/irreducible ambiguity, which leaves this null. Null for every other
 /// outcome, including the ordinary SetEdge case.
+/// <paramref name="Host"/> is populated (v0.13.0) whenever the call site's own template was a
+/// well-formed absolute URL — regardless of match outcome, and regardless of whether that host
+/// has anything to do with the analyzed backend. A call site to a genuinely different, external
+/// API still links purely by path when its path skeleton-matches; the host is carried here so a
+/// human can see it was external, not silently hidden. Null for every ordinary relative-path call
+/// site (the overwhelming majority).
 /// </summary>
 public sealed record CallSiteLinkResult(
     SymbolNode CallSite,
     CallSiteLinkOutcome Outcome,
     IReadOnlyList<SymbolNode> Endpoints,
     IReadOnlyList<SymbolNode> ConflictingVerbEndpoints,
-    string? AmbiguityReason = null);
+    string? AmbiguityReason = null,
+    string? Host = null);
 
 /// <summary>
 /// Phase 3: joins <see cref="NodeKind.FrontendCallSite"/> nodes to <see cref="NodeKind.Endpoint"/>
@@ -146,6 +162,31 @@ public static class CrossStackLinker
             return new CallSiteLinkResult(callSite, CallSiteLinkOutcome.UnknownVerb, [], []);
         }
 
+        // v0.13.0: an absolute-URL call site (`https://host/api/orders`) is handled entirely
+        // separately from the base-path-prefix dance below — it already specifies its own root,
+        // so prepending an ASSUMED base path to a fully-qualified URL makes no sense the way it
+        // does for a bare relative path. Matched by PATH ONLY; the host is carried on the result
+        // regardless of match outcome (CallSiteLinkResult.Host's own doc comment) so a call site
+        // that genuinely hits a different, external API still links by path but stays visibly
+        // external, never silently treated as if it were this backend's own host.
+        var split = RouteTemplate.TrySplitAbsoluteUrl(callSite.Name, out string? host, out string pathOnly);
+        if (split == RouteTemplate.AbsoluteUrlSplitResult.Ambiguous)
+        {
+            return new CallSiteLinkResult(
+                callSite, CallSiteLinkOutcome.AmbiguousHost, [], [],
+                AmbiguityReason: $"'{callSite.Name}' starts with a scheme (looks like an absolute URL) but its host could not be cleanly separated from its path — not matched against any endpoint");
+        }
+
+        if (split == RouteTemplate.AbsoluteUrlSplitResult.Clean)
+        {
+            string absoluteSkeleton = RouteTemplate.Normalize(pathOnly);
+            var sameVerbMatches = MatchSameVerb(endpoints, verb, absoluteSkeleton);
+            var result = sameVerbMatches.Count > 0
+                ? ResolveForSkeleton(callSite, absoluteSkeleton, sameVerbMatches)
+                : NoMatchResult(callSite, absoluteSkeleton, endpoints);
+            return result with { Host = host };
+        }
+
         string rawSkeleton = RouteTemplate.Normalize(callSite.Name);
         string prefixedSkeleton = RouteTemplate.Normalize(basePathPrefix + callSite.Name);
         bool singleCandidate = rawSkeleton == prefixedSkeleton;
@@ -186,6 +227,16 @@ public static class CrossStackLinker
                 .ToList();
         }
 
+        var outcome = otherVerbMatches.Count > 0 ? CallSiteLinkOutcome.VerbMismatch : CallSiteLinkOutcome.NoSkeletonMatch;
+        return new CallSiteLinkResult(callSite, outcome, [], otherVerbMatches);
+    }
+
+    /// <summary>The single-candidate-skeleton "nothing matched at this verb" tail — used only by
+    /// the absolute-URL path above, which (unlike the dual raw/prefixed-candidate path below it)
+    /// has exactly one skeleton to check other verbs against.</summary>
+    private static CallSiteLinkResult NoMatchResult(SymbolNode callSite, string skeleton, IReadOnlyList<SymbolNode> endpoints)
+    {
+        var otherVerbMatches = MatchAnyVerb(endpoints, skeleton);
         var outcome = otherVerbMatches.Count > 0 ? CallSiteLinkOutcome.VerbMismatch : CallSiteLinkOutcome.NoSkeletonMatch;
         return new CallSiteLinkResult(callSite, outcome, [], otherVerbMatches);
     }

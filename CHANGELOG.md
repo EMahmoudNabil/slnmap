@@ -2,6 +2,78 @@
 
 All notable changes to Slnmap are documented here. Versions follow [SemVer](https://semver.org).
 
+## 0.13.0
+
+### Fixed
+
+- **slnmap-ts 0.3.0: a verb-named call through a locally-declared wrapper function was always
+  reported `unrecognized-callee`**, even when the wrapper cleanly forwarded its own parameter into
+  a real HTTP client call one level down (``requests.get: url => superagent.get(`${API_ROOT}${url}`)``)
+  — the dominant real-world shape for any non-toy React codebase, and arguably more common than
+  calling `fetch`/`axios` inline at every call site. Confirmed against
+  `gothinkster/react-redux-realworld-example-app`'s actual, unmodified `agent.js`: **0/22 real
+  call sites resolved before this fix.** `resolveHttpWrapper` (detection.ts) now traces exactly
+  one level of such indirection, but only when it can be proven safe: the wrapper is const-rooted,
+  its body is a single clean forwarding expression (no branches, no reassignment), and its own
+  parameter is provably referenced inside the recognized inner call's URL argument
+  (`fetch`/`axios.*`/an `axios.create()` instance/a bare `axios` or `superagent` import, including
+  the real-world `superagent-promise` promisification wrapper). Anything less clear-cut — a
+  branch, an unrelated URL, a destructured parameter, no parameter forwarding at all — still falls
+  back to the existing disclosed `unrecognized-callee`, never a guess. **After: 22/22 resolved,
+  100% coverage**, verified via `git stash` before/after on the identical checkout, through the
+  real `slnmap analyze-ts` CLI.
+- **slnmap-ts 0.3.0: a wrapper's own internal HTTP-client call was independently double-counted as
+  a spurious second call site** — found while building the fix above. The whole-file walk visits
+  every call expression in a source file, including the ones living inside a wrapper's own
+  implementation; without care, the `superagent.get(...)` call inside `requests.get`'s own body
+  got classified on its own terms too (its bare parameter never resolves alone), producing an
+  unrelated extra `unrecognized-callee`/`runtime-computed-segment` record for what is really
+  wrapper-internal plumbing. Fixed with an upfront discovery pass
+  (`collectWrapperInternalCalls`) that identifies every confirmed wrapper's inner call and
+  excludes it from independent classification.
+- **The cross-stack linker never recognized an absolute-URL call-site template**, so a resolved
+  frontend call site built from an `API_ROOT`-style base URL (`https://host/api/...` — the real
+  `gothinkster/react-redux-realworld-example-app` shape, resolvable at all only once slnmap-ts
+  0.3.0's fix above lands) could never link to a relative backend endpoint.
+  `RouteTemplate.Normalize` collapsed a leading `//` to `/` but never recognized or stripped the
+  `scheme://host` prefix ahead of it, leaving a segment-count mismatch `RouteTemplate.Matches` always rejects
+  before any string comparison happens. Fixed: `RouteTemplate.TrySplitAbsoluteUrl` cleanly
+  separates `scheme://host` from the path — anchored to strings that START with a scheme, so an
+  ordinary relative call site that happens to carry an embedded absolute URL inside its OWN query
+  string (`fetch('/redirect?to=' + encodeURIComponent(url))`) is completely unaffected, verified
+  with an explicit regression test. An absolute-URL call site is now matched by path only (no
+  base-path-prefix guessing — an absolute URL already specifies its own root). A host that can't
+  be cleanly isolated (an empty host, `https:///foo`) is disclosed via a new outcome rather than
+  guessed at either way.
+
+### Added
+
+- **`CallSiteLinkResult` now carries `Host`** — populated whenever a call site's template is a
+  well-formed absolute URL, regardless of link outcome. A call site to a genuinely different,
+  external API still links purely by path when its path skeleton-matches; its (mismatched) host
+  is surfaced rather than silently hidden — visible in `slnmap link --verbose`'s per-call-site
+  lines, the `find_orphan_calls` MCP tool (new `ambiguous-host` category), and
+  `list_frontend_callsites`'s `[host: ...]` annotation.
+
+### Verified
+
+- The absolute-URL fix confirmed against the real corpus: all 22 resolved call-site templates
+  from `gothinkster/react-redux-realworld-example-app`'s actual `agent.js` (slnmap-ts 0.3.0) link
+  (22/22, all carrying `Host`) against a synthetic endpoint set built from their own paths. The
+  real backend (`gothinkster/aspnetcore-realworld-example-app`) still cannot be built in this
+  environment (pins .NET SDK 10.0.302; a pre-existing, independently-reproduced constraint,
+  unrelated to this fix) — the real end-to-end `analyze` → `analyze-ts` → `link` chain against the
+  true backend remains unverified pending that SDK becoming available.
+
+### Notes
+
+- **slnmap-ts 0.3.0: only one level of wrapper indirection is traced** — a wrapper calling a
+  wrapper calling a wrapper is not resolved (falls back to `unrecognized-callee`, same as before
+  this release), a known and declared limitation, not attempted here.
+- **Protocol-relative URLs (`//host/path`, no explicit scheme) are not recognized as absolute** by
+  the linker fix above — only an explicit `scheme://` prefix is detected. Not observed in the real
+  corpus checked so far.
+
 ## 0.12.3
 
 ### Fixed

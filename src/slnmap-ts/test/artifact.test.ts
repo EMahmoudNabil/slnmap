@@ -44,5 +44,12 @@ test('the 5 resolved templates match RouteTemplateCrossStackSpecTests.cs\'s orac
   assert.ok(byTemplate.has('POST /TaskCenter/{*}/{*}/reminder'), 'Pair 3 (Case B fan-out)');
   assert.ok(byTemplate.has('GET /UserProfiles/current'), 'Pair 4 (param-vs-literal siblings)');
   assert.ok(byTemplate.has('POST /organizationusers'), 'Pair 5 (the dangling bug)');
-  assert.equal(resolved.length, 5);
+  // 2026-08-28: +3 resolved via resolveHttpWrapper (detection.ts) — src/services/httpAgent.ts's
+  // `requests.<verb>` wrapper, modeled on the real gothinkster/react-redux-realworld-example-app
+  // `agent.js` shape that made every one of that repo's 22 frontend call sites unresolvable
+  // before this resolution path existed.
+  assert.ok(byTemplate.has('GET https://conduit.productionready.io/api/articles?limit=10&offset={*}'), 'httpAgent wrapper: GET');
+  assert.ok(byTemplate.has('POST https://conduit.productionready.io/api/articles/{*}/favorite'), 'httpAgent wrapper: POST');
+  assert.ok(byTemplate.has('DELETE https://conduit.productionready.io/api/articles/{*}/favorite'), 'httpAgent wrapper: DELETE');
+  assert.equal(resolved.length, 8);
 });

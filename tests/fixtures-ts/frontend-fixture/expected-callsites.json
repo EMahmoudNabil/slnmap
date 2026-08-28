@@ -1,20 +1,20 @@
 {
   "schemaVersion": 2,
   "producer": "slnmap-ts",
-  "producerVersion": "0.2.2",
+  "producerVersion": "0.3.0",
   "project": {
     "root": ".",
     "tsconfig": "tsconfig.json"
   },
   "stats": {
-    "resolvedCount": 5,
-    "unresolvedCount": 6,
-    "coveragePercent": 45.5,
+    "resolvedCount": 8,
+    "unresolvedCount": 7,
+    "coveragePercent": 53.3,
     "byCategory": {
       "dynamic-base-url": 1,
       "string-concatenation": 1,
       "non-constant-identifier": 1,
-      "unrecognized-callee": 1,
+      "unrecognized-callee": 2,
       "dynamic-import-or-indirection": 1,
       "resolution-depth-exceeded": 1
     }
@@ -140,6 +140,50 @@
       "column": 10,
       "spanStart": 3038,
       "spanEnd": 3060
+    },
+    {
+      "kind": "FrontendCallSite",
+      "verb": "GET",
+      "template": "https://conduit.productionready.io/api/articles?limit=10&offset={*}",
+      "resolutionTier": "template-param-holes",
+      "file": "src/services/httpAgent.ts",
+      "line": 38,
+      "column": 26,
+      "spanStart": 2014,
+      "spanEnd": 2063
+    },
+    {
+      "kind": "FrontendCallSite",
+      "verb": "POST",
+      "template": "https://conduit.productionready.io/api/articles/{*}/favorite",
+      "resolutionTier": "template-param-holes",
+      "file": "src/services/httpAgent.ts",
+      "line": 39,
+      "column": 31,
+      "spanStart": 2095,
+      "spanEnd": 2142
+    },
+    {
+      "kind": "FrontendCallSite",
+      "verb": "DELETE",
+      "template": "https://conduit.productionready.io/api/articles/{*}/favorite",
+      "resolutionTier": "template-param-holes",
+      "file": "src/services/httpAgent.ts",
+      "line": 40,
+      "column": 33,
+      "spanStart": 2176,
+      "spanEnd": 2218
+    },
+    {
+      "kind": "UnresolvedCallSite",
+      "verb": "GET",
+      "category": "unrecognized-callee",
+      "reason": "receiver 'inconsistentRequests' does not resolve to a known HTTP client (an axios.create() instance)",
+      "file": "src/services/httpAgent.ts",
+      "line": 44,
+      "column": 10,
+      "spanStart": 2265,
+      "spanEnd": 2300
     }
   ]
 }
