@@ -30,10 +30,14 @@ jobs:
           npm ci
           npm run build
 
-      - name: Warm the npx cache for slnmap-ts (avoids a concurrent cold-install race)
-        # See ci.yml for the full incident writeup — same fix, same reason, needed here too
-        # since this is a separate workflow that also runs `dotnet test`.
-        run: npx --yes --package=slnmap-ts@0.2.1 slnmap-ts --version || true
+      - name: Link slnmap-ts onto PATH (v0.13.0 CI fix)
+        # See ci.yml for the full writeup. Also fixes the specific circularity a NuGet-before-npm
+        # release order otherwise hits: this workflow's own Test step would need the tag's
+        # slnmap-ts version already live on npm, which is exactly what "NuGet first" defers.
+        # Linking THIS build onto PATH means the release's own tests never depend on the
+        # registry at all.
+        working-directory: src/slnmap-ts
+        run: npm link
 
       - name: Derive version from tag
         id: version
