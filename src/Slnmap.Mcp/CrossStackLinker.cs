@@ -69,6 +69,11 @@ public enum CallSiteLinkOutcome
 /// API still links purely by path when its path skeleton-matches; the host is carried here so a
 /// human can see it was external, not silently hidden. Null for every ordinary relative-path call
 /// site (the overwhelming majority).
+/// <paramref name="ViaPrefixStripped"/> is true (v0.13.1) only when an absolute-URL call site
+/// linked via the base-path-STRIPPED fallback candidate (§LinkOne) rather than its own literal
+/// path as-is — an INFERRED link, not a literal one, and must never render identically to a
+/// literal match (reports/v0130-regression-investigation-0of22-realworld.md, fix A). False for
+/// every other outcome, including a literal absolute-URL match and every relative-path outcome.
 /// </summary>
 public sealed record CallSiteLinkResult(
     SymbolNode CallSite,
@@ -76,7 +81,8 @@ public sealed record CallSiteLinkResult(
     IReadOnlyList<SymbolNode> Endpoints,
     IReadOnlyList<SymbolNode> ConflictingVerbEndpoints,
     string? AmbiguityReason = null,
-    string? Host = null);
+    string? Host = null,
+    bool ViaPrefixStripped = false);
 
 /// <summary>
 /// Phase 3: joins <see cref="NodeKind.FrontendCallSite"/> nodes to <see cref="NodeKind.Endpoint"/>
@@ -179,12 +185,7 @@ public static class CrossStackLinker
 
         if (split == RouteTemplate.AbsoluteUrlSplitResult.Clean)
         {
-            string absoluteSkeleton = RouteTemplate.Normalize(pathOnly);
-            var sameVerbMatches = MatchSameVerb(endpoints, verb, absoluteSkeleton);
-            var result = sameVerbMatches.Count > 0
-                ? ResolveForSkeleton(callSite, absoluteSkeleton, sameVerbMatches)
-                : NoMatchResult(callSite, absoluteSkeleton, endpoints);
-            return result with { Host = host };
+            return LinkAbsoluteUrl(callSite, verb, host!, pathOnly, endpoints, basePathPrefix);
         }
 
         string rawSkeleton = RouteTemplate.Normalize(callSite.Name);
@@ -231,14 +232,98 @@ public static class CrossStackLinker
         return new CallSiteLinkResult(callSite, outcome, [], otherVerbMatches);
     }
 
-    /// <summary>The single-candidate-skeleton "nothing matched at this verb" tail — used only by
-    /// the absolute-URL path above, which (unlike the dual raw/prefixed-candidate path below it)
-    /// has exactly one skeleton to check other verbs against.</summary>
-    private static CallSiteLinkResult NoMatchResult(SymbolNode callSite, string skeleton, IReadOnlyList<SymbolNode> endpoints)
+    /// <summary>
+    /// v0.13.1 fix (reports/v0130-regression-investigation-0of22-realworld.md, fix A): an
+    /// absolute-URL call site's stripped path (`pathOnly`, host already removed) is matched
+    /// against endpoints AS-IS first — but real-world backends sometimes register routes WITHOUT
+    /// the base-path segment the frontend's own `API_ROOT` bakes in (e.g. an ASP.NET MVC
+    /// <c>IApplicationModelConvention</c> injects <c>/api</c> at runtime, invisible to static
+    /// endpoint extraction — confirmed against the real `gothinkster/aspnetcore-realworld-example-app`
+    /// + `react-redux-realworld-example-app` pair). A SECOND candidate — the same path with
+    /// <paramref name="basePathPrefix"/> stripped from its front, when present — is tried ONLY as
+    /// a sequential fallback: it is never preferred over a match the as-authored path already
+    /// found, and it is never silently substituted — a link made through it is always visibly
+    /// marked (<see cref="CallSiteLinkResult.ViaPrefixStripped"/>), never rendered like a literal
+    /// match. If BOTH the as-authored path and the stripped path independently match a real
+    /// endpoint, that is disclosed as a set-edge ambiguity (reusing the exact "prefix-ambiguous"
+    /// shape the relative-path add-prefix case already has, v0.12.3) rather than silently
+    /// preferring one. <paramref name="basePathPrefix"/> empty (`--base-path ""`) disables the
+    /// stripped candidate entirely — same "opt out of all base-path guessing" contract the
+    /// relative-path flow already honors.
+    /// </summary>
+    private static CallSiteLinkResult LinkAbsoluteUrl(
+        SymbolNode callSite, string verb, string host, string pathOnly, IReadOnlyList<SymbolNode> endpoints, string basePathPrefix)
     {
-        var otherVerbMatches = MatchAnyVerb(endpoints, skeleton);
+        string asAuthoredSkeleton = RouteTemplate.Normalize(pathOnly);
+        var asAuthoredMatches = MatchSameVerb(endpoints, verb, asAuthoredSkeleton);
+
+        string? strippedSkeleton = TryStripBasePathPrefix(asAuthoredSkeleton, basePathPrefix);
+        var strippedMatches = strippedSkeleton is not null
+            ? MatchSameVerb(endpoints, verb, strippedSkeleton)
+            : [];
+
+        if (strippedSkeleton is not null && asAuthoredMatches.Count > 0 && strippedMatches.Count > 0)
+        {
+            var combined = asAuthoredMatches.Concat(strippedMatches)
+                .GroupBy(e => e.Id, StringComparer.Ordinal)
+                .Select(g => g.First())
+                .OrderBy(e => e.Id, StringComparer.Ordinal)
+                .ToList();
+            return new CallSiteLinkResult(
+                callSite, CallSiteLinkOutcome.SetEdge, combined, [],
+                AmbiguityReason: $"prefix-ambiguous: '{callSite.Name}' matches an endpoint both as its own path and with the '{basePathPrefix}' prefix stripped — not resolved automatically",
+                Host: host);
+        }
+
+        if (asAuthoredMatches.Count > 0)
+        {
+            return ResolveForSkeleton(callSite, asAuthoredSkeleton, asAuthoredMatches) with { Host = host };
+        }
+
+        if (strippedMatches.Count > 0)
+        {
+            // Sequential fallback: only reached because asAuthoredMatches was empty above — never
+            // preferred over an as-authored match, always visibly marked as inferred.
+            return ResolveForSkeleton(callSite, strippedSkeleton!, strippedMatches) with { Host = host, ViaPrefixStripped = true };
+        }
+
+        var otherVerbMatches = MatchAnyVerb(endpoints, asAuthoredSkeleton);
+        if (strippedSkeleton is not null)
+        {
+            otherVerbMatches = otherVerbMatches
+                .Concat(MatchAnyVerb(endpoints, strippedSkeleton))
+                .GroupBy(e => e.Id, StringComparer.Ordinal)
+                .Select(g => g.First())
+                .OrderBy(e => e.Id, StringComparer.Ordinal)
+                .ToList();
+        }
+
         var outcome = otherVerbMatches.Count > 0 ? CallSiteLinkOutcome.VerbMismatch : CallSiteLinkOutcome.NoSkeletonMatch;
-        return new CallSiteLinkResult(callSite, outcome, [], otherVerbMatches);
+        return new CallSiteLinkResult(callSite, outcome, [], otherVerbMatches, Host: host);
+    }
+
+    /// <summary>
+    /// Segment-aware: returns <paramref name="skeleton"/> with the normalized
+    /// <paramref name="basePathPrefix"/> removed from its front, or null when the prefix is empty
+    /// (disables the fallback entirely) or <paramref name="skeleton"/> doesn't start with it at a
+    /// segment boundary — never a partial-word match (e.g. "apiary" must not strip as "api" +
+    /// "ary"). Root-only skeleton (`skeleton == normalizedPrefix` exactly) strips to "".
+    /// </summary>
+    private static string? TryStripBasePathPrefix(string skeleton, string basePathPrefix)
+    {
+        string normalizedPrefix = RouteTemplate.Normalize(basePathPrefix);
+        if (normalizedPrefix.Length == 0)
+        {
+            return null;
+        }
+
+        if (skeleton == normalizedPrefix)
+        {
+            return string.Empty;
+        }
+
+        string withSlash = normalizedPrefix + "/";
+        return skeleton.StartsWith(withSlash, StringComparison.Ordinal) ? skeleton[withSlash.Length..] : null;
     }
 
     private static List<SymbolNode> MatchSameVerb(IReadOnlyList<SymbolNode> endpoints, string verb, string skeleton) =>

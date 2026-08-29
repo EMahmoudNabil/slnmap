@@ -163,6 +163,7 @@ internal static class SolutionAnalysisEngine
         int unresolvedEndpoints = 0;
         int conventionalControllers = 0;
         int razorPagesNotModeled = 0;
+        int controllerLikeClassesUnrecognized = 0;
         foreach (var result in results)
         {
             foreach (var node in result.Nodes)
@@ -178,6 +179,7 @@ internal static class SolutionAnalysisEngine
             unresolvedEndpoints += result.UnresolvedEndpoints;
             conventionalControllers += result.ConventionalControllers;
             razorPagesNotModeled += result.RazorPagesNotModeled;
+            controllerLikeClassesUnrecognized += result.ControllerLikeClassesUnrecognized;
             foreach (var warning in result.Warnings)
             {
                 warningSink?.Invoke(warning);
@@ -195,7 +197,7 @@ internal static class SolutionAnalysisEngine
         var files = currentHashes.Select(static kv => new FileRecord(kv.Key, kv.Value)).ToList();
         var stats = new AnalysisStats(
             projects.Count, analyzedCount, candidateDocuments - totalDocuments, unresolvedEndpoints,
-            conventionalControllers, razorPagesNotModeled, razorFilesDetected);
+            conventionalControllers, razorPagesNotModeled, razorFilesDetected, controllerLikeClassesUnrecognized);
         return new AnalysisSnapshot(graph, files, stats);
     }
 

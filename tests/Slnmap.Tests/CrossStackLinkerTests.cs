@@ -229,6 +229,106 @@ public sealed class CrossStackLinkerTests
         Assert.Null(result.Host);
     }
 
+    // ── v0.13.1: strip-prefix fallback (reports/v0130-regression-investigation-0of22-realworld.md,
+    // fix A) — a real backend can register routes WITHOUT the base-path segment the frontend's
+    // absolute-URL base bakes in (an ASP.NET IApplicationModelConvention injecting it at
+    // runtime, invisible to static extraction) ─────────────────────────────────────────────
+
+    [Fact]
+    public void AbsoluteUrl_RealWorldShape_BackendMissingApiPrefix_LinksViaStrippedFallback_AndIsMarked()
+    {
+        // PERMANENT regression fixture: the exact real-world shape that was 0/22 before this fix.
+        // gothinkster/aspnetcore-realworld-example-app's controllers are attribute-routed WITHOUT
+        // "/api" ([Route("articles")]) — the prefix is injected at runtime by an
+        // IApplicationModelConvention, invisible to static endpoint extraction. The real
+        // frontend's API_ROOT bakes "/api" into every absolute URL it builds. Must never
+        // silently regress back to NoSkeletonMatch, and the link must be visibly marked as
+        // inferred — never identical to a literal match.
+        var endpoint = Endpoint("GET", "/articles/{slug}"); // as extracted: no /api prefix at all
+        var callSite = CallSite("GET", "https://conduit.productionready.io/api/articles/{*}");
+
+        var result = LinkSingle(callSite, endpoint);
+
+        Assert.Equal(CallSiteLinkOutcome.Unique, result.Outcome);
+        Assert.Equal([endpoint], result.Endpoints);
+        Assert.Equal("conduit.productionready.io", result.Host);
+        Assert.True(result.ViaPrefixStripped, "an inferred (prefix-stripped) link must never look identical to a literal one");
+    }
+
+    [Fact]
+    public void AbsoluteUrl_AsAuthoredMatchTakesPriority_StrippedFallbackNeverEvenConsidered()
+    {
+        // Sequential fallback, not parallel preference: when the call site's own (as-authored)
+        // path already matches a real endpoint, that is THE answer — literal, never marked as
+        // inferred — even if a stripped-prefix endpoint also happens to exist elsewhere for a
+        // DIFFERENT verb (which must not leak in as a false VerbMismatch/ambiguity either).
+        var asAuthoredEndpoint = Endpoint("GET", "/api/articles");
+        var callSite = CallSite("GET", "https://conduit.productionready.io/api/articles");
+
+        var result = LinkSingle(callSite, asAuthoredEndpoint);
+
+        Assert.Equal(CallSiteLinkOutcome.Unique, result.Outcome);
+        Assert.Equal([asAuthoredEndpoint], result.Endpoints);
+        Assert.False(result.ViaPrefixStripped, "a literal as-authored match must never be marked as inferred");
+    }
+
+    [Fact]
+    public void AbsoluteUrl_BothAsAuthoredAndStrippedCandidatesMatch_DisclosedAsAmbiguity_NeverAGuess()
+    {
+        // A real backend could register BOTH "/api/articles" (matching the call site's own path
+        // as-authored) AND "/articles" (matching the stripped fallback) — e.g. two separate route
+        // groups. Neither is silently preferred; disclosed via the same "prefix-ambiguous" shape
+        // the relative-path add-prefix case already uses (v0.12.3).
+        var withPrefixEndpoint = Endpoint("GET", "/api/articles");
+        var strippedEndpoint = Endpoint("GET", "/articles");
+        var callSite = CallSite("GET", "https://conduit.productionready.io/api/articles");
+
+        var result = LinkSingle(callSite, withPrefixEndpoint, strippedEndpoint);
+
+        Assert.Equal(CallSiteLinkOutcome.SetEdge, result.Outcome);
+        Assert.Equal(2, result.Endpoints.Count);
+        Assert.Contains(withPrefixEndpoint, result.Endpoints);
+        Assert.Contains(strippedEndpoint, result.Endpoints);
+        Assert.NotNull(result.AmbiguityReason);
+        Assert.Contains("prefix-ambiguous", result.AmbiguityReason, StringComparison.Ordinal);
+        Assert.False(result.ViaPrefixStripped, "the ambiguous case is disclosed via AmbiguityReason, not marked as a clean stripped-path link");
+    }
+
+    [Fact]
+    public void AbsoluteUrl_GenuinelyExternalUrl_NoMatchingLocalPathEitherCandidate_StaysNoSkeletonMatch()
+    {
+        // The strip-prefix fallback IS attempted (the call site's path starts with "/api"), but
+        // neither the as-authored nor the stripped candidate corresponds to anything registered
+        // locally — must not manufacture a false match out of nothing.
+        var endpoint = Endpoint("GET", "/articles");
+        var callSite = CallSite("GET", "https://api.stripe.com/api/v1/charges");
+
+        var result = LinkSingle(callSite, endpoint);
+
+        Assert.Equal(CallSiteLinkOutcome.NoSkeletonMatch, result.Outcome);
+        Assert.Empty(result.Endpoints);
+        Assert.Equal("api.stripe.com", result.Host);
+        Assert.False(result.ViaPrefixStripped);
+    }
+
+    [Fact]
+    public void AbsoluteUrl_StrippedFallback_Disabled_WhenBasePathPrefixIsEmpty()
+    {
+        // --base-path "" opts out of ALL base-path guessing -- must disable the strip fallback
+        // too, the same "opt out entirely" contract the relative-path add-prefix flow already
+        // honors.
+        var endpoint = Endpoint("GET", "/articles/{slug}");
+        var callSite = CallSite("GET", "https://conduit.productionready.io/api/articles/{*}");
+
+        var graph = new CodeGraph();
+        graph.AddNode(callSite);
+        graph.AddNode(endpoint);
+        var result = Assert.Single(CrossStackLinker.Link(graph, basePathPrefix: ""));
+
+        Assert.Equal(CallSiteLinkOutcome.NoSkeletonMatch, result.Outcome);
+        Assert.False(result.ViaPrefixStripped);
+    }
+
     [Fact]
     public void Link_IsIdempotent_SameGraphTwiceProducesIdenticalResults()
     {

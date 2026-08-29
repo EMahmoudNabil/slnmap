@@ -10,7 +10,8 @@ internal sealed record DocumentResult(
     IReadOnlyList<string> Warnings,
     int UnresolvedEndpoints,
     int ConventionalControllers,
-    int RazorPagesNotModeled);
+    int RazorPagesNotModeled,
+    int ControllerLikeClassesUnrecognized = 0);
 
 /// <summary>
 /// Extracts nodes and edges from a single document. Declarations produce nodes and
@@ -28,6 +29,7 @@ internal sealed class DocumentWalker
     private readonly List<string> _warnings = [];
     private readonly HashSet<INamedTypeSymbol> _conventionalControllers = new(SymbolEqualityComparer.Default);
     private readonly HashSet<INamedTypeSymbol> _razorPagesNotModeled = new(SymbolEqualityComparer.Default);
+    private readonly HashSet<INamedTypeSymbol> _controllerLikeUnrecognized = new(SymbolEqualityComparer.Default);
     private int _unresolvedEndpoints;
 
     private DocumentWalker(SemanticModel model, string projectNodeId, CancellationToken cancellationToken)
@@ -50,7 +52,8 @@ internal sealed class DocumentWalker
         walker.Visit(root);
         return new DocumentResult(
             walker._nodes, walker._edges, walker._warnings, walker._unresolvedEndpoints,
-            walker._conventionalControllers.Count, walker._razorPagesNotModeled.Count);
+            walker._conventionalControllers.Count, walker._razorPagesNotModeled.Count,
+            walker._controllerLikeUnrecognized.Count);
     }
 
     private void Visit(SyntaxNode root)
@@ -67,13 +70,25 @@ internal sealed class DocumentWalker
                     var declared = _model.GetDeclaredSymbol(method, _cancellationToken);
                     GetOrCreateNode(declared);
                     // Attribute-routed controller actions become Endpoint nodes (v1.1). Syntactic
-                    // prefilter: only classes that declare a base list can derive from
-                    // ControllerBase, so everything else pays zero semantic cost here.
-                    if (declared is IMethodSymbol methodSymbol
-                        && method.Parent is ClassDeclarationSyntax { BaseList: not null })
+                    // prefilter: a class with a base list MIGHT derive from ControllerBase, so
+                    // everything else pays zero semantic cost here — EXCEPT a class that looks
+                    // controller-ish on its own syntactic shape (v0.13.1: name ends in
+                    // "Controller", or an [ApiController]/[Route]/[Controller] attribute on the
+                    // class, or an [Http*] attribute on any member — all pure syntax, no semantic
+                    // model call, so still "free"). ASP.NET Core's real POCO-controller discovery
+                    // never required a base list at all (reports/v0131-poco-controller-investigation.md)
+                    // — `gothinkster/aspnetcore-realworld-example-app`'s actual UserController/
+                    // UsersController have none, and were invisible to this extractor entirely
+                    // before this widening.
+                    if (declared is IMethodSymbol methodSymbol && method.Parent is ClassDeclarationSyntax classDecl)
                     {
-                        HandleControllerAction(method, methodSymbol);
-                        HandleRazorPageHandler(methodSymbol);
+                        bool hasBaseList = classDecl.BaseList is not null;
+                        string? controllerishSignal = hasBaseList ? null : LooksControllerish(classDecl);
+                        if (hasBaseList || controllerishSignal is not null)
+                        {
+                            HandleControllerAction(method, methodSymbol, syntacticOnlySignal: controllerishSignal);
+                            HandleRazorPageHandler(methodSymbol);
+                        }
                     }
 
                     break;
@@ -199,6 +214,25 @@ internal sealed class DocumentWalker
             return;
         }
 
+        // v0.13.1 (reports/v0130-regression-investigation-0of22-realworld.md): a call shaped like
+        // `opt.Conventions.Add(someConvention)` registers an IApplicationModelConvention, which
+        // can mutate route templates at MVC application-model-build time (e.g. inject a base-path
+        // prefix) invisibly to static analysis — confirmed as the real root cause of a 0/22
+        // regression against gothinkster/aspnetcore-realworld-example-app's actual
+        // `ApiRoutePrefixConvention`. Cheap honesty only: recognized by the PARAMETER TYPE being
+        // (or implementing) `IApplicationModelConvention` — never by the receiver's variable name
+        // or declared type (`MvcOptions`, `RazorPagesOptions`, ... all expose the same
+        // `IList<IApplicationModelConvention> Conventions` shape) — no attempt is made to
+        // interpret what the convention actually does.
+        if (IsApplicationModelConventionsAdd(method))
+        {
+            _warnings.Add(
+                $"MvcOptions.Conventions.Add(...) at {Location(invocation)} registers an IApplicationModelConvention, "
+                + "which can mutate route templates at runtime (e.g. inject a base-path prefix) invisibly to static "
+                + "analysis — extracted controller endpoint templates may not reflect what the app actually serves. "
+                + "slnmap does not interpret convention implementations.");
+        }
+
         // Minimal-API endpoint registrations (Map* calls) would otherwise die at the external-target
         // early return below — the framework Map* is not in source. Handled additively, before the
         // un-reduction: EndpointFacts maps arguments to parameters on the symbol exactly as resolved.
@@ -229,6 +263,29 @@ internal sealed class DocumentWalker
             _edges.Add(new RelationshipEdge(source.Id, target.Id, RelationshipKind.Calls));
         }
     }
+
+    /// <summary>
+    /// True for a call to <c>Add</c> whose single parameter type IS (or implements)
+    /// <c>Microsoft.AspNetCore.Mvc.ApplicationModels.IApplicationModelConvention</c> — checked by
+    /// the parameter's real type, never the receiver's declared type or variable name, so this
+    /// recognizes <c>MvcOptions.Conventions.Add(...)</c>, <c>RazorPagesOptions.Conventions.Add(...)</c>,
+    /// and any equivalent <c>IList&lt;IApplicationModelConvention&gt;</c>-shaped collection alike.
+    /// </summary>
+    private static bool IsApplicationModelConventionsAdd(IMethodSymbol method)
+    {
+        if (method.Name != "Add" || method.Parameters.Length != 1)
+        {
+            return false;
+        }
+
+        return method.Parameters[0].Type is INamedTypeSymbol parameterType
+            && (IsApplicationModelConventionType(parameterType)
+                || parameterType.AllInterfaces.Any(IsApplicationModelConventionType));
+    }
+
+    private static bool IsApplicationModelConventionType(INamedTypeSymbol type) =>
+        type is { Name: "IApplicationModelConvention", ContainingNamespace: { } ns }
+        && ns.ToDisplayString() == "Microsoft.AspNetCore.Mvc.ApplicationModels";
 
     private void HandleObjectCreation(BaseObjectCreationExpressionSyntax creation)
     {
@@ -540,18 +597,85 @@ internal sealed class DocumentWalker
     }
 
     /// <summary>
+    /// Pure-syntax "looks controller-ish" check (v0.13.1) — never a semantic model call, so it
+    /// stays exactly as cheap as the base-list check it widens ("syntactic prefilter, free").
+    /// Returns a short human-readable description of the first matching signal (folded into the
+    /// eventual disclosure message if classification still fails), or null when none match.
+    /// Checked in the same priority order ASP.NET Core's own discovery favors: class name ending
+    /// in "Controller" first, then an [ApiController]/[Route]/[Controller] attribute on the class,
+    /// then an [Http*] attribute on any member (the weakest signal alone, but real: a class could
+    /// be attribute-routed without an ASP.NET-recognizable name/attribute combo on the class
+    /// itself). Verified zero false positives on OSSUS_BE.sln (0 matches across all three signals
+    /// — reports/v0131-poco-controller-investigation.md) and against every existing fixture.
+    /// </summary>
+    private static string? LooksControllerish(ClassDeclarationSyntax classDecl)
+    {
+        if (classDecl.Identifier.ValueText.EndsWith("Controller", StringComparison.OrdinalIgnoreCase))
+        {
+            return "name ends in \"Controller\"";
+        }
+
+        if (HasAnyAttributeNamed(classDecl.AttributeLists, "ApiController", "Route", "Controller"))
+        {
+            return "has an [ApiController]/[Route]/[Controller] attribute";
+        }
+
+        if (classDecl.Members.OfType<MethodDeclarationSyntax>().Any(m =>
+            HasAnyAttributeNamed(m.AttributeLists, "HttpGet", "HttpPost", "HttpPut", "HttpDelete", "HttpPatch", "HttpHead", "HttpOptions")))
+        {
+            return "has an [Http*] attribute on a member";
+        }
+
+        return null;
+    }
+
+    private static bool HasAnyAttributeNamed(SyntaxList<AttributeListSyntax> attributeLists, params string[] shortNames) =>
+        attributeLists.SelectMany(al => al.Attributes).Any(a => shortNames.Any(n => AttributeNameIs(a, n)));
+
+    private static bool AttributeNameIs(AttributeSyntax attribute, string shortName)
+    {
+        string name = attribute.Name switch
+        {
+            QualifiedNameSyntax q => q.Right.Identifier.ValueText,
+            SimpleNameSyntax s => s.Identifier.ValueText,
+            _ => attribute.Name.ToString(),
+        };
+        return name == shortName || name == shortName + "Attribute";
+    }
+
+    /// <summary>
     /// Synthesizes Endpoint nodes from an attribute-routed controller action (v1.1): same node
     /// and edge shape as the Minimal-API branch — fqn = "VERB template" composed per MVC's own
     /// selector semantics (ControllerEndpointFacts), file+span = the action method declaration,
     /// Controller —Contains→ Endpoint, Endpoint —HandledBy→ action. Refusals are counted with a
     /// reason; a conventionally-routed controller (no route templates anywhere) is a different
     /// routing system — noted once per class, never counted as unresolved.
+    ///
+    /// <paramref name="syntacticOnlySignal"/> is non-null (v0.13.1) exactly when the containing
+    /// class reached this method via the WIDENED syntactic prefilter (no base list, but looks
+    /// controller-ish some other way) rather than the base-list one. If classification still
+    /// fails specifically because <see cref="ControllerEndpointFacts.IsController"/> says no (not
+    /// because the method itself isn't action-shaped), that gap is DISCLOSED — a counted category
+    /// with a reason — never silently skipped: the whole point of this fix is that "looks like a
+    /// controller but isn't recognized" must never again be invisible.
     /// </summary>
-    private void HandleControllerAction(MethodDeclarationSyntax declaration, IMethodSymbol method)
+    private void HandleControllerAction(MethodDeclarationSyntax declaration, IMethodSymbol method, string? syntacticOnlySignal = null)
     {
         var classification = ControllerEndpointFacts.Classify(method);
         if (classification is null)
         {
+            if (syntacticOnlySignal is not null
+                && ControllerEndpointFacts.IsActionShaped(method)
+                && !ControllerEndpointFacts.IsController(method.ContainingType)
+                && _controllerLikeUnrecognized.Add(method.ContainingType))
+            {
+                _warnings.Add(
+                    $"Class '{method.ContainingType.Name}' looks like a controller ({syntacticOnlySignal}) but was not "
+                    + "recognized as one — it doesn't derive from ControllerBase and doesn't match ASP.NET's "
+                    + "POCO-controller discovery rule (public, concrete, non-generic, name ending in \"Controller\" or "
+                    + "[Controller]-attributed, not opted out via [NonController]) — its actions are not modeled as endpoints.");
+            }
+
             return;
         }
 

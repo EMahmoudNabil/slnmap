@@ -173,6 +173,17 @@ internal static partial class ControllerEndpointFacts
     /// runs FIRST: it is pure symbol-pointer chasing, while GetAttributes() binds attribute data —
     /// on a large solution this check runs for every method in every class with a base list, and
     /// almost none of them are controllers.
+    ///
+    /// v0.13.1 (reports/v0131-poco-controller-investigation.md): ASP.NET Core's REAL controller
+    /// discovery (<c>Microsoft.AspNetCore.Mvc.Controllers.ControllerFeatureProvider.IsController</c>)
+    /// has never required <c>ControllerBase</c> derivation at all — a "POCO controller" (public,
+    /// concrete, non-generic, name ending in <c>Controller</c> or <c>[Controller]</c>-attributed,
+    /// not opted out via <c>[NonController]</c>) is an equally real controller. Confirmed against
+    /// the real `gothinkster/aspnetcore-realworld-example-app`: `UserController`/`UsersController`
+    /// use exactly this shape and were previously invisible to this extractor entirely (a 0/22
+    /// cross-stack-linking regression traced back to here, not to the linker). Checked SECOND,
+    /// after the ControllerBase walk fails — the common case (a real ControllerBase-derived
+    /// controller) never pays this extra check.
     /// </summary>
     public static bool IsController(INamedTypeSymbol type)
     {
@@ -184,8 +195,38 @@ internal static partial class ControllerEndpointFacts
             }
         }
 
-        return false;
+        return IsPocoController(type);
     }
+
+    /// <summary>
+    /// ASP.NET Core's own POCO-controller discovery rule, replicated from
+    /// <c>ControllerFeatureProvider.IsController</c> (a public, documented, stable framework
+    /// contract — not a guess): public, a concrete (non-abstract) class, no generic type
+    /// parameters, name ends in "Controller" (case-insensitive, ASP.NET's own comparison) OR is
+    /// decorated with <c>[Controller]</c>, and not opted out via <c>[NonController]</c>.
+    /// </summary>
+    private static bool IsPocoController(INamedTypeSymbol type) =>
+        type.TypeKind == TypeKind.Class
+        && type.DeclaredAccessibility == Accessibility.Public
+        && !type.IsAbstract
+        && !type.IsGenericType
+        && (type.Name.EndsWith("Controller", StringComparison.OrdinalIgnoreCase) || HasAttribute(type, "ControllerAttribute"))
+        && !HasAttribute(type, "NonControllerAttribute");
+
+    /// <summary>
+    /// True when <paramref name="method"/> is action-shaped on its own terms — public, ordinary,
+    /// non-static, not <c>[NonAction]</c> — independent of whether its containing type classifies
+    /// as a controller at all. Exposed for <see cref="Slnmap.Analysis.DocumentWalker"/>'s
+    /// syntactic-candidate disclosure (v0.13.1): a class that LOOKS controller-ish but fails
+    /// <see cref="IsController"/> must be disclosed with a reason, never silently skipped — this
+    /// lets the caller distinguish "not a controller" from "not even an action-shaped method"
+    /// without duplicating <see cref="Classify"/>'s own logic.
+    /// </summary>
+    public static bool IsActionShaped(IMethodSymbol method) =>
+        method.MethodKind == MethodKind.Ordinary
+        && method.DeclaredAccessibility == Accessibility.Public
+        && !method.IsStatic
+        && !HasAttribute(method, "NonActionAttribute");
 
     /// <summary>
     /// The class-level [Route] templates: the type's own if declared, else the nearest base

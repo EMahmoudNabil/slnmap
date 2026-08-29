@@ -176,6 +176,15 @@ public sealed partial class SlnmapQueries
                 + "those route by file location, a different routing system, and are not modeled.");
         }
 
+        if (meta.TryGetValue(MetaKeys.ControllerLikeClassesUnrecognized, out var controllerLikeRaw)
+            && int.TryParse(controllerLikeRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out int controllerLike)
+            && controllerLike > 0)
+        {
+            builder.Append(
+                $" Note: this solution has {controllerLike} class(es) that look like a controller but were not "
+                + "recognized as one (see 'slnmap analyze --verbose' for which, and why).");
+        }
+
         return builder.ToString();
     }
 
@@ -256,6 +265,13 @@ public sealed partial class SlnmapQueries
             && razorPages > 0)
         {
             builder.AppendLine($"note: {razorPages} Razor Page(s) (PageModel-derived) are not modeled — they route by file location, a different routing system, not an extraction failure.");
+        }
+
+        if (meta.TryGetValue(MetaKeys.ControllerLikeClassesUnrecognized, out var controllerLikeRaw)
+            && int.TryParse(controllerLikeRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out int controllerLike)
+            && controllerLike > 0)
+        {
+            builder.AppendLine($"note: {controllerLike} class(es) look like a controller but were not recognized as one — see 'slnmap analyze --verbose' for which, and why.");
         }
     }
 

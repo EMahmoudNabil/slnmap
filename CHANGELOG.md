@@ -2,6 +2,58 @@
 
 All notable changes to Slnmap are documented here. Versions follow [SemVer](https://semver.org).
 
+## 0.13.1
+
+### Fixed
+
+- **The cross-stack linker never tried a base-path-stripped fallback for absolute-URL call
+  sites**, so a backend that mounts its controllers WITHOUT the conventional `/api` prefix (the
+  real `gothinkster/aspnetcore-realworld-example-app` shape — `[Route("user")]`, not
+  `[Route("api/user")]`) linked 0/22 real call sites even though the identical dev build linked
+  22/22 against a synthetic endpoint set. `CrossStackLinker` now also tries the call site's path
+  with the configured `--base-path` prefix (default `/api`) stripped from its front, but only as a
+  **sequential fallback** — never preferred over a match the as-authored path already found. Any
+  link made this way is visibly marked, never indistinguishable from a literal one: `slnmap link`'s
+  summary and `--verbose` per-call-site lines, and `list_frontend_callsites`'s per-row status, all
+  show `via prefix-stripped path`. If BOTH the as-authored and the stripped path independently
+  match, that's disclosed as a `SetEdge` with an `AmbiguityReason` (reusing the existing
+  prefix-ambiguous shape from v0.12.3) rather than silently preferring one. `--base-path ""`
+  disables the fallback entirely, matching the existing relative-path opt-out contract. Verified
+  against the real `gothinkster` pair: 18/22 after this fix alone (see next item for the remaining
+  4).
+- **Controller-action extraction silently skipped real ASP.NET Core "POCO controllers"** — a
+  controller class with NO `ControllerBase` inheritance at all, discovered by ASP.NET's own
+  name/attribute convention instead (`gothinkster/aspnetcore-realworld-example-app`'s actual
+  `UserController`/`UsersController`, backing the last 4 of the 22 real call sites above). The
+  existing syntactic prefilter (`the containing type declares a base list`) was sound as a cost
+  optimization but excluded this real, supported shape entirely — not even counted as unresolved.
+  Widened: a base-list-less class is now also checked for cheap syntactic controller-ish signals
+  (name ends in `Controller`, or an `[ApiController]`/`[Route]`/`[Controller]` attribute on the
+  class, or an `[Http*]` attribute on any member); if any apply, the existing semantic
+  `ControllerEndpointFacts.IsController` check now also recognizes ASP.NET's real POCO-controller
+  convention (public, concrete, non-generic, name/attribute-based, respects `[NonController]`).
+  Measured against a real ~4000-class production solution to confirm zero added false-positive
+  risk. A class that looks controller-ish syntactically but still fails the semantic check (e.g.
+  it isn't `public`) is now disclosed — a new counted `ControllerLikeClassesUnrecognized`
+  category, surfaced in `slnmap analyze`'s summary and in MCP query results — never silently
+  invisible. Verified against the real corpus: **22/22 call sites now linked, all 22 carrying the
+  prefix-stripped/host marker.**
+
+### Added
+
+- **Honesty warning for `MvcOptions.Conventions.Add(...)`**: a call registering an
+  `IApplicationModelConvention` (checked by the real parameter type, never receiver name) now
+  emits a disclosed warning — route templates can be mutated by such a convention at runtime, in a
+  way static analysis can't see, and slnmap does not interpret convention implementations. Purely a
+  type check; nothing about the convention's actual behavior is inferred or guessed.
+- **`ControllerLikeClassesUnrecognized`** stat, threaded through `AnalysisStats`, the CLI's
+  `analyze` summary, and `list_endpoints`/MCP no-endpoints disclosures.
+
+### Notes
+
+- `CallSiteLinkResult.ViaPrefixStripped` is new API surface for anything consuming
+  `CrossStackLinker.Link` results directly.
+
 ## 0.13.0
 
 ### Fixed

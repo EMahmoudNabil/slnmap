@@ -199,7 +199,10 @@ public sealed partial class SlnmapQueries
             // regardless of link outcome, including a genuinely external API that still links
             // by path (CallSiteLinkResult.Host's own doc comment).
             string hostNote = result.Host is { } host ? $" [host: {host}]" : string.Empty;
-            builder.AppendLine($"  {result.CallSite.Fqn} ({result.CallSite.Name}) {status}{hostNote}");
+            // v0.13.1: an inferred (prefix-stripped) link must never look identical to a literal
+            // one (CallSiteLinkResult.ViaPrefixStripped's own doc comment).
+            string strippedNote = result.ViaPrefixStripped ? " via prefix-stripped path" : string.Empty;
+            builder.AppendLine($"  {result.CallSite.Fqn} ({result.CallSite.Name}) {status}{strippedNote}{hostNote}");
         }
 
         if (filtered.Count > CrossStackListCap)

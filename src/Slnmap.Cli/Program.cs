@@ -124,6 +124,7 @@ analyzeCommand.SetAction(async (parseResult, cancellationToken) =>
         [MetaKeys.ConventionalControllers] = snapshot.Stats.ConventionalControllers.ToString(CultureInfo.InvariantCulture),
         [MetaKeys.RazorPagesNotModeled] = snapshot.Stats.RazorPagesNotModeled.ToString(CultureInfo.InvariantCulture),
         [MetaKeys.RazorFilesDetected] = snapshot.Stats.RazorFilesDetected.ToString(CultureInfo.InvariantCulture),
+        [MetaKeys.ControllerLikeClassesUnrecognized] = snapshot.Stats.ControllerLikeClassesUnrecognized.ToString(CultureInfo.InvariantCulture),
     };
     await store.SaveAsync(snapshot.Graph, snapshot.Files, meta, cancellationToken).ConfigureAwait(false);
     stopwatch.Stop();
@@ -158,7 +159,7 @@ analyzeCommand.SetAction(async (parseResult, cancellationToken) =>
     Console.WriteLine(pal.Label("Documents: ") + pal.Number(stats.DocumentsAnalyzed.ToString(CultureInfo.InvariantCulture)) + pal.Label(" analyzed, ") + pal.Number(stats.DocumentsSkipped.ToString(CultureInfo.InvariantCulture)) + pal.Label(" skipped") + razorFilesNote);
     Console.WriteLine(pal.Label("Graph:     ") + pal.Number(graph.NodeCount.ToString(CultureInfo.InvariantCulture)) + pal.Label(" nodes, ") + pal.Number(graph.EdgeCount.ToString(CultureInfo.InvariantCulture)) + pal.Label(" edges"));
     int endpointCount = graph.Nodes.Count(static n => n.Kind == NodeKind.Endpoint);
-    if (endpointCount > 0 || stats.UnresolvedEndpoints > 0 || stats.ConventionalControllers > 0 || stats.RazorPagesNotModeled > 0)
+    if (endpointCount > 0 || stats.UnresolvedEndpoints > 0 || stats.ConventionalControllers > 0 || stats.RazorPagesNotModeled > 0 || stats.ControllerLikeClassesUnrecognized > 0)
     {
         string unresolvedValue = stats.UnresolvedEndpoints == 0
             ? pal.Success("0")
@@ -169,7 +170,10 @@ analyzeCommand.SetAction(async (parseResult, cancellationToken) =>
         string razorPagesNote = stats.RazorPagesNotModeled > 0
             ? pal.Label(", ") + pal.Warn(stats.RazorPagesNotModeled.ToString(CultureInfo.InvariantCulture)) + pal.Label(" Razor Page(s) not modeled")
             : string.Empty;
-        Console.WriteLine(pal.Label("Endpoints: ") + pal.Number(endpointCount.ToString(CultureInfo.InvariantCulture)) + pal.Label(" mapped, ") + unresolvedValue + pal.Label(" unresolved" + (stats.UnresolvedEndpoints > 0 ? " (see warnings; run --verbose for locations)" : "")) + conventionalNote + razorPagesNote);
+        string controllerLikeNote = stats.ControllerLikeClassesUnrecognized > 0
+            ? pal.Label(", ") + pal.Warn(stats.ControllerLikeClassesUnrecognized.ToString(CultureInfo.InvariantCulture)) + pal.Label(" controller-like class(es) not recognized (see warnings)")
+            : string.Empty;
+        Console.WriteLine(pal.Label("Endpoints: ") + pal.Number(endpointCount.ToString(CultureInfo.InvariantCulture)) + pal.Label(" mapped, ") + unresolvedValue + pal.Label(" unresolved" + (stats.UnresolvedEndpoints > 0 ? " (see warnings; run --verbose for locations)" : "")) + conventionalNote + razorPagesNote + controllerLikeNote);
     }
     Console.WriteLine(pal.Label("Files:     ") + pal.Number(snapshot.Files.Count.ToString(CultureInfo.InvariantCulture)) + pal.Label(" hashed"));
     Console.WriteLine(pal.Label("Warnings:  ") + warningsValue);
@@ -438,6 +442,9 @@ linkCommand.SetAction(async (parseResult, cancellationToken) =>
     // v0.13.0: call sites resolved to an absolute URL (Host set regardless of link outcome — the
     // "carry its host visibly" disclosure, CallSiteLinkResult.Host's own doc comment).
     int withHost = results.Count(static r => r.Host is not null);
+    // v0.13.1: linked only via the base-path-stripped fallback candidate — an INFERRED link, never
+    // rendered like a literal match (CallSiteLinkResult.ViaPrefixStripped's own doc comment).
+    int viaPrefixStripped = results.Count(static r => r.ViaPrefixStripped);
 
     var meta = new Dictionary<string, string>(existingMeta, StringComparer.Ordinal)
     {
@@ -451,6 +458,9 @@ linkCommand.SetAction(async (parseResult, cancellationToken) =>
     string prefixAmbiguousSuffix = prefixAmbiguous > 0
         ? pal.Label(", ") + pal.Warn(prefixAmbiguous.ToString(CultureInfo.InvariantCulture)) + pal.Label(" prefix-ambiguous")
         : string.Empty;
+    string viaPrefixStrippedSuffix = viaPrefixStripped > 0
+        ? pal.Label(", ") + pal.Warn(viaPrefixStripped.ToString(CultureInfo.InvariantCulture)) + pal.Label(" via prefix-stripped path")
+        : string.Empty;
     Console.WriteLine(
         pal.Label("Linked:    ")
         + pal.Number(linked.ToString(CultureInfo.InvariantCulture))
@@ -458,7 +468,7 @@ linkCommand.SetAction(async (parseResult, cancellationToken) =>
         + pal.Number(unique.ToString(CultureInfo.InvariantCulture)) + pal.Label(" unique, ")
         + pal.Number(precedence.ToString(CultureInfo.InvariantCulture)) + pal.Label(" via precedence, ")
         + pal.Number(setEdge.ToString(CultureInfo.InvariantCulture)) + pal.Label(" set-edge")
-        + prefixAmbiguousSuffix + pal.Label(")"));
+        + prefixAmbiguousSuffix + viaPrefixStrippedSuffix + pal.Label(")"));
     string unknownVerbSuffix = unknownVerb > 0
         ? pal.Label(", ") + pal.Number(unknownVerb.ToString(CultureInfo.InvariantCulture)) + pal.Label(" unknown verb")
         : string.Empty;
@@ -492,8 +502,9 @@ linkCommand.SetAction(async (parseResult, cancellationToken) =>
                 ? $" — no {callSiteVerb} registered; " + string.Join(", ", result.ConflictingVerbEndpoints.Select(static e => e.Fqn)) + " exists"
                 : string.Empty;
             string ambiguityNote = result.AmbiguityReason is { } reason ? $" — {reason}" : string.Empty;
+            string strippedNote = result.ViaPrefixStripped ? " via prefix-stripped path" : string.Empty;
             string hostNote = result.Host is { } host ? $" [host: {host}]" : string.Empty;
-            Console.WriteLine(pal.Label($"  {result.CallSite.Fqn} — {result.Outcome}{conflictNote}{ambiguityNote}{hostNote}"));
+            Console.WriteLine(pal.Label($"  {result.CallSite.Fqn} — {result.Outcome}{conflictNote}{ambiguityNote}{strippedNote}{hostNote}"));
         }
     }
 
@@ -956,6 +967,7 @@ static IReadOnlyDictionary<string, string> BuildMeta(string solution, AnalysisSn
         [MetaKeys.ConventionalControllers] = snapshot.Stats.ConventionalControllers.ToString(CultureInfo.InvariantCulture),
         [MetaKeys.RazorPagesNotModeled] = snapshot.Stats.RazorPagesNotModeled.ToString(CultureInfo.InvariantCulture),
         [MetaKeys.RazorFilesDetected] = snapshot.Stats.RazorFilesDetected.ToString(CultureInfo.InvariantCulture),
+        [MetaKeys.ControllerLikeClassesUnrecognized] = snapshot.Stats.ControllerLikeClassesUnrecognized.ToString(CultureInfo.InvariantCulture),
     };
 
 /// <summary>Set equality over nodes and edges — a whitespace-only touch produces an identical graph, and watch skips the save.</summary>

@@ -46,6 +46,13 @@ public static class MetaKeys
     public const string RazorFilesDetected = "razor_files_detected";
 
     /// <summary>
+    /// Count of classes that look like an MVC controller syntactically but were not recognized as
+    /// one semantically — the last analysis disclosed each with a reason rather than silently
+    /// skipping it (v0.13.1). Absent or "0" when none exist.
+    /// </summary>
+    public const string ControllerLikeClassesUnrecognized = "controller_like_classes_unrecognized";
+
+    /// <summary>
     /// Round-trip ("O") timestamp of the last completed `analyze-ts` run. Compared against
     /// <see cref="LastAnalyzed"/> to surface the ts-extractor-investigation.md §Q1.2 ordering
     /// note: `analyze` rebuilds the graph from Roslyn output alone and does not know about

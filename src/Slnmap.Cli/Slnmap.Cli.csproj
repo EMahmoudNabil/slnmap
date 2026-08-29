@@ -8,47 +8,42 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>slnmap</ToolCommandName>
     <PackageId>Slnmap</PackageId>
-    <Version>0.13.0</Version>
+    <Version>0.13.1</Version>
     <RollForward>Major</RollForward>
-    <PackageReadmeFile>nuget-readme.md</PackageReadmeFile>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <Authors>Mahmoud Nabil</Authors>
-    <Copyright>Copyright (c) 2026 Mahmoud Nabil</Copyright>
+    <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
+    <Copyright>Copyright (c) 2026 the Slnmap authors. All rights reserved.</Copyright>
     <PackageProjectUrl>https://slnmap.dev</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/EMahmoudNabil/slnmap</RepositoryUrl>
     <PackageTags>dotnet;roslyn;mcp;ai;code-analysis;claude-code;knowledge-graph</PackageTags>
-    <PackageReleaseNotes>Fix (slnmap-ts 0.3.0): a verb-named call through a locally-declared
-wrapper function was always reported unrecognized-callee, even when the wrapper cleanly
-forwarded its own parameter into a real HTTP client call one level down (a "requests.get calls
-superagent.get" wrapper shape) -- the dominant real-world pattern for any non-toy React
-codebase. Confirmed against a real open-source frontend: 0/22 call sites resolved before this
-fix, 22/22 after. Traces exactly one level of such indirection, only when provably safe
-(const-rooted, a single clean forwarding expression, the parameter provably referenced in the
-inner call's URL argument); anything less clear-cut still falls back to the existing disclosed
-unrecognized-callee, never a guess.
-Fix (slnmap-ts 0.3.0): a wrapper's own internal HTTP-client call was independently
-double-counted as a spurious second call site -- found while building the fix above; fixed with
-an upfront discovery pass that excludes confirmed wrapper-internal calls from independent
-classification.
-Fix: the cross-stack linker never recognized an absolute-URL call-site template (an API_ROOT-
-style base URL, resolvable at all only once the slnmap-ts fix above lands), so it could never
-link to a relative backend endpoint -- the linker collapsed a leading double-slash but never
-stripped the scheme and host ahead of it, leaving a segment-count mismatch that always rejects.
-Fixed: the scheme and host are cleanly separated from the path before matching, anchored to
-strings that actually start with a scheme, so an ordinary relative call site carrying an
-embedded URL inside its own query string is unaffected. An absolute-URL call site is now
-matched by path only; a host that can't be cleanly isolated is disclosed rather than guessed at
-either way.
-Added: CallSiteLinkResult now carries Host -- populated whenever a call site's template is an
-absolute URL, regardless of link outcome, so a call site to a genuinely different, external API
-still links by path but stays visibly external rather than silently hidden. See CHANGELOG.md
-for details.
+    <PackageReleaseNotes>Fix: the cross-stack linker never tried a base-path-stripped fallback for
+absolute-URL call sites, so a backend that mounts its controllers without the conventional /api
+prefix linked 0/22 real call sites even though the identical dev build linked 22/22 against a
+synthetic endpoint set. Now also tries the call site's path with the configured --base-path prefix
+stripped from its front, but only as a sequential fallback -- never preferred over an as-authored
+match. Any inferred link is visibly marked (via prefix-stripped path) everywhere results are
+shown; both candidates matching is disclosed as an ambiguity rather than silently preferred.
+
+Fix: controller-action extraction silently skipped real ASP.NET Core "POCO controllers" -- a
+controller with no ControllerBase inheritance at all, discovered by name/attribute convention
+instead. Widened via a cheap syntactic prefilter plus a semantic check mirroring ASP.NET's own
+convention, measured against a real ~4000-class solution to confirm zero added false-positive
+risk. A class that looks controller-ish but still fails the semantic check is now disclosed
+(a new ControllerLikeClassesUnrecognized category), never silently invisible.
+
+Added: a disclosed honesty warning when MvcOptions.Conventions.Add(...) registers an
+IApplicationModelConvention -- route templates can be mutated at runtime in a way static analysis
+can't see, and slnmap does not interpret convention implementations.
+
+Verified end to end against the real gothinkster RealWorld pair: 22/22 call sites linked, all 22
+carrying the prefix-stripped/host marker.
+
 Source: https://github.com/EMahmoudNabil/slnmap</PackageReleaseNotes>
   </PropertyGroup>
 
   <ItemGroup>
-    <None Include="..\..\docs\nuget-readme.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\LICENSE.txt" Pack="true" PackagePath="\" />
     <None Include="icon.png" Pack="true" PackagePath="\" />
   </ItemGroup>
 
