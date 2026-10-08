@@ -382,7 +382,8 @@ at.
   still fail to load, install the **Visual Studio Build Tools** (or Visual Studio) so MSBuild and the
   targeting packs resolve.
 - **"analyzed without dependencies (not restored?)".** A project whose `dotnet restore` never ran
-  or failed still loads, but with no references, so framework and package types don't resolve and
+  or failed still loads, but without its NuGet packages (and, on newer SDKs, without the framework
+  either), so those types don't resolve and
   its endpoints, DI registrations, attributes and calls are incomplete. Slnmap reports it in the
   `analyze` summary, in `status`, and at the top of every MCP answer. Run `dotnet restore` (and fix
   any restore errors), then `slnmap analyze`; the next run rebuilds the graph automatically.

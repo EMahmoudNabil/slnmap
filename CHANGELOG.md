@@ -46,8 +46,10 @@ the next `slnmap analyze` rebuilds an existing graph automatically. No other act
 - **Projects analyzed without their dependencies are now disclosed.** A project whose restore
   never ran or failed used to load with no references and no warning, so every framework type was
   unresolved and its results were silently wrong (one real solution showed 0 endpoints before
-  `dotnet restore` and 6 after). Each project is now checked on every run: one with no resolved
-  references, or whose `obj/project.assets.json` records restore errors, is reported. You see it
+  `dotnet restore` and 6 after). Each project is now checked on every run. It is reported when it
+  has no resolved references (SDK 10), when it is SDK-style and has no `project.assets.json`
+  (SDK 9 still resolves the framework, but every NuGet package is missing), or when its restore
+  recorded errors. A restored `UseArtifactsOutput` layout is recognized. You see it
   as a warning, in the `Projects:` line of `analyze`, in `status`, and in a one-line warning at the
   top of **every MCP answer**. `slnmap doctor` gains a **Projects restored** check. Restoring
   changes no source file, so a change in restore state now forces a full re-analysis.

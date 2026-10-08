@@ -55,13 +55,16 @@ public static partial class EnvironmentDoctor
                 continue;
             }
 
-            string assets = Path.Combine(Path.GetDirectoryName(project) ?? ".", "obj", "project.assets.json");
-
-            if (!File.Exists(assets))
+            string? assets = FindAssetsFile(project);
+            if (assets is null)
             {
-                problems.Add($"{Path.GetFileNameWithoutExtension(project)} (never restored)");
+                // A legacy (non-SDK) project never gets an assets file; only SDK-style ones do.
+                if (ProjectRestoreCheck.IsSdkStyle(project))
+                {
+                    problems.Add($"{Path.GetFileNameWithoutExtension(project)} (never restored)");
+                }
             }
-            else if (ProjectRestoreCheck.AssetsErrors(project) is { } errors)
+            else if (ProjectRestoreCheck.AssetsErrorsAt(assets) is { } errors)
             {
                 problems.Add($"{Path.GetFileNameWithoutExtension(project)} (restore errors: {errors})");
             }
@@ -78,6 +81,38 @@ public static partial class EnvironmentDoctor
             $"{problems.Count} of {projects.Count} project(s) in {Path.GetFileName(target)} not restored: {list}. "
             + "They would be analyzed without their dependencies (incomplete results).",
             $"Run 'dotnet restore \"{target}\"' (and fix any restore errors), then re-run 'slnmap analyze'.");
+    }
+
+    /// <summary>
+    /// The project's <c>project.assets.json</c> without loading it: the default <c>obj/</c>, or
+    /// the <c>UseArtifactsOutput</c> layout (<c>artifacts/obj/&lt;project&gt;/</c> beside an
+    /// ancestor directory). Null when neither exists.
+    /// </summary>
+    private static string? FindAssetsFile(string project)
+    {
+        string? directory = Path.GetDirectoryName(project);
+        if (directory is null)
+        {
+            return null;
+        }
+
+        string assets = Path.Combine(directory, "obj", "project.assets.json");
+        if (File.Exists(assets))
+        {
+            return assets;
+        }
+
+        string name = Path.GetFileNameWithoutExtension(project);
+        for (var ancestor = directory; ancestor is not null; ancestor = Path.GetDirectoryName(ancestor))
+        {
+            string artifacts = Path.Combine(ancestor, "artifacts", "obj", name, "project.assets.json");
+            if (File.Exists(artifacts))
+            {
+                return artifacts;
+            }
+        }
+
+        return null;
     }
 
     private static string? ResolveTarget(string targetPath)

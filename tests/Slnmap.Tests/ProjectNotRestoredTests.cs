@@ -76,9 +76,22 @@ public sealed class ProjectNotRestoredTests : IDisposable
         File.WriteAllText(AssetsPath(csproj), json);
     }
 
-    [Fact]
-    public async Task Unrestored_IsDisclosedCountedAndWarned_ThenRestoreForcesAFullReanalysis()
+    /// <summary>
+    /// What an unrestored project looks like depends on the SDK: under SDK 10 it has no references
+    /// at all; under SDK 9 the framework still resolves and only NuGet packages are missing (the
+    /// Linux CI leg, SDK 9 only, caught a check that knew only the first shape). Run under the
+    /// default SDK and, when installed, pinned to SDK 9.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("9")]
+    public async Task Unrestored_IsDisclosedCountedAndWarned_ThenRestoreForcesAFullReanalysis(string? sdkMajor)
     {
+        if (sdkMajor is not null && !await PinSdkAsync(sdkMajor))
+        {
+            return; // that SDK is not installed here; the default-SDK case still runs
+        }
+
         string csproj = CreateProject();
 
         var warnings = new List<string>();
@@ -87,12 +100,14 @@ public sealed class ProjectNotRestoredTests : IDisposable
         var disclosure = Assert.Single(before.Graph.Disclosures, d => d.Kind == DisclosureKinds.ProjectNotRestored);
         Assert.Equal(csproj, disclosure.FilePath);
         Assert.Equal("Probe", DisclosureKinds.ProjectNotRestoredName(disclosure.Detail));
-        Assert.Contains("no references resolved", DisclosureKinds.ProjectNotRestoredReason(disclosure.Detail), StringComparison.Ordinal);
+        string reason = DisclosureKinds.ProjectNotRestoredReason(disclosure.Detail);
+        Assert.True(
+            reason.Contains("no references resolved", StringComparison.Ordinal)
+                || reason.Contains("no project.assets.json", StringComparison.Ordinal),
+            reason);
         Assert.Equal(1, before.Stats.ProjectsNotRestored);
         Assert.Contains(warnings, w => w.Contains("'Probe' was analyzed without its dependencies", StringComparison.Ordinal)
             && w.Contains("dotnet restore", StringComparison.Ordinal));
-        // The silent failure being disclosed: without references the controller is not seen at all.
-        Assert.DoesNotContain(before.Graph.Nodes, n => n.Kind == NodeKind.Endpoint);
 
         DotNet.Run($"restore \"{csproj}\"", _directory);
 
@@ -115,6 +130,46 @@ public sealed class ProjectNotRestoredTests : IDisposable
     }
 
     [Fact]
+    public async Task RestoredWithArtifactsOutputLayout_IsNotDisclosed()
+    {
+        // UseArtifactsOutput moves restore output to artifacts/obj/<project>/: a restored project
+        // there must not be reported as unrestored.
+        File.WriteAllText(Path.Combine(_directory, "Directory.Build.props"), """
+            <Project>
+              <PropertyGroup>
+                <UseArtifactsOutput>true</UseArtifactsOutput>
+              </PropertyGroup>
+            </Project>
+            """);
+        string csproj = CreateProject();
+        DotNet.Run($"restore \"{csproj}\"", _directory);
+        Assert.False(File.Exists(AssetsPath(csproj)), "expected the artifacts layout, not obj/");
+        Assert.True(File.Exists(Path.Combine(_directory, "artifacts", "obj", "Probe", "project.assets.json")));
+
+        var snapshot = await new RoslynSolutionAnalyzer().AnalyzeAsync(csproj);
+
+        Assert.DoesNotContain(snapshot.Graph.Disclosures, d => d.Kind == DisclosureKinds.ProjectNotRestored);
+        Assert.Equal(0, snapshot.Stats.ProjectsNotRestored);
+        Assert.True(EnvironmentDoctor.CheckProjectsRestored(csproj).Ok);
+    }
+
+    [Fact]
+    public void Doctor_IgnoresALegacyProjectWithoutAssets()
+    {
+        // A non-SDK project (packages.config era) never gets project.assets.json.
+        string directory = Path.Combine(_directory, "Legacy");
+        Directory.CreateDirectory(directory);
+        string csproj = Path.Combine(directory, "Legacy.csproj");
+        File.WriteAllText(csproj, """
+            <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+              <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+            </Project>
+            """);
+
+        Assert.True(EnvironmentDoctor.CheckProjectsRestored(csproj).Ok);
+    }
+
+    [Fact]
     public async Task RestoreThatRecordedErrors_IsDisclosedEvenWithReferencesResolved()
     {
         string csproj = CreateProject();
@@ -132,6 +187,20 @@ public sealed class ProjectNotRestoredTests : IDisposable
         var disclosure = Assert.Single(snapshot.Graph.Disclosures, d => d.Kind == DisclosureKinds.ProjectNotRestored);
         Assert.Contains("restore recorded errors (NU1504)", disclosure.Detail, StringComparison.Ordinal);
         Assert.Equal(1, snapshot.Stats.ProjectsNotRestored);
+    }
+
+    /// <summary>Pins <see cref="_directory"/> to the newest installed SDK of <paramref name="major"/>; false when none is installed.</summary>
+    private async Task<bool> PinSdkAsync(string major)
+    {
+        var sdks = await DotnetSdks.ListAsync();
+        if (!sdks.Versions.Any(v => v.StartsWith(major + ".", StringComparison.Ordinal)))
+        {
+            return false;
+        }
+
+        File.WriteAllText(Path.Combine(_directory, "global.json"),
+            $$"""{ "sdk": { "version": "{{major}}.0.100", "rollForward": "latestMinor" } }""");
+        return true;
     }
 
     [Fact]
