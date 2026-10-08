@@ -26,6 +26,9 @@ public sealed class SqliteGraphStore : IGraphStore
 
     public string DatabasePath => _databasePath;
 
+    /// <summary>The schema version this binary writes (stored in <c>meta('schema_version')</c>).</summary>
+    public static int CurrentSchemaVersion => SqliteSchema.Version;
+
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         EnsureDirectory(_databasePath);
@@ -75,15 +78,32 @@ public sealed class SqliteGraphStore : IGraphStore
         var graph = new CodeGraph();
         await using var connection = await OpenAsync(_databasePath, cancellationToken).ConfigureAwait(false);
 
+        // A v1 database (built by an older slnmap, not yet rebuilt) has neither the accessibility
+        // column nor the fact tables; read what is there rather than failing the whole load.
+        bool hasV2Columns = await HasColumnAsync(connection, "nodes", "member_flags", cancellationToken).ConfigureAwait(false);
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "SELECT id, kind, name, fqn, file, span_start, span_end FROM nodes;";
+            command.CommandText = hasV2Columns
+                ? "SELECT id, kind, name, fqn, file, span_start, span_end, accessibility, member_flags FROM nodes;"
+                : "SELECT id, kind, name, fqn, file, span_start, span_end FROM nodes;";
             await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
             while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                graph.AddNode(ReadNode(reader));
+                var node = ReadNode(reader);
+                if (hasV2Columns)
+                {
+                    node = node with
+                    {
+                        Accessibility = reader.IsDBNull(7) ? null : reader.GetString(7),
+                        MemberFlags = reader.IsDBNull(8) ? null : reader.GetString(8),
+                    };
+                }
+
+                graph.AddNode(node);
             }
         }
+
+        await LoadFactsAsync(connection, graph, cancellationToken).ConfigureAwait(false);
 
         await using (var command = connection.CreateCommand())
         {
@@ -375,8 +395,8 @@ public sealed class SqliteGraphStore : IGraphStore
         {
             command.Transaction = transaction;
             command.CommandText = """
-                INSERT OR IGNORE INTO nodes (id, kind, name, fqn, file, span_start, span_end)
-                VALUES ($id, $kind, $name, $fqn, $file, $start, $end);
+                INSERT OR IGNORE INTO nodes (id, kind, name, fqn, file, span_start, span_end, accessibility, member_flags)
+                VALUES ($id, $kind, $name, $fqn, $file, $start, $end, $accessibility, $memberFlags);
                 """;
             var id = command.Parameters.Add("$id", SqliteType.Text);
             var kind = command.Parameters.Add("$kind", SqliteType.Text);
@@ -385,6 +405,8 @@ public sealed class SqliteGraphStore : IGraphStore
             var file = command.Parameters.Add("$file", SqliteType.Text);
             var start = command.Parameters.Add("$start", SqliteType.Integer);
             var end = command.Parameters.Add("$end", SqliteType.Integer);
+            var accessibility = command.Parameters.Add("$accessibility", SqliteType.Text);
+            var memberFlags = command.Parameters.Add("$memberFlags", SqliteType.Text);
             await command.PrepareAsync(cancellationToken).ConfigureAwait(false);
 
             foreach (var node in graph.Nodes)
@@ -396,9 +418,13 @@ public sealed class SqliteGraphStore : IGraphStore
                 file.Value = (object?)node.FilePath ?? DBNull.Value;
                 start.Value = node.Span is { } span ? span.Start : DBNull.Value;
                 end.Value = node.Span is { } span2 ? span2.End : DBNull.Value;
+                accessibility.Value = (object?)node.Accessibility ?? DBNull.Value;
+                memberFlags.Value = (object?)node.MemberFlags ?? DBNull.Value;
                 await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
         }
+
+        await InsertFactsAsync(connection, transaction, graph, cancellationToken).ConfigureAwait(false);
 
         await using (var command = connection.CreateCommand())
         {
@@ -447,6 +473,14 @@ public sealed class SqliteGraphStore : IGraphStore
 
             foreach (var (metaKey, metaValue) in meta)
             {
+                // The schema version describes the file this store just built, not anything a
+                // caller carried forward: callers copy the previous meta table wholesale to keep
+                // producer state, which would otherwise overwrite the fresh version with the old one.
+                if (metaKey == MetaKeys.SchemaVersion)
+                {
+                    continue;
+                }
+
                 key.Value = metaKey;
                 value.Value = metaValue;
                 await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
@@ -454,6 +488,495 @@ public sealed class SqliteGraphStore : IGraphStore
         }
 
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task InsertFactsAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        CodeGraph graph,
+        CancellationToken cancellationToken)
+    {
+        // External targets are stored once each and referenced by id: the same framework method
+        // is called from hundreds of places, and its FQN/namespace/assembly strings dominated the
+        // per-call row size (reports/v0140-gate7a-external-calls-budget.md).
+        var targetIds = new Dictionary<string, long>(StringComparer.Ordinal);
+        await using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = "INSERT INTO external_targets (id, fqn, namespace, assembly) VALUES ($id, $fqn, $namespace, $assembly);";
+            var id = command.Parameters.Add("$id", SqliteType.Integer);
+            var fqn = command.Parameters.Add("$fqn", SqliteType.Text);
+            var ns = command.Parameters.Add("$namespace", SqliteType.Text);
+            var assembly = command.Parameters.Add("$assembly", SqliteType.Text);
+            await command.PrepareAsync(cancellationToken).ConfigureAwait(false);
+
+            foreach (var call in graph.ExternalCalls)
+            {
+                if (targetIds.ContainsKey(call.TargetFqn))
+                {
+                    continue;
+                }
+
+                long next = targetIds.Count + 1;
+                targetIds.Add(call.TargetFqn, next);
+                id.Value = next;
+                fqn.Value = call.TargetFqn;
+                ns.Value = call.TargetNamespace;
+                assembly.Value = (object?)call.TargetAssembly ?? DBNull.Value;
+                await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        await using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = """
+                INSERT INTO external_calls (caller_id, target_id, call_count, file, span_start)
+                VALUES ($caller, $target, $count, $file, $start);
+                """;
+            var caller = command.Parameters.Add("$caller", SqliteType.Text);
+            var target = command.Parameters.Add("$target", SqliteType.Integer);
+            var count = command.Parameters.Add("$count", SqliteType.Integer);
+            var file = command.Parameters.Add("$file", SqliteType.Text);
+            var start = command.Parameters.Add("$start", SqliteType.Integer);
+            await command.PrepareAsync(cancellationToken).ConfigureAwait(false);
+
+            foreach (var call in graph.ExternalCalls)
+            {
+                caller.Value = call.CallerId;
+                target.Value = targetIds[call.TargetFqn];
+                count.Value = call.CallCount;
+                file.Value = call.FilePath;
+                start.Value = call.SpanStart;
+                await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        await using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = """
+                INSERT INTO di_registrations (service_fqn, impl_fqn, lifetime, registration_kind, caller_id, file, span_start, project)
+                VALUES ($service, $impl, $lifetime, $kind, $caller, $file, $start, $project);
+                """;
+            var service = command.Parameters.Add("$service", SqliteType.Text);
+            var impl = command.Parameters.Add("$impl", SqliteType.Text);
+            var lifetime = command.Parameters.Add("$lifetime", SqliteType.Text);
+            var kind = command.Parameters.Add("$kind", SqliteType.Text);
+            var caller = command.Parameters.Add("$caller", SqliteType.Text);
+            var file = command.Parameters.Add("$file", SqliteType.Text);
+            var start = command.Parameters.Add("$start", SqliteType.Integer);
+            var project = command.Parameters.Add("$project", SqliteType.Text);
+            await command.PrepareAsync(cancellationToken).ConfigureAwait(false);
+
+            foreach (var registration in graph.DiRegistrations)
+            {
+                service.Value = registration.ServiceFqn;
+                impl.Value = (object?)registration.ImplementationFqn ?? DBNull.Value;
+                lifetime.Value = registration.Lifetime;
+                kind.Value = registration.RegistrationKind;
+                caller.Value = (object?)registration.CallerId ?? DBNull.Value;
+                file.Value = registration.FilePath;
+                start.Value = registration.SpanStart;
+                project.Value = registration.Project;
+                await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        await using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = """
+                INSERT INTO attribute_usages (target_id, attribute_fqn, file, span_start)
+                VALUES ($target, $attribute, $file, $start);
+                """;
+            var target = command.Parameters.Add("$target", SqliteType.Text);
+            var attribute = command.Parameters.Add("$attribute", SqliteType.Text);
+            var file = command.Parameters.Add("$file", SqliteType.Text);
+            var start = command.Parameters.Add("$start", SqliteType.Integer);
+            await command.PrepareAsync(cancellationToken).ConfigureAwait(false);
+
+            foreach (var usage in graph.AttributeUsages)
+            {
+                target.Value = usage.TargetId;
+                attribute.Value = usage.AttributeFqn;
+                file.Value = usage.FilePath;
+                start.Value = usage.SpanStart;
+                await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        await using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = "INSERT INTO disclosures (kind, detail, file, span_start) VALUES ($kind, $detail, $file, $start);";
+            var kind = command.Parameters.Add("$kind", SqliteType.Text);
+            var detail = command.Parameters.Add("$detail", SqliteType.Text);
+            var file = command.Parameters.Add("$file", SqliteType.Text);
+            var start = command.Parameters.Add("$start", SqliteType.Integer);
+            await command.PrepareAsync(cancellationToken).ConfigureAwait(false);
+
+            foreach (var disclosure in graph.Disclosures)
+            {
+                kind.Value = disclosure.Kind;
+                detail.Value = disclosure.Detail;
+                file.Value = disclosure.FilePath;
+                start.Value = disclosure.SpanStart;
+                await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    /// <summary>Loads the fact tables into <paramref name="graph"/>; each one absent from a v1 database is skipped.</summary>
+    private static async Task LoadFactsAsync(SqliteConnection connection, CodeGraph graph, CancellationToken cancellationToken)
+    {
+        if (await HasTableAsync(connection, "external_targets", cancellationToken).ConfigureAwait(false))
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT c.caller_id, t.fqn, t.namespace, t.assembly, c.file, c.span_start, c.call_count
+                FROM external_calls c JOIN external_targets t ON t.id = c.target_id;
+                """;
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                graph.AddExternalCall(new ExternalCall(
+                    reader.GetString(0),
+                    reader.GetString(1),
+                    reader.GetString(2),
+                    reader.IsDBNull(3) ? null : reader.GetString(3),
+                    reader.GetString(4),
+                    reader.GetInt32(5),
+                    reader.GetInt32(6)));
+            }
+        }
+
+        if (await HasTableAsync(connection, "di_registrations", cancellationToken).ConfigureAwait(false))
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT service_fqn, impl_fqn, lifetime, registration_kind, caller_id, file, span_start, project FROM di_registrations;";
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                graph.AddDiRegistration(new DiRegistration(
+                    reader.GetString(0),
+                    reader.IsDBNull(1) ? null : reader.GetString(1),
+                    reader.GetString(2),
+                    reader.GetString(3),
+                    reader.IsDBNull(4) ? null : reader.GetString(4),
+                    reader.GetString(5),
+                    reader.GetInt32(6),
+                    reader.GetString(7)));
+            }
+        }
+
+        if (await HasTableAsync(connection, "attribute_usages", cancellationToken).ConfigureAwait(false))
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT target_id, attribute_fqn, file, span_start FROM attribute_usages;";
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                graph.AddAttributeUsage(new AttributeUsage(
+                    reader.GetString(0),
+                    reader.GetString(1),
+                    reader.GetString(2),
+                    reader.GetInt32(3)));
+            }
+        }
+
+        foreach (var disclosure in await ReadDisclosuresAsync(connection, kind: null, cancellationToken).ConfigureAwait(false))
+        {
+            graph.AddDisclosure(disclosure);
+        }
+    }
+
+    public async Task<IReadOnlyList<ExternalCall>> GetExternalCallsAsync(string prefix, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(prefix);
+        var results = new List<ExternalCall>();
+        await using var connection = await OpenAsync(_databasePath, cancellationToken).ConfigureAwait(false);
+        if (!await HasTableAsync(connection, "external_targets", cancellationToken).ConfigureAwait(false))
+        {
+            return results;
+        }
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT c.caller_id, t.fqn, t.namespace, t.assembly, c.file, c.span_start, c.call_count
+            FROM external_calls c JOIN external_targets t ON t.id = c.target_id
+            WHERE t.namespace = $prefix COLLATE NOCASE
+               OR t.namespace LIKE $like ESCAPE '\'
+               OR t.assembly = $prefix COLLATE NOCASE
+            ORDER BY c.file, c.span_start;
+            """;
+        command.Parameters.AddWithValue("$prefix", prefix);
+        command.Parameters.AddWithValue("$like", prefix.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("%", "\\%", StringComparison.Ordinal).Replace("_", "\\_", StringComparison.Ordinal) + ".%");
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            results.Add(new ExternalCall(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.IsDBNull(3) ? null : reader.GetString(3),
+                reader.GetString(4),
+                reader.GetInt32(5),
+                reader.GetInt32(6)));
+        }
+
+        return results;
+    }
+
+    public async Task<IReadOnlyList<(string Namespace, int Pairs)>> GetExternalNamespacesAsync(CancellationToken cancellationToken = default)
+    {
+        var results = new List<(string, int)>();
+        await using var connection = await OpenAsync(_databasePath, cancellationToken).ConfigureAwait(false);
+        if (!await HasTableAsync(connection, "external_targets", cancellationToken).ConfigureAwait(false))
+        {
+            return results;
+        }
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT t.namespace, COUNT(*) FROM external_calls c JOIN external_targets t ON t.id = c.target_id
+            GROUP BY t.namespace ORDER BY COUNT(*) DESC;
+            """;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            results.Add((reader.GetString(0), reader.GetInt32(1)));
+        }
+
+        return results;
+    }
+
+    public async Task<IReadOnlyList<DiRegistration>> GetDiRegistrationsAsync(CancellationToken cancellationToken = default)
+    {
+        var results = new List<DiRegistration>();
+        await using var connection = await OpenAsync(_databasePath, cancellationToken).ConfigureAwait(false);
+        if (!await HasTableAsync(connection, "di_registrations", cancellationToken).ConfigureAwait(false))
+        {
+            return results;
+        }
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT service_fqn, impl_fqn, lifetime, registration_kind, caller_id, file, span_start, project
+            FROM di_registrations
+            ORDER BY project, file, span_start;
+            """;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            results.Add(new DiRegistration(
+                reader.GetString(0),
+                reader.IsDBNull(1) ? null : reader.GetString(1),
+                reader.GetString(2),
+                reader.GetString(3),
+                reader.IsDBNull(4) ? null : reader.GetString(4),
+                reader.GetString(5),
+                reader.GetInt32(6),
+                reader.GetString(7)));
+        }
+
+        return results;
+    }
+
+    public async Task<IReadOnlyList<(string AttributeFqn, int Count)>> GetAttributeSummaryAsync(CancellationToken cancellationToken = default)
+    {
+        var results = new List<(string, int)>();
+        await using var connection = await OpenAsync(_databasePath, cancellationToken).ConfigureAwait(false);
+        if (!await HasTableAsync(connection, "attribute_usages", cancellationToken).ConfigureAwait(false))
+        {
+            return results;
+        }
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT attribute_fqn, COUNT(*) FROM attribute_usages GROUP BY attribute_fqn ORDER BY attribute_fqn;";
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            results.Add((reader.GetString(0), reader.GetInt32(1)));
+        }
+
+        return results;
+    }
+
+    public async Task<IReadOnlyList<AttributeUsage>> GetAttributeUsagesAsync(string attributeFqn, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(attributeFqn);
+        var results = new List<AttributeUsage>();
+        await using var connection = await OpenAsync(_databasePath, cancellationToken).ConfigureAwait(false);
+        if (!await HasTableAsync(connection, "attribute_usages", cancellationToken).ConfigureAwait(false))
+        {
+            return results;
+        }
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT target_id, attribute_fqn, file, span_start FROM attribute_usages
+            WHERE attribute_fqn = $fqn
+            ORDER BY file, span_start;
+            """;
+        command.Parameters.AddWithValue("$fqn", attributeFqn);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            results.Add(new AttributeUsage(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetInt32(3)));
+        }
+
+        return results;
+    }
+
+    public async Task<IReadOnlyList<SymbolNode>> GetUnreferencedNodesAsync(
+        IReadOnlyCollection<NodeKind> kinds,
+        IReadOnlyCollection<string> accessibilities,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(kinds);
+        ArgumentNullException.ThrowIfNull(accessibilities);
+        var results = new List<SymbolNode>();
+        if (kinds.Count == 0 || accessibilities.Count == 0)
+        {
+            return results;
+        }
+
+        await using var connection = await OpenAsync(_databasePath, cancellationToken).ConfigureAwait(false);
+        if (!await HasColumnAsync(connection, "nodes", "member_flags", cancellationToken).ConfigureAwait(false))
+        {
+            return results;
+        }
+
+        var kindNames = kinds.Select(static k => k.ToString()).ToHashSet(StringComparer.Ordinal);
+        var accessNames = accessibilities.ToHashSet(StringComparer.Ordinal);
+
+        // Candidates: the requested kinds and accessibilities.
+        var candidates = new List<SymbolNode>();
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT id, kind, name, fqn, file, span_start, span_end, accessibility, member_flags FROM nodes WHERE accessibility IS NOT NULL;";
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                if (!kindNames.Contains(reader.GetString(1)) || !accessNames.Contains(reader.GetString(7)))
+                {
+                    continue;
+                }
+
+                candidates.Add(ReadNode(reader) with
+                {
+                    Accessibility = reader.GetString(7),
+                    MemberFlags = reader.IsDBNull(8) ? null : reader.GetString(8),
+                });
+            }
+        }
+
+        // A node is used when it, or anything it transitively contains, is depended on from
+        // OUTSIDE that subtree: a static class whose extension methods are called is never named
+        // itself, a type that only groups nested types is used through them — but a type whose
+        // members only call each other, or a recursive method, is not used by anything.
+        var children = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        var dependents = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT source_id, target_id, kind FROM edges;";
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            string containment = RelationshipKind.Contains.ToString();
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                var index = reader.GetString(2) == containment ? children : dependents;
+                string key = index == children ? reader.GetString(0) : reader.GetString(1);
+                string value = index == children ? reader.GetString(1) : reader.GetString(0);
+                if (!index.TryGetValue(key, out var list))
+                {
+                    list = [];
+                    index.Add(key, list);
+                }
+
+                list.Add(value);
+            }
+        }
+
+        foreach (var candidate in candidates.OrderBy(static n => n.Fqn, StringComparer.Ordinal))
+        {
+            var subtree = new HashSet<string>(StringComparer.Ordinal) { candidate.Id };
+            var stack = new Stack<string>();
+            stack.Push(candidate.Id);
+            while (stack.Count > 0)
+            {
+                if (children.TryGetValue(stack.Pop(), out var kids))
+                {
+                    foreach (string kid in kids)
+                    {
+                        if (subtree.Add(kid))
+                        {
+                            stack.Push(kid);
+                        }
+                    }
+                }
+            }
+
+            bool usedFromOutside = subtree.Any(id =>
+                dependents.TryGetValue(id, out var sources) && sources.Any(source => !subtree.Contains(source)));
+            if (!usedFromOutside)
+            {
+                results.Add(candidate);
+            }
+        }
+
+        return results;
+    }
+
+    public async Task<IReadOnlyList<Disclosure>> GetDisclosuresAsync(string kind, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(kind);
+        await using var connection = await OpenAsync(_databasePath, cancellationToken).ConfigureAwait(false);
+        return await ReadDisclosuresAsync(connection, kind, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<IReadOnlyList<Disclosure>> ReadDisclosuresAsync(
+        SqliteConnection connection, string? kind, CancellationToken cancellationToken)
+    {
+        var results = new List<Disclosure>();
+        if (!await HasTableAsync(connection, "disclosures", cancellationToken).ConfigureAwait(false))
+        {
+            return results;
+        }
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = kind is null
+            ? "SELECT kind, detail, file, span_start FROM disclosures ORDER BY file, span_start;"
+            : "SELECT kind, detail, file, span_start FROM disclosures WHERE kind = $kind ORDER BY file, span_start;";
+        if (kind is not null)
+        {
+            command.Parameters.AddWithValue("$kind", kind);
+        }
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            results.Add(new Disclosure(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetInt32(3)));
+        }
+
+        return results;
+    }
+
+    private static async Task<bool> HasTableAsync(SqliteConnection connection, string table, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = $name;";
+        command.Parameters.AddWithValue("$name", table);
+        return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not null;
+    }
+
+    private static async Task<bool> HasColumnAsync(SqliteConnection connection, string table, string column, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT 1 FROM pragma_table_info($table) WHERE name = $column;";
+        command.Parameters.AddWithValue("$table", table);
+        command.Parameters.AddWithValue("$column", column);
+        return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not null;
     }
 
     private static async Task ApplySchemaAsync(SqliteConnection connection, CancellationToken cancellationToken)

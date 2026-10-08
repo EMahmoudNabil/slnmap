@@ -74,6 +74,9 @@ public enum CallSiteLinkOutcome
 /// path as-is — an INFERRED link, not a literal one, and must never render identically to a
 /// literal match (reports/v0130-regression-investigation-0of22-realworld.md, fix A). False for
 /// every other outcome, including a literal absolute-URL match and every relative-path outcome.
+/// <paramref name="ViaTokenTransformerTolerance"/> is true (v0.14.0) only when the link was made
+/// by the last-resort token-transformer-tolerant fallback (<see cref="RouteTemplate.MatchesWithTokenTolerance"/>)
+/// — an inferred link, never rendered like a literal one.
 /// </summary>
 public sealed record CallSiteLinkResult(
     SymbolNode CallSite,
@@ -82,7 +85,8 @@ public sealed record CallSiteLinkResult(
     IReadOnlyList<SymbolNode> ConflictingVerbEndpoints,
     string? AmbiguityReason = null,
     string? Host = null,
-    bool ViaPrefixStripped = false);
+    bool ViaPrefixStripped = false,
+    bool ViaTokenTransformerTolerance = false);
 
 /// <summary>
 /// Phase 3: joins <see cref="NodeKind.FrontendCallSite"/> nodes to <see cref="NodeKind.Endpoint"/>
@@ -124,7 +128,10 @@ public static class CrossStackLinker
     /// identity), never by insertion order — a `link` run on the same graph is idempotent by
     /// construction (§Q3/§Q6).
     /// </summary>
-    public static IReadOnlyList<CallSiteLinkResult> Link(CodeGraph graph, string basePathPrefix = DefaultBasePathPrefix)
+    public static IReadOnlyList<CallSiteLinkResult> Link(
+        CodeGraph graph,
+        string basePathPrefix = DefaultBasePathPrefix,
+        IReadOnlyDictionary<string, IReadOnlySet<int>>? tokenTolerance = null)
     {
         ArgumentNullException.ThrowIfNull(graph);
         ArgumentNullException.ThrowIfNull(basePathPrefix);
@@ -133,8 +140,37 @@ public static class CrossStackLinker
         return graph.Nodes
             .Where(n => n.Kind == NodeKind.FrontendCallSite)
             .OrderBy(n => n.Id, StringComparer.Ordinal)
-            .Select(callSite => LinkOne(callSite, endpoints, basePathPrefix))
+            .Select(callSite => LinkOne(callSite, endpoints, basePathPrefix, tokenTolerance))
             .ToList();
+    }
+
+    /// <summary>The framework convention whose registration turns token tolerance on.</summary>
+    public const string RouteTokenTransformerConvention = "Microsoft.AspNetCore.Mvc.ApplicationModels.RouteTokenTransformerConvention";
+
+    /// <summary>
+    /// v0.14.0 (B4): the per-endpoint token-segment sets the tolerant fallback needs, keyed by
+    /// endpoint id — or null (tolerance off) unless a <c>RouteTokenTransformerConvention</c> is
+    /// registered. Built from the graph's disclosures; endpoints without token segments are absent.
+    /// </summary>
+    public static IReadOnlyDictionary<string, IReadOnlySet<int>>? BuildTokenTolerance(
+        IEnumerable<Disclosure> routeConventions, IEnumerable<Disclosure> tokenSegments)
+    {
+        if (!routeConventions.Any(d => d.Kind == DisclosureKinds.RouteConvention
+            && d.Detail.StartsWith(RouteTokenTransformerConvention, StringComparison.Ordinal)))
+        {
+            return null;
+        }
+
+        var tolerance = new Dictionary<string, IReadOnlySet<int>>(StringComparer.Ordinal);
+        foreach (var disclosure in tokenSegments.Where(d => d.Kind == DisclosureKinds.TokenSegments))
+        {
+            if (DisclosureKinds.TryParseTokenSegmentsDetail(disclosure.Detail, out string fqn, out var indexes))
+            {
+                tolerance[SymbolNode.CreateId(NodeKind.Endpoint, fqn)] = indexes;
+            }
+        }
+
+        return tolerance;
     }
 
     /// <summary>Flattens link results into the edges a `link` run should write.</summary>
@@ -160,7 +196,11 @@ public static class CrossStackLinker
     /// candidates are identical by construction — collapses to the single-candidate path with no
     /// possibility of a spurious ambiguity verdict.
     /// </summary>
-    private static CallSiteLinkResult LinkOne(SymbolNode callSite, IReadOnlyList<SymbolNode> endpoints, string basePathPrefix)
+    private static CallSiteLinkResult LinkOne(
+        SymbolNode callSite,
+        IReadOnlyList<SymbolNode> endpoints,
+        string basePathPrefix,
+        IReadOnlyDictionary<string, IReadOnlySet<int>>? tokenTolerance)
     {
         string verb = VerbOf(callSite.Fqn);
         if (verb == UnknownVerb)
@@ -185,7 +225,7 @@ public static class CrossStackLinker
 
         if (split == RouteTemplate.AbsoluteUrlSplitResult.Clean)
         {
-            return LinkAbsoluteUrl(callSite, verb, host!, pathOnly, endpoints, basePathPrefix);
+            return LinkAbsoluteUrl(callSite, verb, host!, pathOnly, endpoints, basePathPrefix, tokenTolerance);
         }
 
         string rawSkeleton = RouteTemplate.Normalize(callSite.Name);
@@ -215,6 +255,13 @@ public static class CrossStackLinker
         if (prefixedMatches.Count > 0)
         {
             return ResolveForSkeleton(callSite, prefixedSkeleton, prefixedMatches);
+        }
+
+        if (TryLinkWithTokenTolerance(
+                callSite, verb, endpoints, tokenTolerance, basePathPrefix,
+                rawSkeleton, singleCandidate ? null : prefixedSkeleton, secondIsStripped: false) is { } tolerant)
+        {
+            return tolerant;
         }
 
         var otherVerbMatches = MatchAnyVerb(endpoints, rawSkeleton);
@@ -252,7 +299,13 @@ public static class CrossStackLinker
     /// relative-path flow already honors.
     /// </summary>
     private static CallSiteLinkResult LinkAbsoluteUrl(
-        SymbolNode callSite, string verb, string host, string pathOnly, IReadOnlyList<SymbolNode> endpoints, string basePathPrefix)
+        SymbolNode callSite,
+        string verb,
+        string host,
+        string pathOnly,
+        IReadOnlyList<SymbolNode> endpoints,
+        string basePathPrefix,
+        IReadOnlyDictionary<string, IReadOnlySet<int>>? tokenTolerance)
     {
         string asAuthoredSkeleton = RouteTemplate.Normalize(pathOnly);
         var asAuthoredMatches = MatchSameVerb(endpoints, verb, asAuthoredSkeleton);
@@ -285,6 +338,13 @@ public static class CrossStackLinker
             // Sequential fallback: only reached because asAuthoredMatches was empty above — never
             // preferred over an as-authored match, always visibly marked as inferred.
             return ResolveForSkeleton(callSite, strippedSkeleton!, strippedMatches) with { Host = host, ViaPrefixStripped = true };
+        }
+
+        if (TryLinkWithTokenTolerance(
+                callSite, verb, endpoints, tokenTolerance, basePathPrefix,
+                asAuthoredSkeleton, strippedSkeleton, secondIsStripped: true) is { } tolerant)
+        {
+            return tolerant with { Host = host };
         }
 
         var otherVerbMatches = MatchAnyVerb(endpoints, asAuthoredSkeleton);
@@ -325,6 +385,75 @@ public static class CrossStackLinker
         string withSlash = normalizedPrefix + "/";
         return skeleton.StartsWith(withSlash, StringComparison.Ordinal) ? skeleton[withSlash.Length..] : null;
     }
+
+    /// <summary>
+    /// v0.14.0 (B4): the last-resort fallback, reached only when no literal or prefix candidate
+    /// matched. Tries the same candidate skeletons in the same order with
+    /// <see cref="RouteTemplate.MatchesWithTokenTolerance"/>, restricted to endpoints that have
+    /// token segments. The same "never silently prefer" rule applies: if both candidates match,
+    /// that is a set edge with an ambiguity reason. Every result is marked
+    /// <see cref="CallSiteLinkResult.ViaTokenTransformerTolerance"/>. Null when tolerance is off
+    /// or nothing matches.
+    /// </summary>
+    private static CallSiteLinkResult? TryLinkWithTokenTolerance(
+        SymbolNode callSite,
+        string verb,
+        IReadOnlyList<SymbolNode> endpoints,
+        IReadOnlyDictionary<string, IReadOnlySet<int>>? tokenTolerance,
+        string basePathPrefix,
+        string firstSkeleton,
+        string? secondSkeleton,
+        bool secondIsStripped)
+    {
+        if (tokenTolerance is null || tokenTolerance.Count == 0)
+        {
+            return null;
+        }
+
+        var first = MatchSameVerbTolerant(endpoints, verb, firstSkeleton, tokenTolerance);
+        var second = secondSkeleton is null ? [] : MatchSameVerbTolerant(endpoints, verb, secondSkeleton, tokenTolerance);
+        if (first.Count > 0 && second.Count > 0)
+        {
+            var combined = first.Concat(second)
+                .GroupBy(e => e.Id, StringComparer.Ordinal)
+                .Select(g => g.First())
+                .OrderBy(e => e.Id, StringComparer.Ordinal)
+                .ToList();
+            string how = secondIsStripped ? "stripped" : "applied";
+            return new CallSiteLinkResult(
+                callSite, CallSiteLinkOutcome.SetEdge, combined, [],
+                AmbiguityReason: $"prefix-ambiguous: '{callSite.Name}' matches (token-transformer-tolerant) both as-is and with the '{basePathPrefix}' prefix {how} — not resolved automatically",
+                ViaTokenTransformerTolerance: true);
+        }
+
+        if (first.Count > 0)
+        {
+            return ResolveForSkeleton(callSite, firstSkeleton, first) with { ViaTokenTransformerTolerance = true };
+        }
+
+        if (second.Count > 0)
+        {
+            return ResolveForSkeleton(callSite, secondSkeleton!, second) with
+            {
+                ViaTokenTransformerTolerance = true,
+                ViaPrefixStripped = secondIsStripped,
+            };
+        }
+
+        return null;
+    }
+
+    private static List<SymbolNode> MatchSameVerbTolerant(
+        IReadOnlyList<SymbolNode> endpoints,
+        string verb,
+        string skeleton,
+        IReadOnlyDictionary<string, IReadOnlySet<int>> tokenTolerance) =>
+        endpoints
+            .Where(e => VerbOf(e.Fqn) == verb
+                && tokenTolerance.TryGetValue(e.Id, out var segments)
+                && RouteTemplate.MatchesWithTokenTolerance(RouteTemplate.Normalize(e.Name), skeleton, segments))
+            .OrderBy(e => e.Id, StringComparer.Ordinal)
+            .ToList();
 
     private static List<SymbolNode> MatchSameVerb(IReadOnlyList<SymbolNode> endpoints, string verb, string skeleton) =>
         endpoints

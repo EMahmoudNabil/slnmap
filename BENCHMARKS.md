@@ -46,6 +46,25 @@ cold and incremental rows below. Each timing row is the **median of 3 runs**.
 
 ## Results
 
+**v0.14.0 (graph schema v2 + four new tools), measured side by side with v0.13.1.** Same machine,
+alternating runs, nothing else running. These numbers come from the current dev machine, so they
+are not directly comparable to the pinned-methodology rows below. The graph on eShopOnWeb is
+1,325 nodes / 3,482 edges.
+
+| Metric | v0.13.1 | **v0.14.0** | Change |
+|---|---|---|---|
+| eShopOnWeb cold analyze (3 runs) | 17.8 / 18.6 / 17.3 s | **19.4 / 18.8 / 19.0 s** | +6.5% |
+| eShopOnWeb one-file incremental (6 docs re-walked, 3 runs) | 18.0 / 15.3 / 15.8 s | **16.3 / 16.4 / 15.7 s** | flat |
+| eShopOnWeb `slnmap.db` | 1.55 MB | **2.18 MB** | +41% (+0.6 MB) |
+| ~33k-node production solution, cold analyze (2 runs) | 339.4 / 319.3 s | **364.3 / 353.2 s** | +9.0% |
+| ~33k-node production solution, `slnmap.db` | 52.8 MB | **67.1 MB** | +27% |
+
+The growth is the new per-file facts: external calls (stored one row per caller/target pair with a
+call count), DI registrations, attribute usages and disclosures, plus symbol accessibility and
+member flags. External calls are the largest share. Without the pair dedup they made the
+production solution's database 35 times larger, almost entirely from EF Core migration designer
+files.
+
 *v0.8.0 (controller endpoint nodes) was measured against eShopOnWeb directly during field
 verification: 26 endpoints extracted (25 attribute-routed controller actions + 1
 Ardalis.ApiEndpoints), cold analyze 26.8 s on the current dev machine — not directly comparable

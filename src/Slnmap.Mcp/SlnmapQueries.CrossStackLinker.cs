@@ -47,7 +47,10 @@ public sealed partial class SlnmapQueries
             ? stored
             : CrossStackLinker.DefaultBasePathPrefix;
 
-        return CrossStackLinker.Link(graph, basePathPrefix);
+        var tokenTolerance = CrossStackLinker.BuildTokenTolerance(
+            await _store.GetDisclosuresAsync(DisclosureKinds.RouteConvention, cancellationToken).ConfigureAwait(false),
+            await _store.GetDisclosuresAsync(DisclosureKinds.TokenSegments, cancellationToken).ConfigureAwait(false));
+        return CrossStackLinker.Link(graph, basePathPrefix, tokenTolerance);
     }
 
     /// <summary>
@@ -119,6 +122,7 @@ public sealed partial class SlnmapQueries
                 ? $"0 orphaned call sites — all {results.Count} link to at least one endpoint."
                 : $"0 call sites in category '{category}'.");
             await AppendLinkerStalenessNoteAsync(builder, cancellationToken).ConfigureAwait(false);
+            await AppendRouteConventionNoteAsync(builder, cancellationToken).ConfigureAwait(false);
             return builder.ToString().TrimEnd();
         }
 
@@ -142,6 +146,7 @@ public sealed partial class SlnmapQueries
         }
 
         await AppendLinkerStalenessNoteAsync(builder, cancellationToken).ConfigureAwait(false);
+        await AppendRouteConventionNoteAsync(builder, cancellationToken).ConfigureAwait(false);
         return builder.ToString().TrimEnd();
     }
 
@@ -202,6 +207,7 @@ public sealed partial class SlnmapQueries
             // v0.13.1: an inferred (prefix-stripped) link must never look identical to a literal
             // one (CallSiteLinkResult.ViaPrefixStripped's own doc comment).
             string strippedNote = result.ViaPrefixStripped ? " via prefix-stripped path" : string.Empty;
+            strippedNote += result.ViaTokenTransformerTolerance ? " via token-transformer-tolerant match" : string.Empty;
             builder.AppendLine($"  {result.CallSite.Fqn} ({result.CallSite.Name}) {status}{strippedNote}{hostNote}");
         }
 
@@ -211,6 +217,7 @@ public sealed partial class SlnmapQueries
         }
 
         await AppendLinkerStalenessNoteAsync(builder, cancellationToken).ConfigureAwait(false);
+        await AppendRouteConventionNoteAsync(builder, cancellationToken).ConfigureAwait(false);
         return builder.ToString().TrimEnd();
     }
 

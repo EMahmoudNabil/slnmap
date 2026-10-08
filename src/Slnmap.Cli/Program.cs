@@ -34,23 +34,32 @@ var basePathOption = new Option<string>("--base-path")
     DefaultValueFactory = _ => CrossStackLinker.DefaultBasePathPrefix,
 };
 
+var routePrefixOption = new Option<string?>("--route-prefix")
+{
+    Description = "A route prefix your app adds to every attribute-routed controller at startup in a way " +
+        "static analysis can't see (e.g. an IApplicationModelConvention injecting \"api\"). Applied to " +
+        "controller endpoints only and marked as user-supplied in tool output. Omit it to analyze routes as declared.",
+};
+
 var analyzeCommand = new Command("analyze", "Analyze a solution and build (or update) its code graph.")
 {
     solutionArgument,
     dbOption,
     verboseOption,
+    routePrefixOption,
 };
 analyzeCommand.SetAction(async (parseResult, cancellationToken) =>
 {
     string solution = Path.GetFullPath(parseResult.GetRequiredValue(solutionArgument));
     string db = parseResult.GetRequiredValue(dbOption);
     bool verbose = parseResult.GetValue(verboseOption);
+    string? routePrefix = AnalysisOptions.NormalizeRoutePrefix(parseResult.GetValue(routePrefixOption));
     var status = new ConsoleStatusLine();
 
     // Warnings are collected, not printed as they arrive: on real solutions the raw MSBuild
     // diagnostics (NuGet audit advisories, repeated per project) drown out the results.
     var warnings = new WarningReport();
-    var analyzer = new RoslynSolutionAnalyzer(warnings.Add);
+    var analyzer = new RoslynSolutionAnalyzer(warnings.Add, new AnalysisOptions(routePrefix));
 
     await using var store = new SqliteGraphStore(db);
     string currentVersion = CurrentVersion();
@@ -59,7 +68,7 @@ analyzeCommand.SetAction(async (parseResult, cancellationToken) =>
     // dependents are re-walked; everything else is carried over. A graph from a different
     // slnmap version is never reused as a baseline — analysis behavior can change release to
     // release (see issue #6), so a version change always forces a full rebuild.
-    AnalysisSnapshot? previous = await LoadPreviousAsync(store, currentVersion, status, cancellationToken).ConfigureAwait(false);
+    AnalysisSnapshot? previous = await LoadPreviousAsync(store, currentVersion, routePrefix, status, cancellationToken).ConfigureAwait(false);
     if (previous is not null)
     {
         status.WriteLine($"incremental: reusing {previous.Graph.NodeCount} nodes from {store.DatabasePath}");
@@ -125,7 +134,10 @@ analyzeCommand.SetAction(async (parseResult, cancellationToken) =>
         [MetaKeys.RazorPagesNotModeled] = snapshot.Stats.RazorPagesNotModeled.ToString(CultureInfo.InvariantCulture),
         [MetaKeys.RazorFilesDetected] = snapshot.Stats.RazorFilesDetected.ToString(CultureInfo.InvariantCulture),
         [MetaKeys.ControllerLikeClassesUnrecognized] = snapshot.Stats.ControllerLikeClassesUnrecognized.ToString(CultureInfo.InvariantCulture),
+        [MetaKeys.RouteConventionsRegistered] = snapshot.Stats.RouteConventionsRegistered.ToString(CultureInfo.InvariantCulture),
+        [MetaKeys.ProjectsNotRestored] = snapshot.Stats.ProjectsNotRestored.ToString(CultureInfo.InvariantCulture),
     };
+    SetRoutePrefixMeta(meta, routePrefix);
     await store.SaveAsync(snapshot.Graph, snapshot.Files, meta, cancellationToken).ConfigureAwait(false);
     stopwatch.Stop();
 
@@ -152,14 +164,17 @@ analyzeCommand.SetAction(async (parseResult, cancellationToken) =>
     string warningsValue = warnings.Count == 0
         ? pal.Success("0")
         : pal.Warn(warnings.Count.ToString(CultureInfo.InvariantCulture));
-    Console.WriteLine(pal.Label("Projects:  ") + pal.Number(stats.ProjectCount.ToString(CultureInfo.InvariantCulture)));
+    string notRestoredNote = stats.ProjectsNotRestored > 0
+        ? pal.Label(", ") + pal.Warn(stats.ProjectsNotRestored.ToString(CultureInfo.InvariantCulture)) + pal.Label(" analyzed without dependencies (not restored?) - their results are incomplete; run 'dotnet restore' and re-analyze (see warnings)")
+        : string.Empty;
+    Console.WriteLine(pal.Label("Projects:  ") + pal.Number(stats.ProjectCount.ToString(CultureInfo.InvariantCulture)) + notRestoredNote);
     string razorFilesNote = stats.RazorFilesDetected > 0
         ? pal.Label(", ") + pal.Warn(stats.RazorFilesDetected.ToString(CultureInfo.InvariantCulture)) + pal.Label(" .razor file(s) detected — Blazor markup is not analyzed (github.com/EMahmoudNabil/slnmap issue #30)")
         : string.Empty;
     Console.WriteLine(pal.Label("Documents: ") + pal.Number(stats.DocumentsAnalyzed.ToString(CultureInfo.InvariantCulture)) + pal.Label(" analyzed, ") + pal.Number(stats.DocumentsSkipped.ToString(CultureInfo.InvariantCulture)) + pal.Label(" skipped") + razorFilesNote);
     Console.WriteLine(pal.Label("Graph:     ") + pal.Number(graph.NodeCount.ToString(CultureInfo.InvariantCulture)) + pal.Label(" nodes, ") + pal.Number(graph.EdgeCount.ToString(CultureInfo.InvariantCulture)) + pal.Label(" edges"));
     int endpointCount = graph.Nodes.Count(static n => n.Kind == NodeKind.Endpoint);
-    if (endpointCount > 0 || stats.UnresolvedEndpoints > 0 || stats.ConventionalControllers > 0 || stats.RazorPagesNotModeled > 0 || stats.ControllerLikeClassesUnrecognized > 0)
+    if (endpointCount > 0 || stats.UnresolvedEndpoints > 0 || stats.ConventionalControllers > 0 || stats.RazorPagesNotModeled > 0 || stats.ControllerLikeClassesUnrecognized > 0 || stats.RouteConventionsRegistered > 0)
     {
         string unresolvedValue = stats.UnresolvedEndpoints == 0
             ? pal.Success("0")
@@ -173,7 +188,15 @@ analyzeCommand.SetAction(async (parseResult, cancellationToken) =>
         string controllerLikeNote = stats.ControllerLikeClassesUnrecognized > 0
             ? pal.Label(", ") + pal.Warn(stats.ControllerLikeClassesUnrecognized.ToString(CultureInfo.InvariantCulture)) + pal.Label(" controller-like class(es) not recognized (see warnings)")
             : string.Empty;
-        Console.WriteLine(pal.Label("Endpoints: ") + pal.Number(endpointCount.ToString(CultureInfo.InvariantCulture)) + pal.Label(" mapped, ") + unresolvedValue + pal.Label(" unresolved" + (stats.UnresolvedEndpoints > 0 ? " (see warnings; run --verbose for locations)" : "")) + conventionalNote + razorPagesNote + controllerLikeNote);
+        string conventionsNote = stats.RouteConventionsRegistered > 0
+            ? pal.Label(", ") + pal.Warn(stats.RouteConventionsRegistered.ToString(CultureInfo.InvariantCulture)) + pal.Label(" route convention(s) registered - served routes may differ (see warnings)")
+            : string.Empty;
+        Console.WriteLine(pal.Label("Endpoints: ") + pal.Number(endpointCount.ToString(CultureInfo.InvariantCulture)) + pal.Label(" mapped, ") + unresolvedValue + pal.Label(" unresolved" + (stats.UnresolvedEndpoints > 0 ? " (see warnings; run --verbose for locations)" : "")) + conventionalNote + razorPagesNote + controllerLikeNote + conventionsNote);
+        int prefixed = snapshot.Graph.Disclosures.Count(static d => d.Kind == DisclosureKinds.RoutePrefixApplied);
+        if (prefixed > 0)
+        {
+            Console.WriteLine(pal.Label("           ") + pal.Number(prefixed.ToString(CultureInfo.InvariantCulture)) + pal.Label(" controller endpoint(s) include the --route-prefix you supplied"));
+        }
     }
     Console.WriteLine(pal.Label("Files:     ") + pal.Number(snapshot.Files.Count.ToString(CultureInfo.InvariantCulture)) + pal.Label(" hashed"));
     Console.WriteLine(pal.Label("Warnings:  ") + warningsValue);
@@ -293,8 +316,14 @@ analyzeTsCommand.SetAction(async (parseResult, cancellationToken) =>
         // is a full rebuild — anything not passed back in is lost).
         await using var store = new SqliteGraphStore(db);
         await store.InitializeAsync(cancellationToken).ConfigureAwait(false);
-        var existingGraph = await store.LoadGraphAsync(cancellationToken).ConfigureAwait(false);
         var existingMeta = await store.GetMetaAsync(cancellationToken).ConfigureAwait(false);
+        if (OlderSchemaMessage(existingMeta, "analyze-ts") is { } olderSchema)
+        {
+            Console.Error.WriteLine(Palette.Err.Error(olderSchema));
+            return 1;
+        }
+
+        var existingGraph = await store.LoadGraphAsync(cancellationToken).ConfigureAwait(false);
         var existingFiles = await store.GetFileHashesAsync(cancellationToken).ConfigureAwait(false);
 
         var newNodes = TsArtifactFacts.BuildNodes(artifact, frontendRoot);
@@ -383,8 +412,14 @@ linkCommand.SetAction(async (parseResult, cancellationToken) =>
     }
 
     await store.InitializeAsync(cancellationToken).ConfigureAwait(false);
-    var graph = await store.LoadGraphAsync(cancellationToken).ConfigureAwait(false);
     var existingMeta = await store.GetMetaAsync(cancellationToken).ConfigureAwait(false);
+    if (OlderSchemaMessage(existingMeta, "link") is { } olderSchema)
+    {
+        Console.Error.WriteLine(Palette.Err.Error(olderSchema));
+        return 1;
+    }
+
+    var graph = await store.LoadGraphAsync(cancellationToken).ConfigureAwait(false);
     var existingFiles = await store.GetFileHashesAsync(cancellationToken).ConfigureAwait(false);
 
     int endpointCount = graph.Nodes.Count(static n => n.Kind == NodeKind.Endpoint);
@@ -420,7 +455,11 @@ linkCommand.SetAction(async (parseResult, cancellationToken) =>
         relinked.AddEdge(edge);
     }
 
-    var results = CrossStackLinker.Link(relinked, basePath);
+    relinked.CopyFactsFrom(graph);
+
+    // v0.14.0 (B4): token tolerance is on only when a RouteTokenTransformerConvention is registered.
+    var tokenTolerance = CrossStackLinker.BuildTokenTolerance(graph.Disclosures, graph.Disclosures);
+    var results = CrossStackLinker.Link(relinked, basePath, tokenTolerance);
     foreach (var edge in CrossStackLinker.ToEdges(results))
     {
         relinked.AddEdge(edge);
@@ -445,6 +484,8 @@ linkCommand.SetAction(async (parseResult, cancellationToken) =>
     // v0.13.1: linked only via the base-path-stripped fallback candidate — an INFERRED link, never
     // rendered like a literal match (CallSiteLinkResult.ViaPrefixStripped's own doc comment).
     int viaPrefixStripped = results.Count(static r => r.ViaPrefixStripped);
+    // v0.14.0: linked only via the token-transformer-tolerant fallback — also inferred.
+    int viaTokenTolerance = results.Count(static r => r.ViaTokenTransformerTolerance);
 
     var meta = new Dictionary<string, string>(existingMeta, StringComparer.Ordinal)
     {
@@ -460,6 +501,9 @@ linkCommand.SetAction(async (parseResult, cancellationToken) =>
         : string.Empty;
     string viaPrefixStrippedSuffix = viaPrefixStripped > 0
         ? pal.Label(", ") + pal.Warn(viaPrefixStripped.ToString(CultureInfo.InvariantCulture)) + pal.Label(" via prefix-stripped path")
+        : string.Empty;
+    viaPrefixStrippedSuffix += viaTokenTolerance > 0
+        ? pal.Label(", ") + pal.Warn(viaTokenTolerance.ToString(CultureInfo.InvariantCulture)) + pal.Label(" via token-transformer-tolerant match")
         : string.Empty;
     Console.WriteLine(
         pal.Label("Linked:    ")
@@ -503,6 +547,7 @@ linkCommand.SetAction(async (parseResult, cancellationToken) =>
                 : string.Empty;
             string ambiguityNote = result.AmbiguityReason is { } reason ? $" — {reason}" : string.Empty;
             string strippedNote = result.ViaPrefixStripped ? " via prefix-stripped path" : string.Empty;
+            strippedNote += result.ViaTokenTransformerTolerance ? " via token-transformer-tolerant match" : string.Empty;
             string hostNote = result.Host is { } host ? $" [host: {host}]" : string.Empty;
             Console.WriteLine(pal.Label($"  {result.CallSite.Fqn} — {result.Outcome}{conflictNote}{ambiguityNote}{strippedNote}{hostNote}"));
         }
@@ -518,24 +563,26 @@ var watchCommand = new Command("watch", "Analyze once, then keep a warm workspac
     solutionArgument,
     dbOption,
     verboseOption,
+    routePrefixOption,
 };
 watchCommand.SetAction(async (parseResult, cancellationToken) =>
 {
     string solution = Path.GetFullPath(parseResult.GetRequiredValue(solutionArgument));
     string db = parseResult.GetRequiredValue(dbOption);
     bool verbose = parseResult.GetValue(verboseOption);
+    string? routePrefix = AnalysisOptions.NormalizeRoutePrefix(parseResult.GetValue(routePrefixOption));
     var status = new ConsoleStatusLine();
     var warnings = new WarningReport();
 
     await using var store = new SqliteGraphStore(db);
     string currentVersion = CurrentVersion();
-    AnalysisSnapshot? previous = await LoadPreviousAsync(store, currentVersion, status, cancellationToken).ConfigureAwait(false);
+    AnalysisSnapshot? previous = await LoadPreviousAsync(store, currentVersion, routePrefix, status, cancellationToken).ConfigureAwait(false);
     if (previous is not null)
     {
         status.WriteLine($"incremental: reusing {previous.Graph.NodeCount} nodes from {store.DatabasePath}");
     }
 
-    using var resident = new Slnmap.Analysis.ResidentAnalyzer(warnings.Add);
+    using var resident = new Slnmap.Analysis.ResidentAnalyzer(warnings.Add, new AnalysisOptions(routePrefix));
     var pal = Palette.Out;
     var stopwatch = Stopwatch.StartNew();
     AnalysisSnapshot snapshot;
@@ -557,7 +604,7 @@ watchCommand.SetAction(async (parseResult, cancellationToken) =>
         status.Finish();
     }
 
-    await store.SaveAsync(snapshot.Graph, snapshot.Files, BuildMeta(solution, snapshot, currentVersion), cancellationToken).ConfigureAwait(false);
+    await store.SaveAsync(snapshot.Graph, snapshot.Files, BuildMeta(solution, snapshot, currentVersion, routePrefix), cancellationToken).ConfigureAwait(false);
     stopwatch.Stop();
     if (warnings.HasWarnings)
     {
@@ -660,7 +707,7 @@ watchCommand.SetAction(async (parseResult, cancellationToken) =>
                 }
 
                 var saveWatch = Stopwatch.StartNew();
-                await store.SaveAsync(updated.Graph, updated.Files, BuildMeta(solution, updated, currentVersion), cancellationToken).ConfigureAwait(false);
+                await store.SaveAsync(updated.Graph, updated.Files, BuildMeta(solution, updated, currentVersion, routePrefix), cancellationToken).ConfigureAwait(false);
                 saveWatch.Stop();
                 current = updated;
                 Console.WriteLine(pal.Label($"[{DateTime.Now:HH:mm:ss}] re-analyzed {batch.Count} file(s) in {sw.Elapsed.TotalSeconds.ToString("F2", CultureInfo.InvariantCulture)}s — graph ") + pal.Number(updated.Graph.NodeCount.ToString(CultureInfo.InvariantCulture)) + pal.Label(" nodes / ") + pal.Number(updated.Graph.EdgeCount.ToString(CultureInfo.InvariantCulture)) + pal.Label($" edges, saved in {saveWatch.Elapsed.TotalSeconds.ToString("F2", CultureInfo.InvariantCulture)}s"));
@@ -756,6 +803,18 @@ statusCommand.SetAction(async (parseResult, cancellationToken) =>
     if (meta.TryGetValue(MetaKeys.LastAnalyzed, out var lastAnalyzed))
     {
         Console.WriteLine(pal.Label("Last analyzed: ") + CliFormat.FriendlyTimestamp(lastAnalyzed));
+    }
+
+    if (meta.TryGetValue(MetaKeys.RoutePrefix, out var routePrefix))
+    {
+        Console.WriteLine(pal.Label("Route prefix:  ") + routePrefix + pal.Label(" (user-supplied via --route-prefix; applied to controller endpoints)"));
+    }
+
+    if (meta.TryGetValue(MetaKeys.ProjectsNotRestored, out var notRestoredRaw)
+        && int.TryParse(notRestoredRaw, NumberStyles.None, CultureInfo.InvariantCulture, out int notRestored)
+        && notRestored > 0)
+    {
+        Console.WriteLine(pal.Label("Not restored:  ") + pal.Warn(notRestored.ToString(CultureInfo.InvariantCulture)) + pal.Label(" project(s) analyzed without dependencies - results incomplete; run 'dotnet restore' and re-analyze"));
     }
 
     if (stats.NodeCount == 0)
@@ -925,7 +984,7 @@ return await rootCommand.Parse(args).InvokeAsync().ConfigureAwait(false);
 /// the analyzer and left at zero.
 /// </summary>
 static async Task<AnalysisSnapshot?> LoadPreviousAsync(
-    SqliteGraphStore store, string currentVersion, ConsoleStatusLine status, CancellationToken cancellationToken)
+    SqliteGraphStore store, string currentVersion, string? routePrefix, ConsoleStatusLine status, CancellationToken cancellationToken)
 {
     if (!File.Exists(store.DatabasePath))
     {
@@ -951,14 +1010,37 @@ static async Task<AnalysisSnapshot?> LoadPreviousAsync(
         return null;
     }
 
+    // Independent of the tool version: a graph whose schema predates this binary's (a v1 file
+    // has no accessibility column and no fact tables) is missing data no incremental run could
+    // fill in for unchanged files.
+    string currentSchema = SqliteGraphStore.CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture);
+    meta.TryGetValue(MetaKeys.SchemaVersion, out var storedSchema);
+    if (storedSchema != currentSchema)
+    {
+        status.WriteLine(
+            $"graph schema changed ({storedSchema ?? "unknown"} -> {currentSchema}): performing full re-analysis");
+        return null;
+    }
+
+    // A different --route-prefix changes every controller endpoint's template; carried-over
+    // endpoints from unchanged files would keep the old one.
+    meta.TryGetValue(MetaKeys.RoutePrefix, out var storedPrefix);
+    if (storedPrefix != routePrefix)
+    {
+        status.WriteLine(
+            $"--route-prefix changed ({storedPrefix ?? "none"} -> {routePrefix ?? "none"}): performing full re-analysis");
+        return null;
+    }
+
     var hashes = await store.GetFileHashesAsync(cancellationToken).ConfigureAwait(false);
     var files = hashes.Select(pair => new FileRecord(pair.Key, pair.Value)).ToList();
     return new AnalysisSnapshot(graph, files, new AnalysisStats(0, 0, 0));
 }
 
 /// <summary>The meta rows every graph save writes — one builder shared by analyze and watch.</summary>
-static IReadOnlyDictionary<string, string> BuildMeta(string solution, AnalysisSnapshot snapshot, string currentVersion) =>
-    new Dictionary<string, string>(StringComparer.Ordinal)
+static IReadOnlyDictionary<string, string> BuildMeta(string solution, AnalysisSnapshot snapshot, string currentVersion, string? routePrefix)
+{
+    var meta = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         [MetaKeys.SolutionPath] = solution,
         [MetaKeys.LastAnalyzed] = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture),
@@ -968,14 +1050,53 @@ static IReadOnlyDictionary<string, string> BuildMeta(string solution, AnalysisSn
         [MetaKeys.RazorPagesNotModeled] = snapshot.Stats.RazorPagesNotModeled.ToString(CultureInfo.InvariantCulture),
         [MetaKeys.RazorFilesDetected] = snapshot.Stats.RazorFilesDetected.ToString(CultureInfo.InvariantCulture),
         [MetaKeys.ControllerLikeClassesUnrecognized] = snapshot.Stats.ControllerLikeClassesUnrecognized.ToString(CultureInfo.InvariantCulture),
+        [MetaKeys.RouteConventionsRegistered] = snapshot.Stats.RouteConventionsRegistered.ToString(CultureInfo.InvariantCulture),
+        [MetaKeys.ProjectsNotRestored] = snapshot.Stats.ProjectsNotRestored.ToString(CultureInfo.InvariantCulture),
     };
+    SetRoutePrefixMeta(meta, routePrefix);
+    return meta;
+}
 
-/// <summary>Set equality over nodes and edges — a whitespace-only touch produces an identical graph, and watch skips the save.</summary>
+/// <summary>
+/// link and analyze-ts re-save the graph they load, and every save writes the CURRENT schema
+/// version — so running them on a graph an older slnmap built would stamp it current while it
+/// still lacks the newer data (accessibility, facts), and the newer tools would then answer
+/// "0 found" instead of asking for a rebuild (v0.14.0 QA finding 1). Refuse instead.
+/// </summary>
+static string? OlderSchemaMessage(IReadOnlyDictionary<string, string> meta, string command)
+{
+    string current = SqliteGraphStore.CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture);
+    return meta.TryGetValue(MetaKeys.SchemaVersion, out var stored) && stored != current
+        ? $"This graph was built by an older slnmap (schema {stored}, this version writes {current}). "
+            + $"Run 'slnmap analyze <solution>' first to rebuild it, then re-run '{command}'."
+        : null;
+}
+
+/// <summary>Records the user-supplied route prefix, or removes a stale one when none was given this run.</summary>
+static void SetRoutePrefixMeta(Dictionary<string, string> meta, string? routePrefix)
+{
+    if (routePrefix is null)
+    {
+        meta.Remove(MetaKeys.RoutePrefix);
+    }
+    else
+    {
+        meta[MetaKeys.RoutePrefix] = routePrefix;
+    }
+}
+
+/// <summary>
+/// Set equality over nodes, edges and facts — a whitespace-only touch produces an identical graph,
+/// and watch skips the save. Facts must be compared too: adding a framework attribute or an
+/// external call changes no node or edge at all.
+/// </summary>
 static bool GraphsEqual(CodeGraph a, CodeGraph b) =>
     a.NodeCount == b.NodeCount
     && a.EdgeCount == b.EdgeCount
+    && a.FactCount == b.FactCount
     && a.Nodes.ToHashSet().SetEquals(b.Nodes)
-    && a.Edges.ToHashSet().SetEquals(b.Edges);
+    && a.Edges.ToHashSet().SetEquals(b.Edges)
+    && a.FactsEqual(b);
 
 /// <summary>
 /// The running slnmap assembly's version (e.g. <c>"0.5.0"</c>) — the CLI project's

@@ -230,6 +230,8 @@ public static class TsArtifactFacts
             }
         }
 
+        // Frontend ingestion never produces C# facts; carry every existing one forward.
+        merged.CopyFactsFrom(existing);
         return merged;
     }
 }

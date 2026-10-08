@@ -121,6 +121,26 @@ public sealed partial class SlnmapQueries
             .OrderBy(e => e.Fqn, StringComparer.Ordinal)
             .ToList();
 
+        // v0.14.0 (B4): no literal match, but a RouteTokenTransformerConvention is registered — try
+        // the token-tolerant comparison (token-derived segments only), and say so on every hit.
+        bool viaTokenTolerance = false;
+        if (matches.Count == 0)
+        {
+            var tokenTolerance = CrossStackLinker.BuildTokenTolerance(
+                await _store.GetDisclosuresAsync(DisclosureKinds.RouteConvention, cancellationToken).ConfigureAwait(false),
+                await _store.GetDisclosuresAsync(DisclosureKinds.TokenSegments, cancellationToken).ConfigureAwait(false));
+            if (tokenTolerance is { Count: > 0 })
+            {
+                matches = endpoints
+                    .Where(e => verbFilter is null || VerbOf(e).Equals(verbFilter, StringComparison.Ordinal))
+                    .Where(e => tokenTolerance.TryGetValue(e.Id, out var segments)
+                        && RouteTemplate.MatchesWithTokenTolerance(RouteTemplate.Normalize(e.Name), normalizedQuery, segments))
+                    .OrderBy(e => e.Fqn, StringComparer.Ordinal)
+                    .ToList();
+                viaTokenTolerance = matches.Count > 0;
+            }
+        }
+
         var builder = new StringBuilder();
         if (matches.Count == 0)
         {
@@ -137,16 +157,22 @@ public sealed partial class SlnmapQueries
                 builder.AppendLine("Use list_endpoints to browse all routes, optionally filtered by prefix.");
             }
 
+            await AppendRouteConventionNoteAsync(builder, cancellationToken).ConfigureAwait(false);
             return builder.ToString().TrimEnd();
         }
 
-        builder.AppendLine($"{matches.Count} endpoint(s) match '{route}':");
+        builder.AppendLine(viaTokenTolerance
+            ? $"{matches.Count} endpoint(s) match '{route}' via token-transformer-tolerant match (inferred: a registered "
+                + "RouteTokenTransformerConvention rewrites [controller]/[action] segments; only those segments were compared "
+                + "ignoring '-'/'_' — no literal match exists):"
+            : $"{matches.Count} endpoint(s) match '{route}':");
         await AppendEndpointLinesAsync(builder, matches.Take(EndpointFindCap).ToList(), cancellationToken, includeFrontendCallers: true).ConfigureAwait(false);
         if (matches.Count > EndpointFindCap)
         {
             builder.AppendLine($"  ...and {matches.Count - EndpointFindCap} more — give a more specific route or a verb.");
         }
 
+        await AppendRouteConventionNoteAsync(builder, cancellationToken).ConfigureAwait(false);
         return builder.ToString().TrimEnd();
     }
 
@@ -209,6 +235,11 @@ public sealed partial class SlnmapQueries
             await _store.GetNodesByKindAsync(NodeKind.Project, cancellationToken).ConfigureAwait(false));
         var resolver = new LineResolver();
 
+        // --route-prefix (v0.14.0): a user-stated prefix is never presented as derived from code.
+        var prefixed = (await _store.GetDisclosuresAsync(DisclosureKinds.RoutePrefixApplied, cancellationToken).ConfigureAwait(false))
+            .Select(static d => d.Detail)
+            .ToHashSet(StringComparer.Ordinal);
+
         foreach (var group in endpoints
             .GroupBy(e => attributor.ProjectOf(e.FilePath) ?? "(unknown project)")
             .OrderBy(g => g.Key, StringComparer.Ordinal))
@@ -227,7 +258,8 @@ public sealed partial class SlnmapQueries
                 string location = endpoint.FilePath is { } file
                     ? $" — {file}:{resolver.LineOf(file, endpoint.Span?.Start ?? 0)}"
                     : string.Empty;
-                builder.AppendLine($"  {endpoint.Fqn} → {handlerLabel}{location}");
+                string prefixNote = prefixed.Contains(endpoint.Fqn) ? " [prefix: user-supplied]" : string.Empty;
+                builder.AppendLine($"  {endpoint.Fqn}{prefixNote} → {handlerLabel}{location}");
 
                 if (includeFrontendCallers)
                 {
@@ -273,7 +305,44 @@ public sealed partial class SlnmapQueries
         {
             builder.AppendLine($"note: {controllerLike} class(es) look like a controller but were not recognized as one — see 'slnmap analyze --verbose' for which, and why.");
         }
+
+        await AppendRouteConventionNoteAsync(builder, cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Discloses every registered MVC model convention (v0.14.0,
+    /// reports/gap-b-route-conventions-investigation.md): each can rewrite controller route
+    /// templates at startup — a prefix injected, tokens slugified — so the templates this tool
+    /// reports, and anything matched against them, may not be what the app actually serves.
+    /// Read from the disclosures table, so it names each convention and where it is registered.
+    /// </summary>
+    private async Task AppendRouteConventionNoteAsync(StringBuilder builder, CancellationToken cancellationToken)
+    {
+        var conventions = await _store.GetDisclosuresAsync(DisclosureKinds.RouteConvention, cancellationToken).ConfigureAwait(false);
+        if (conventions.Count == 0)
+        {
+            return;
+        }
+
+        builder.AppendLine(
+            $"note: {conventions.Count} route convention(s) can rewrite controller routes at startup, invisibly to static "
+            + "analysis — routes here are as declared in source and may differ from what the app serves:");
+        var resolver = new LineResolver();
+        foreach (var convention in conventions.Take(RouteConventionNoteCap))
+        {
+            string effect = convention.Detail.StartsWith(CrossStackLinker.RouteTokenTransformerConvention, StringComparison.Ordinal)
+                ? " — transforms [controller]/[action]/[area] token values (e.g. kebab-case: 'ChangePassword' served as 'change-password')"
+                : string.Empty;
+            builder.AppendLine($"  {convention.Detail} — {convention.FilePath}:{resolver.LineOf(convention.FilePath, convention.SpanStart)}{effect}");
+        }
+
+        if (conventions.Count > RouteConventionNoteCap)
+        {
+            builder.AppendLine($"  ...and {conventions.Count - RouteConventionNoteCap} more — 'slnmap analyze --verbose' lists them all.");
+        }
+    }
+
+    private const int RouteConventionNoteCap = 5;
 
     /// <summary>Closest templates by shared trailing segment, so a near-miss query gets pointed somewhere real.</summary>
     private static List<SymbolNode> NearMisses(IReadOnlyList<SymbolNode> endpoints, string normalizedQuery)

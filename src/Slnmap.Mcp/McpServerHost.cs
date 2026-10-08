@@ -39,7 +39,7 @@ public static class McpServerHost
             builder.Services.Remove(descriptor);
             builder.Services.Add(ServiceDescriptor.Describe(
                 typeof(McpServerTool),
-                provider => new ShapedFailureTool((McpServerTool)CreateInner(provider, descriptor)),
+                provider => new ShapedFailureTool((McpServerTool)CreateInner(provider, descriptor), store),
                 descriptor.Lifetime));
         }
 

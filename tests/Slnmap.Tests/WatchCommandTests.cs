@@ -82,9 +82,33 @@ public sealed class WatchCommandTests : IDisposable
 
             // Phase 3: the persisted graph contains the new class (poll briefly — the batch line
             // prints after the save, but the reader may race the flush).
-            await using var store = new SqliteGraphStore(dbPath);
-            var graph = await store.LoadGraphAsync();
-            Assert.Contains(graph.Nodes, n => n.Fqn == "Fixture.Lib.WatchE2EAddition");
+            await using (var store = new SqliteGraphStore(dbPath))
+            {
+                var graph = await store.LoadGraphAsync();
+                Assert.Contains(graph.Nodes, n => n.Fqn == "Fixture.Lib.WatchE2EAddition");
+            }
+
+            // Phase 4 (v0.14.0): an edit that changes ONLY a fact — [Obsolete] -> [Required], same
+            // length, both external, so no node or edge moves — must still be saved. Before facts
+            // took part in watch's equality check, this save was skipped as "unchanged".
+            string attributes = Path.Combine(_root, "FixtureLib", "AttributeUsagesFixture.cs");
+            string attributeText = File.ReadAllText(attributes);
+            // The fixture has exactly one [Obsolete] (on WatchSwap).
+            Assert.Equal(1, attributeText.Split("[Obsolete]").Length - 1);
+            File.WriteAllText(attributes, attributeText.Replace("[Obsolete]", "[Required]", StringComparison.Ordinal));
+
+            string factBatch = await ProcessOutput.ReadUntilAsync(
+                process.StandardOutput,
+                line => line.Contains("re-analyzed", StringComparison.Ordinal),
+                ReadTimeout);
+            Assert.DoesNotContain("save skipped", factBatch, StringComparison.Ordinal);
+
+            await using (var store = new SqliteGraphStore(dbPath))
+            {
+                var graph = await store.LoadGraphAsync();
+                Assert.DoesNotContain(graph.AttributeUsages, u => u.AttributeFqn == "System.ObsoleteAttribute" && u.FilePath == attributes);
+                Assert.Equal(2, graph.AttributeUsages.Count(u => u.AttributeFqn == "System.ComponentModel.DataAnnotations.RequiredAttribute"));
+            }
         }
         finally
         {

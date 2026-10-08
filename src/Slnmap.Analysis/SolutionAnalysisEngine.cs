@@ -74,8 +74,11 @@ internal static class SolutionAnalysisEngine
         AnalysisSnapshot? previous,
         Action<string>? warningSink,
         IProgress<AnalysisProgress>? progress,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        AnalysisOptions? options = null)
     {
+        options ??= AnalysisOptions.Default;
+
         // One entry per csproj: multi-targeted projects appear once per TFM, and one TFM
         // is enough to shape the graph.
         var projects = solution.Projects
@@ -91,6 +94,18 @@ internal static class SolutionAnalysisEngine
             .OfType<string>()
             .Distinct(StringComparer.Ordinal);
         var currentHashes = FileHasher.HashFiles(documentPaths, cancellationToken);
+
+        // Restore state is checked on every project every run (cheap: the reference count plus
+        // an assets-file read). A project analyzed without its dependencies is disclosed, never
+        // silent. When the state differs from the previous run's (typically: the user ran
+        // `dotnet restore` after a first analysis), no document changed, so an incremental run
+        // would keep every stale result — the whole graph is rebuilt instead.
+        var notRestored = DiagnoseRestore(projects);
+        if (previous is not null && !SameRestoreState(previous.Graph, notRestored))
+        {
+            warningSink?.Invoke("Project restore state changed since the last analysis: performing full re-analysis.");
+            previous = null;
+        }
 
         var plan = previous is null
             ? AnalysisPlan.Full(currentHashes.Keys)
@@ -129,16 +144,16 @@ internal static class SolutionAnalysisEngine
                 continue;
             }
 
-            var options = new ParallelOptions
+            var parallelOptions = new ParallelOptions
             {
                 MaxDegreeOfParallelism = Environment.ProcessorCount,
                 CancellationToken = cancellationToken,
             };
-            await Parallel.ForEachAsync(documents, options, async (document, ct) =>
+            await Parallel.ForEachAsync(documents, parallelOptions, async (document, ct) =>
             {
                 try
                 {
-                    var result = await DocumentWalker.AnalyzeAsync(document, projectNode.Id, ct).ConfigureAwait(false);
+                    var result = await DocumentWalker.AnalyzeAsync(document, projectNode.Id, options, ct).ConfigureAwait(false);
                     if (result is not null)
                     {
                         results.Add(result);
@@ -160,10 +175,6 @@ internal static class SolutionAnalysisEngine
             graph.AddNode(projectNode);
         }
 
-        int unresolvedEndpoints = 0;
-        int conventionalControllers = 0;
-        int razorPagesNotModeled = 0;
-        int controllerLikeClassesUnrecognized = 0;
         foreach (var result in results)
         {
             foreach (var node in result.Nodes)
@@ -176,14 +187,42 @@ internal static class SolutionAnalysisEngine
                 graph.AddEdge(edge);
             }
 
-            unresolvedEndpoints += result.UnresolvedEndpoints;
-            conventionalControllers += result.ConventionalControllers;
-            razorPagesNotModeled += result.RazorPagesNotModeled;
-            controllerLikeClassesUnrecognized += result.ControllerLikeClassesUnrecognized;
+            foreach (var call in result.ExternalCalls)
+            {
+                graph.AddExternalCall(call);
+            }
+
+            foreach (var registration in result.DiRegistrations)
+            {
+                graph.AddDiRegistration(registration);
+            }
+
+            foreach (var usage in result.AttributeUsages)
+            {
+                graph.AddAttributeUsage(usage);
+            }
+
+            foreach (var disclosure in result.Disclosures)
+            {
+                graph.AddDisclosure(disclosure);
+            }
+
             foreach (var warning in result.Warnings)
             {
                 warningSink?.Invoke(warning);
             }
+        }
+
+        // Owned by the project file, which no document walk ever evicts: replace them wholesale
+        // with this run's diagnosis.
+        graph.RemoveDisclosures(DisclosureKinds.ProjectNotRestored);
+        foreach (var disclosure in notRestored)
+        {
+            graph.AddDisclosure(disclosure);
+            warningSink?.Invoke(
+                $"Project '{DisclosureKinds.ProjectNotRestoredName(disclosure.Detail)}' was analyzed without its dependencies "
+                + $"({DisclosureKinds.ProjectNotRestoredReason(disclosure.Detail)}). Its endpoints, DI registrations, "
+                + "attribute usages, external calls and references are incomplete. Run 'dotnet restore' and re-analyze.");
         }
 
         int razorFilesDetected = CountRazorFiles(projects);
@@ -195,10 +234,53 @@ internal static class SolutionAnalysisEngine
         graph = PruneOrphanNamespaces(graph);
 
         var files = currentHashes.Select(static kv => new FileRecord(kv.Key, kv.Value)).ToList();
+
+        // Disclosure counters are derived from the MERGED graph — the re-walked documents' fresh
+        // disclosures plus every carried-over file's — never summed over this run's walk alone.
+        // Summing per run is what reset every counter to zero on incremental runs before v0.14.0.
+        // Class-scoped kinds count distinct classes (a partial class split across files is one).
         var stats = new AnalysisStats(
-            projects.Count, analyzedCount, candidateDocuments - totalDocuments, unresolvedEndpoints,
-            conventionalControllers, razorPagesNotModeled, razorFilesDetected, controllerLikeClassesUnrecognized);
+            projects.Count, analyzedCount, candidateDocuments - totalDocuments,
+            UnresolvedEndpoints: CountDisclosures(graph, DisclosureKinds.UnresolvedEndpoint, distinctDetail: false),
+            ConventionalControllers: CountDisclosures(graph, DisclosureKinds.ConventionalController, distinctDetail: true),
+            RazorPagesNotModeled: CountDisclosures(graph, DisclosureKinds.RazorPageNotModeled, distinctDetail: true),
+            RazorFilesDetected: razorFilesDetected,
+            ControllerLikeClassesUnrecognized: CountDisclosures(graph, DisclosureKinds.ControllerLikeUnrecognized, distinctDetail: true),
+            RouteConventionsRegistered: CountDisclosures(graph, DisclosureKinds.RouteConvention, distinctDetail: false),
+            ProjectsNotRestored: CountDisclosures(graph, DisclosureKinds.ProjectNotRestored, distinctDetail: true));
         return new AnalysisSnapshot(graph, files, stats);
+    }
+
+    private static List<Disclosure> DiagnoseRestore(IReadOnlyList<Project> projects)
+    {
+        var disclosures = new List<Disclosure>();
+        foreach (var project in projects)
+        {
+            if (project.FilePath is { } path && ProjectRestoreCheck.Diagnose(project) is { } reason)
+            {
+                disclosures.Add(new Disclosure(
+                    DisclosureKinds.ProjectNotRestored,
+                    DisclosureKinds.ProjectNotRestoredDetail(project.Name, reason),
+                    path,
+                    SpanStart: 0));
+            }
+        }
+
+        return disclosures;
+    }
+
+    private static bool SameRestoreState(CodeGraph previous, IReadOnlyCollection<Disclosure> current)
+    {
+        var before = previous.Disclosures.Where(static d => d.Kind == DisclosureKinds.ProjectNotRestored).ToHashSet();
+        return before.SetEquals(current);
+    }
+
+    private static int CountDisclosures(CodeGraph graph, string kind, bool distinctDetail)
+    {
+        var matching = graph.Disclosures.Where(d => d.Kind == kind);
+        return distinctDetail
+            ? matching.Select(static d => d.Detail).Distinct(StringComparer.Ordinal).Count()
+            : matching.Count();
     }
 
     /// <summary>
@@ -263,6 +345,7 @@ internal static class SolutionAnalysisEngine
             }
         }
 
+        pruned.CopyFactsFrom(graph);
         return pruned;
     }
 
@@ -311,6 +394,7 @@ internal static class SolutionAnalysisEngine
             }
         }
 
+        pruned.CopyFactsFrom(graph);
         return pruned;
     }
 

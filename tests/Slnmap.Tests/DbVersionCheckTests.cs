@@ -96,6 +96,129 @@ public sealed class DbVersionCheckTests : IDisposable
     }
 
     [Fact]
+    public async Task OlderSchemaVersion_SameToolVersion_TriggersFullRebuild()
+    {
+        // Schema v2 (v0.14.0): the tool-version check alone is not enough — a development build
+        // keeps its version across the schema bump, and a v1 graph lacks data (accessibility,
+        // fact tables) no incremental run could backfill for unchanged files.
+        string solutionPath = CopyFixtureSolution();
+        string dbPath = Path.Combine(_root, "graph.db");
+
+        var snapshot = await new RoslynSolutionAnalyzer().AnalyzeAsync(solutionPath);
+        await using (var seed = new SqliteGraphStore(dbPath))
+        {
+            var meta = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [MetaKeys.SolutionPath] = solutionPath,
+                [MetaKeys.LastAnalyzed] = "test",
+                [MetaKeys.ToolVersion] = CurrentVersion,
+            };
+            await seed.SaveAsync(snapshot.Graph, snapshot.Files, meta);
+        }
+
+        await using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbPath};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = "UPDATE meta SET value = '1' WHERE key = 'schema_version';";
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var (exit, stdout, stderr) = RunCli("analyze", solutionPath, "-d", dbPath);
+
+        Assert.Equal(0, exit);
+        Assert.Contains(
+            $"graph schema changed (1 -> {SqliteGraphStore.CurrentSchemaVersion}): performing full re-analysis",
+            stderr,
+            StringComparison.Ordinal);
+        Assert.Contains("analyzed, 0 skipped", stdout, StringComparison.Ordinal);
+
+        await using var check = new SqliteGraphStore(dbPath);
+        var savedMeta = await check.GetMetaAsync();
+        Assert.Equal(
+            SqliteGraphStore.CurrentSchemaVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            savedMeta[MetaKeys.SchemaVersion]);
+    }
+
+    [Fact]
+    public async Task RoutePrefix_IsPersisted_AndChangingOrDroppingItForcesAFullRebuild()
+    {
+        // --route-prefix (v0.14.0) rewrites every controller endpoint's template; an incremental
+        // run under a different prefix would mix old and new templates from carried-over files.
+        string solutionPath = CopyFixtureSolution();
+        string dbPath = Path.Combine(_root, "graph.db");
+
+        var (firstExit, _, _) = RunCli("analyze", solutionPath, "-d", dbPath, "--route-prefix", "/api/");
+        Assert.Equal(0, firstExit);
+        await using (var store = new SqliteGraphStore(dbPath))
+        {
+            Assert.Equal("/api", (await store.GetMetaAsync())[MetaKeys.RoutePrefix]);
+        }
+
+        var (sameExit, _, sameErr) = RunCli("analyze", solutionPath, "-d", dbPath, "--route-prefix", "api");
+        Assert.Equal(0, sameExit);
+        Assert.DoesNotContain("--route-prefix changed", sameErr, StringComparison.Ordinal); // same prefix, normalized
+
+        var (changedExit, changedOut, changedErr) = RunCli("analyze", solutionPath, "-d", dbPath, "--route-prefix", "v2");
+        Assert.Equal(0, changedExit);
+        Assert.Contains("--route-prefix changed (/api -> /v2): performing full re-analysis", changedErr, StringComparison.Ordinal);
+        Assert.Contains("analyzed, 0 skipped", changedOut, StringComparison.Ordinal);
+
+        var (droppedExit, _, droppedErr) = RunCli("analyze", solutionPath, "-d", dbPath);
+        Assert.Equal(0, droppedExit);
+        Assert.Contains("--route-prefix changed (/v2 -> none): performing full re-analysis", droppedErr, StringComparison.Ordinal);
+        await using (var store = new SqliteGraphStore(dbPath))
+        {
+            Assert.False((await store.GetMetaAsync()).ContainsKey(MetaKeys.RoutePrefix));
+        }
+    }
+
+    [Fact]
+    public async Task LinkAndAnalyzeTs_RefuseAnOlderSchemaGraph_InsteadOfStampingItCurrent()
+    {
+        // v0.14.0 QA finding 1: both re-save the graph they load, and every save writes the current
+        // schema version — a v1 graph would come out claiming v2 with none of the v2 data.
+        string dbPath = Path.Combine(_root, "graph.db");
+        var graph = new Slnmap.Core.Graph.CodeGraph();
+        graph.AddNode(Slnmap.Core.Graph.SymbolNode.Create(Slnmap.Core.Graph.NodeKind.Endpoint, "/api/x", "GET /api/x"));
+        await using (var seed = new SqliteGraphStore(dbPath))
+        {
+            await seed.SaveAsync(graph, [], new Dictionary<string, string>(StringComparer.Ordinal) { [MetaKeys.LastAnalyzed] = "test" });
+        }
+
+        await using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbPath};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = "UPDATE meta SET value = '1' WHERE key = 'schema_version';";
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var (linkExit, _, linkErr) = RunCli("link", "-d", dbPath);
+        Assert.Equal(1, linkExit);
+        Assert.Contains("built by an older slnmap (schema 1", linkErr, StringComparison.Ordinal);
+        Assert.Contains("re-run 'link'", linkErr, StringComparison.Ordinal);
+
+        string frontend = Path.Combine(_root, "frontend");
+        Directory.CreateDirectory(frontend);
+        var (tsExit, _, tsErr) = RunCli("analyze-ts", frontend, "-d", dbPath);
+        Assert.NotEqual(0, tsExit);
+
+        await using var check = new SqliteGraphStore(dbPath);
+        Assert.Equal("1", (await check.GetMetaAsync())[MetaKeys.SchemaVersion]); // untouched
+        _ = tsErr;
+    }
+
+    [Theory]
+    [InlineData("api//v1", "/api/v1")]
+    [InlineData(" /api/ ", "/api")]
+    [InlineData("//", null)]
+    public void NormalizeRoutePrefix_CollapsesEmptySegments(string raw, string? expected)
+    {
+        Assert.Equal(expected, Slnmap.Core.Analysis.AnalysisOptions.NormalizeRoutePrefix(raw));
+    }
+
+    [Fact]
     public void MatchingVersion_IncrementalPathUnaffected()
     {
         string solutionPath = CopyFixtureSolution();

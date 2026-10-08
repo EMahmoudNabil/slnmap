@@ -191,4 +191,45 @@ internal static partial class RouteTemplate
 
         return !(templateHoleAbsorbedQueryLiteral && queryHoleAbsorbedTemplateLiteral);
     }
+
+    /// <summary>
+    /// v0.14.0 (B4): <see cref="Matches"/>, except that at each segment index in
+    /// <paramref name="tokenSegments"/> — the template segments substituted from a
+    /// [controller]/[action]/[area] token — both sides are compared with <c>-</c> and <c>_</c>
+    /// removed. That is the shape a <c>RouteTokenTransformerConvention</c> (e.g. a kebab-case
+    /// slugifier) produces from a C# identifier, which never contains either character. Literal
+    /// segments are never tolerated: the transformer does not touch them, so a hyphen there is a
+    /// real difference. Callers must only use this when such a convention is registered, and must
+    /// mark any match made through it.
+    /// </summary>
+    public static bool MatchesWithTokenTolerance(string normalizedTemplate, string normalizedQuery, IReadOnlySet<int> tokenSegments)
+    {
+        if (tokenSegments.Count == 0)
+        {
+            return Matches(normalizedTemplate, normalizedQuery);
+        }
+
+        string[] templateSegments = normalizedTemplate.Split('/');
+        string[] querySegments = normalizedQuery.Split('/');
+        if (templateSegments.Length != querySegments.Length)
+        {
+            return false;
+        }
+
+        foreach (int i in tokenSegments)
+        {
+            if (i < 0 || i >= templateSegments.Length || querySegments[i] == "{x}")
+            {
+                continue;
+            }
+
+            templateSegments[i] = StripSeparators(templateSegments[i]);
+            querySegments[i] = StripSeparators(querySegments[i]);
+        }
+
+        return Matches(string.Join('/', templateSegments), string.Join('/', querySegments));
+    }
+
+    private static string StripSeparators(string segment) =>
+        segment.Replace("-", string.Empty, StringComparison.Ordinal).Replace("_", string.Empty, StringComparison.Ordinal);
 }

@@ -1,5 +1,6 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Slnmap.Core.Analysis;
 using Slnmap.Core.Graph;
 
 namespace Slnmap.Analysis;
@@ -7,11 +8,20 @@ namespace Slnmap.Analysis;
 internal sealed record DocumentResult(
     IReadOnlyList<SymbolNode> Nodes,
     IReadOnlyList<RelationshipEdge> Edges,
-    IReadOnlyList<string> Warnings,
-    int UnresolvedEndpoints,
-    int ConventionalControllers,
-    int RazorPagesNotModeled,
-    int ControllerLikeClassesUnrecognized = 0);
+    IReadOnlyList<string> Warnings)
+{
+    /// <summary>
+    /// What this document's walk found but could not model. Counters are derived from these over
+    /// the merged graph (never summed per run), so they survive incremental re-analysis.
+    /// </summary>
+    public IReadOnlyList<Disclosure> Disclosures { get; init; } = [];
+
+    public IReadOnlyList<ExternalCall> ExternalCalls { get; init; } = [];
+
+    public IReadOnlyList<DiRegistration> DiRegistrations { get; init; } = [];
+
+    public IReadOnlyList<AttributeUsage> AttributeUsages { get; init; } = [];
+}
 
 /// <summary>
 /// Extracts nodes and edges from a single document. Declarations produce nodes and
@@ -30,16 +40,28 @@ internal sealed class DocumentWalker
     private readonly HashSet<INamedTypeSymbol> _conventionalControllers = new(SymbolEqualityComparer.Default);
     private readonly HashSet<INamedTypeSymbol> _razorPagesNotModeled = new(SymbolEqualityComparer.Default);
     private readonly HashSet<INamedTypeSymbol> _controllerLikeUnrecognized = new(SymbolEqualityComparer.Default);
-    private int _unresolvedEndpoints;
+    private readonly List<Disclosure> _disclosures = [];
+    private readonly List<AttributeUsage> _attributeUsages = [];
+    private readonly List<DiRegistration> _diRegistrations = [];
+    private readonly Dictionary<(string Caller, string Target), ExternalCall> _externalCalls = [];
+    private readonly Dictionary<IMethodSymbol, string> _externalTargetFqns = new(SymbolEqualityComparer.Default);
+    private readonly string _projectName;
+    private readonly string? _routePrefix;
 
-    private DocumentWalker(SemanticModel model, string projectNodeId, CancellationToken cancellationToken)
+    private DocumentWalker(SemanticModel model, string projectNodeId, string projectName, AnalysisOptions options, CancellationToken cancellationToken)
     {
         _model = model;
         _projectNodeId = projectNodeId;
+        _projectName = projectName;
+        _routePrefix = AnalysisOptions.NormalizeRoutePrefix(options.RoutePrefix);
         _cancellationToken = cancellationToken;
     }
 
-    public static async Task<DocumentResult?> AnalyzeAsync(Document document, string projectNodeId, CancellationToken cancellationToken)
+    public static Task<DocumentResult?> AnalyzeAsync(Document document, string projectNodeId, CancellationToken cancellationToken) =>
+        AnalyzeAsync(document, projectNodeId, AnalysisOptions.Default, cancellationToken);
+
+    public static async Task<DocumentResult?> AnalyzeAsync(
+        Document document, string projectNodeId, AnalysisOptions options, CancellationToken cancellationToken)
     {
         var model = await document.GetSemanticModelAsync(cancellationToken).ConfigureAwait(false);
         var root = await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
@@ -48,12 +70,15 @@ internal sealed class DocumentWalker
             return null;
         }
 
-        var walker = new DocumentWalker(model, projectNodeId, cancellationToken);
+        var walker = new DocumentWalker(model, projectNodeId, document.Project.Name, options, cancellationToken);
         walker.Visit(root);
-        return new DocumentResult(
-            walker._nodes, walker._edges, walker._warnings, walker._unresolvedEndpoints,
-            walker._conventionalControllers.Count, walker._razorPagesNotModeled.Count,
-            walker._controllerLikeUnrecognized.Count);
+        return new DocumentResult(walker._nodes, walker._edges, walker._warnings)
+        {
+            Disclosures = walker._disclosures,
+            AttributeUsages = walker._attributeUsages,
+            DiRegistrations = walker._diRegistrations,
+            ExternalCalls = [.. walker._externalCalls.Values],
+        };
     }
 
     private void Visit(SyntaxNode root)
@@ -87,7 +112,7 @@ internal sealed class DocumentWalker
                         if (hasBaseList || controllerishSignal is not null)
                         {
                             HandleControllerAction(method, methodSymbol, syntacticOnlySignal: controllerishSignal);
-                            HandleRazorPageHandler(methodSymbol);
+                            HandleRazorPageHandler(method, methodSymbol);
                         }
                     }
 
@@ -108,6 +133,9 @@ internal sealed class DocumentWalker
                 // census-inconsistency objection that kept them unmodeled, #13).
                 case EnumMemberDeclarationSyntax enumMember:
                     GetOrCreateNode(_model.GetDeclaredSymbol(enumMember, _cancellationToken));
+                    break;
+                case AttributeSyntax attribute:
+                    HandleAttribute(attribute);
                     break;
                 case InvocationExpressionSyntax invocation:
                     HandleInvocation(invocation);
@@ -214,23 +242,38 @@ internal sealed class DocumentWalker
             return;
         }
 
-        // v0.13.1 (reports/v0130-regression-investigation-0of22-realworld.md): a call shaped like
-        // `opt.Conventions.Add(someConvention)` registers an IApplicationModelConvention, which
-        // can mutate route templates at MVC application-model-build time (e.g. inject a base-path
-        // prefix) invisibly to static analysis — confirmed as the real root cause of a 0/22
-        // regression against gothinkster/aspnetcore-realworld-example-app's actual
-        // `ApiRoutePrefixConvention`. Cheap honesty only: recognized by the PARAMETER TYPE being
-        // (or implementing) `IApplicationModelConvention` — never by the receiver's variable name
-        // or declared type (`MvcOptions`, `RazorPagesOptions`, ... all expose the same
-        // `IList<IApplicationModelConvention> Conventions` shape) — no attempt is made to
-        // interpret what the convention actually does.
-        if (IsApplicationModelConventionsAdd(method))
+        // A registered MVC model convention can rewrite route templates at application-model
+        // build time (e.g. inject a base-path prefix, or slugify [controller]/[action] tokens)
+        // invisibly to static analysis. v0.13.1 disclosed only IApplicationModelConvention
+        // registrations (reports/v0130-regression-investigation-0of22-realworld.md); v0.14.0
+        // (reports/gap-b-route-conventions-investigation.md) adds the controller- and
+        // action-model overloads — eShopOnWeb's RouteTokenTransformerConvention went through one
+        // undisclosed — and records each as a file-owned Disclosure so it reaches MCP results and
+        // survives incremental runs. Recognized by the convention's real type, never by the
+        // receiver's name; what the convention actually does is never interpreted.
+        if (TryDescribeConventionRegistration(invocation, method) is { } convention)
         {
+            Disclose(DisclosureKinds.RouteConvention, convention, invocation);
             _warnings.Add(
-                $"MvcOptions.Conventions.Add(...) at {Location(invocation)} registers an IApplicationModelConvention, "
-                + "which can mutate route templates at runtime (e.g. inject a base-path prefix) invisibly to static "
-                + "analysis — extracted controller endpoint templates may not reflect what the app actually serves. "
-                + "slnmap does not interpret convention implementations.");
+                $"Route convention {convention} registered at {Location(invocation)} can rewrite route templates at "
+                + "runtime (e.g. inject a base-path prefix, or transform [controller]/[action] tokens) invisibly to "
+                + "static analysis — extracted controller endpoint templates may not reflect what the app actually "
+                + "serves. slnmap does not interpret convention implementations.");
+        }
+
+        // v0.14.0 (get_di_registrations): Microsoft.Extensions.DependencyInjection registration
+        // calls are external, so they would die at the external-target early return below too.
+        if (DiRegistrationFacts.TryRead(invocation, method, _model, _cancellationToken) is { } registration)
+        {
+            _diRegistrations.Add(new DiRegistration(
+                registration.ServiceFqn,
+                registration.ImplementationFqn,
+                registration.Lifetime,
+                registration.RegistrationKind,
+                GetEnclosingMemberNode(invocation)?.Id,
+                invocation.SyntaxTree.FilePath,
+                invocation.SpanStart,
+                _projectName));
         }
 
         // Minimal-API endpoint registrations (Map* calls) would otherwise die at the external-target
@@ -255,6 +298,7 @@ internal sealed class DocumentWalker
         var target = GetOrCreateNode(method);
         if (target is null)
         {
+            RecordExternalCall(invocation, method);
             return;
         }
 
@@ -265,26 +309,200 @@ internal sealed class DocumentWalker
     }
 
     /// <summary>
-    /// True for a call to <c>Add</c> whose single parameter type IS (or implements)
-    /// <c>Microsoft.AspNetCore.Mvc.ApplicationModels.IApplicationModelConvention</c> — checked by
-    /// the parameter's real type, never the receiver's declared type or variable name, so this
-    /// recognizes <c>MvcOptions.Conventions.Add(...)</c>, <c>RazorPagesOptions.Conventions.Add(...)</c>,
-    /// and any equivalent <c>IList&lt;IApplicationModelConvention&gt;</c>-shaped collection alike.
+    /// v0.14.0 (find_callers_of_external, docs/EXPANSION-SPECS.md §7): a call into a symbol
+    /// outside the solution — a package or framework method — is recorded as a fact keyed by the
+    /// target's FQN, namespace and assembly (never a node: there is nothing in source to point
+    /// at). Attributed to the enclosing member, or the enclosing type for an initializer.
     /// </summary>
-    private static bool IsApplicationModelConventionsAdd(IMethodSymbol method)
+    private void RecordExternalCall(SyntaxNode site, IMethodSymbol method)
     {
-        if (method.Name != "Add" || method.Parameters.Length != 1)
+        var original = method.OriginalDefinition;
+        if (SymbolFacts.IsInSource(original) || original.ContainingType is not { } containingType)
         {
-            return false;
+            return;
         }
 
-        return method.Parameters[0].Type is INamedTypeSymbol parameterType
-            && (IsApplicationModelConventionType(parameterType)
-                || parameterType.AllInterfaces.Any(IsApplicationModelConventionType));
+        if ((GetEnclosingMemberNode(site) ?? GetEnclosingTypeNode(site)) is not { } caller)
+        {
+            return;
+        }
+
+        // Rendered once per target per document: a generated EF model snapshot repeats the same
+        // few fluent-API methods thousands of times.
+        if (!_externalTargetFqns.TryGetValue(original, out var targetFqn))
+        {
+            targetFqn = original.ToDisplayString(SymbolFacts.FqnFormat);
+            _externalTargetFqns.Add(original, targetFqn);
+        }
+
+        if (_externalCalls.TryGetValue((caller.Id, targetFqn), out var existing))
+        {
+            // One fact per (caller, target): the first site plus a count (document order, so
+            // "first" is the earliest in the file).
+            _externalCalls[(caller.Id, targetFqn)] = existing with { CallCount = existing.CallCount + 1 };
+            return;
+        }
+
+        _externalCalls[(caller.Id, targetFqn)] = new ExternalCall(
+            caller.Id,
+            targetFqn,
+            containingType.ContainingNamespace is { IsGlobalNamespace: false } ns ? ns.ToDisplayString() : string.Empty,
+            original.ContainingAssembly?.Name,
+            site.SyntaxTree.FilePath,
+            site.SpanStart);
     }
 
-    private static bool IsApplicationModelConventionType(INamedTypeSymbol type) =>
-        type is { Name: "IApplicationModelConvention", ContainingNamespace: { } ns }
+    /// <summary>
+    /// An attribute whose class implements a controller- or action-model convention is applied by
+    /// MVC to the decorated controller/action at startup — the attribute form of the same
+    /// route-rewriting hook <see cref="TryDescribeConventionRegistration"/> discloses for
+    /// <c>Conventions.Add</c>. Disclosed the same way.
+    /// </summary>
+    private void HandleAttribute(AttributeSyntax attribute)
+    {
+        var resolved = _model.GetTypeInfo(attribute, _cancellationToken).Type as INamedTypeSymbol;
+        RecordAttributeUsage(attribute, resolved);
+
+        if (resolved is not { } type || ConventionInterfaceOf(type) is not { } iface)
+        {
+            return;
+        }
+
+        string convention = $"{TypeFqn(type)} ({iface}, applied as an attribute)";
+        Disclose(DisclosureKinds.RouteConvention, convention, attribute);
+        _warnings.Add(
+            $"Route convention {convention} at {Location(attribute)} can rewrite route templates at runtime "
+            + "invisibly to static analysis — extracted controller endpoint templates may not reflect what the app "
+            + "actually serves. slnmap does not interpret convention implementations.");
+    }
+
+    /// <summary>
+    /// v0.14.0 (get_attribute_usages, docs/EXPANSION-SPECS.md §10): records the attribute against
+    /// the symbol it decorates. The attribute is stored by FQN as text — it is usually a framework
+    /// type, never a node. Parameter, return-value, accessor and type-parameter attributes are
+    /// attributed to their containing member/type; assembly- and module-level ones to the project.
+    /// An attribute whose type does not resolve is still recorded, as "unresolved:{name as written}",
+    /// rather than dropped.
+    /// </summary>
+    private void RecordAttributeUsage(AttributeSyntax attribute, INamedTypeSymbol? type)
+    {
+        string attributeFqn = type is { TypeKind: not TypeKind.Error }
+            ? type.OriginalDefinition.ToDisplayString(SymbolFacts.FqnFormat)
+            : "unresolved:" + attribute.Name.ToString();
+        string file = attribute.SyntaxTree.FilePath;
+
+        foreach (string targetId in AttributeTargets(attribute))
+        {
+            _attributeUsages.Add(new AttributeUsage(targetId, attributeFqn, file, attribute.SpanStart));
+        }
+    }
+
+    /// <summary>Node ids of what an attribute decorates (several for a multi-declarator field).</summary>
+    private IEnumerable<string> AttributeTargets(AttributeSyntax attribute)
+    {
+        if (attribute.Parent is not AttributeListSyntax list)
+        {
+            yield break;
+        }
+
+        if (list.Parent is CompilationUnitSyntax)
+        {
+            // [assembly: ...] / [module: ...]
+            yield return _projectNodeId;
+            yield break;
+        }
+
+        if (list.Parent is BaseFieldDeclarationSyntax field)
+        {
+            foreach (var declarator in field.Declaration.Variables)
+            {
+                if (GetOrCreateNode(_model.GetDeclaredSymbol(declarator, _cancellationToken)) is { } fieldNode)
+                {
+                    yield return fieldNode.Id;
+                }
+            }
+
+            yield break;
+        }
+
+        // Walk up to the nearest declaration that is a node: a parameter, accessor, type parameter
+        // or return-value attribute lands on the member or type that owns it.
+        for (SyntaxNode? owner = list.Parent; owner is not null; owner = owner.Parent)
+        {
+            if (owner is MemberDeclarationSyntax or EnumMemberDeclarationSyntax or LocalFunctionStatementSyntax
+                && _model.GetDeclaredSymbol(owner, _cancellationToken) is { } declared
+                && GetOrCreateNode(declared) is { } node)
+            {
+                yield return node.Id;
+                yield break;
+            }
+
+            if (owner is LambdaExpressionSyntax or AnonymousFunctionExpressionSyntax
+                && GetEnclosingMemberNode(owner) is { } enclosing)
+            {
+                yield return enclosing.Id;
+                yield break;
+            }
+        }
+
+        // No owning declaration is a node (a local function in top-level statements, an operator,
+        // a destructor): fall back to the enclosing type, then the project — never drop the usage
+        // (v0.14.0 QA finding 8).
+        yield return (GetEnclosingMemberNode(list) ?? GetEnclosingTypeNode(list))?.Id ?? _projectNodeId;
+    }
+
+    /// <summary>The MVC model-convention interfaces whose implementations can rewrite routes.</summary>
+    private static readonly string[] RouteConventionInterfaces =
+        ["IApplicationModelConvention", "IControllerModelConvention", "IActionModelConvention"];
+
+    /// <summary>
+    /// For a call registering an MVC model convention — <c>Add</c> or <c>Insert</c> whose LAST
+    /// parameter is (or implements) <c>IApplicationModelConvention</c>, <c>IControllerModelConvention</c>
+    /// or <c>IActionModelConvention</c> — describes it as <c>"{argument type FQN} ({interface})"</c>.
+    /// Covers <c>MvcOptions.Conventions.Add/Insert(...)</c> and ASP.NET's
+    /// <c>ApplicationModelConventionExtensions.Add(this IList&lt;IApplicationModelConvention&gt;, IControllerModelConvention/IActionModelConvention)</c>
+    /// overloads alike, by the parameter's real type, never the receiver's name. Null otherwise.
+    /// </summary>
+    private string? TryDescribeConventionRegistration(InvocationExpressionSyntax invocation, IMethodSymbol method)
+    {
+        if (method.Name is not ("Add" or "Insert")
+            || method.Parameters.Length is 0
+            || method.Parameters[^1].Type is not INamedTypeSymbol parameterType
+            || ConventionInterfaceOf(parameterType) is not { } parameterInterface
+            || invocation.ArgumentList.Arguments.Count == 0)
+        {
+            return null;
+        }
+
+        // Prefer the argument's concrete type ("ApiRoutePrefixConvention"), which is what a reader
+        // can go and look at; fall back to the parameter's type when the argument has none.
+        var argument = invocation.ArgumentList.Arguments[^1].Expression;
+        var argumentType = _model.GetTypeInfo(argument, _cancellationToken).Type as INamedTypeSymbol;
+        var described = argumentType ?? parameterType;
+        string iface = ConventionInterfaceOf(described) ?? parameterInterface;
+        return $"{TypeFqn(described)} ({iface})";
+    }
+
+    /// <summary>
+    /// The model-convention interface <paramref name="type"/> is or implements (application-level
+    /// first), or null. Matched by name AND namespace, so a same-named user interface never counts.
+    /// </summary>
+    private static string? ConventionInterfaceOf(INamedTypeSymbol type)
+    {
+        foreach (string name in RouteConventionInterfaces)
+        {
+            if (IsConventionInterface(type, name) || type.AllInterfaces.Any(i => IsConventionInterface(i, name)))
+            {
+                return name;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool IsConventionInterface(INamedTypeSymbol type, string name) =>
+        type is { TypeKind: TypeKind.Interface, ContainingNamespace: { } ns }
+        && type.Name == name
         && ns.ToDisplayString() == "Microsoft.AspNetCore.Mvc.ApplicationModels";
 
     private void HandleObjectCreation(BaseObjectCreationExpressionSyntax creation)
@@ -297,6 +515,7 @@ internal sealed class DocumentWalker
         var target = GetOrCreateNode(constructor.ContainingType);
         if (target is null)
         {
+            RecordExternalCall(creation, constructor);
             return;
         }
 
@@ -562,7 +781,7 @@ internal sealed class DocumentWalker
 
         if (extraction.Template is null)
         {
-            _unresolvedEndpoints++;
+            Disclose(DisclosureKinds.UnresolvedEndpoint, extraction.UnresolvedReason ?? "unresolved", invocation);
             _warnings.Add($"Unresolved endpoint registration at {Location(invocation)}: {extraction.UnresolvedReason} (counted, not guessed).");
             return;
         }
@@ -669,6 +888,7 @@ internal sealed class DocumentWalker
                 && !ControllerEndpointFacts.IsController(method.ContainingType)
                 && _controllerLikeUnrecognized.Add(method.ContainingType))
             {
+                Disclose(DisclosureKinds.ControllerLikeUnrecognized, TypeFqn(method.ContainingType), declaration);
                 _warnings.Add(
                     $"Class '{method.ContainingType.Name}' looks like a controller ({syntacticOnlySignal}) but was not "
                     + "recognized as one — it doesn't derive from ControllerBase and doesn't match ASP.NET's "
@@ -683,6 +903,7 @@ internal sealed class DocumentWalker
         {
             if (_conventionalControllers.Add(method.ContainingType))
             {
+                Disclose(DisclosureKinds.ConventionalController, TypeFqn(method.ContainingType), declaration);
                 _warnings.Add(
                     $"Controller '{method.ContainingType.Name}' is conventionally routed (no route attributes) — "
                     + "its actions are not modeled as endpoints (attribute routing only).");
@@ -693,7 +914,7 @@ internal sealed class DocumentWalker
 
         foreach (string reason in classification.UnresolvedReasons)
         {
-            _unresolvedEndpoints++;
+            Disclose(DisclosureKinds.UnresolvedEndpoint, reason, declaration);
             _warnings.Add($"Unresolved endpoint registration at {Location(declaration)}: {reason} (counted, not guessed).");
         }
 
@@ -705,8 +926,15 @@ internal sealed class DocumentWalker
         var handlerNode = GetOrCreateNode(method);
         var controllerNode = GetOrCreateNode(method.ContainingType);
         var location = declaration.GetLocation();
-        foreach (var (verb, template) in classification.Routes)
+        int prefixSegments = _routePrefix is null ? 0 : _routePrefix.Trim('/').Split('/').Length;
+        for (int routeIndex = 0; routeIndex < classification.Routes.Count; routeIndex++)
         {
+            var (verb, declaredTemplate) = classification.Routes[routeIndex];
+            // --route-prefix (v0.14.0): the user states the prefix a runtime convention adds;
+            // the endpoint is marked so tool output never presents it as derived from code.
+            string template = _routePrefix is null
+                ? declaredTemplate
+                : declaredTemplate.Trim('/').Length == 0 ? _routePrefix : _routePrefix + "/" + declaredTemplate.TrimStart('/');
             var node = SymbolNode.Create(
                 NodeKind.Endpoint,
                 name: template,
@@ -714,6 +942,22 @@ internal sealed class DocumentWalker
                 filePath: location.SourceTree?.FilePath,
                 span: new SourceSpan(location.SourceSpan.Start, location.SourceSpan.End));
             _nodes.Add(node);
+            if (_routePrefix is not null)
+            {
+                Disclose(DisclosureKinds.RoutePrefixApplied, node.Fqn, declaration);
+            }
+
+            // Token provenance (v0.14.0, B4): lets matching tolerate a RouteTokenTransformerConvention's
+            // rewrite of exactly these segments, and no literal one.
+            if (classification.RouteTokenSegments is { } allTokenSegments
+                && routeIndex < allTokenSegments.Count
+                && allTokenSegments[routeIndex].Count > 0)
+            {
+                Disclose(
+                    DisclosureKinds.TokenSegments,
+                    DisclosureKinds.TokenSegmentsDetail(node.Fqn, allTokenSegments[routeIndex].Select(i => i + prefixSegments)),
+                    declaration);
+            }
 
             if (controllerNode is not null)
             {
@@ -734,7 +978,7 @@ internal sealed class DocumentWalker
     /// once per class, mirroring <see cref="HandleControllerAction"/>'s conventionally-routed
     /// case exactly.
     /// </summary>
-    private void HandleRazorPageHandler(IMethodSymbol method)
+    private void HandleRazorPageHandler(MethodDeclarationSyntax declaration, IMethodSymbol method)
     {
         if (!RazorPageFacts.IsPageHandler(method))
         {
@@ -743,6 +987,7 @@ internal sealed class DocumentWalker
 
         if (_razorPagesNotModeled.Add(method.ContainingType))
         {
+            Disclose(DisclosureKinds.RazorPageNotModeled, TypeFqn(method.ContainingType), declaration);
             _warnings.Add(
                 $"Page '{method.ContainingType.Name}' (Razor Pages) has handler methods (OnGet/OnPost/...) — "
                 + "Razor Pages route by file location, not by attribute, so its handlers are not modeled as endpoints.");
@@ -760,6 +1005,11 @@ internal sealed class DocumentWalker
 
         return symbol is INamedTypeSymbol type ? GetOrCreateNode(type) : null;
     }
+
+    private void Disclose(string kind, string detail, SyntaxNode at) =>
+        _disclosures.Add(new Disclosure(kind, detail, at.SyntaxTree.FilePath, at.SpanStart));
+
+    private static string TypeFqn(ITypeSymbol type) => type.OriginalDefinition.ToDisplayString(SymbolFacts.FqnFormat);
 
     private static string Location(SyntaxNode syntax)
     {

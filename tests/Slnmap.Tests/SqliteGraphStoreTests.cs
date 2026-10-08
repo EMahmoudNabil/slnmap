@@ -44,7 +44,7 @@ public sealed class SqliteGraphStoreTests : IDisposable
         Assert.Equal(0, stats.EdgeCount);
 
         var meta = await store.GetMetaAsync();
-        Assert.Equal("1", meta[MetaKeys.SchemaVersion]);
+        Assert.Equal("2", meta[MetaKeys.SchemaVersion]); // schema v2 (v0.14.0)
     }
 
     [Fact]
@@ -85,7 +85,7 @@ public sealed class SqliteGraphStoreTests : IDisposable
 
         var readMeta = await store.GetMetaAsync();
         Assert.Equal("X.sln", readMeta[MetaKeys.SolutionPath]);
-        Assert.Equal("1", readMeta[MetaKeys.SchemaVersion]);
+        Assert.Equal("2", readMeta[MetaKeys.SchemaVersion]); // schema v2 (v0.14.0)
     }
 
     [Fact]

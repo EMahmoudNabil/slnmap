@@ -20,7 +20,7 @@ namespace Slnmap.Tests;
 /// </summary>
 public sealed class McpFailureShapeTests
 {
-    /// <summary>All 15 tools with their real schemas, exactly as the server advertises them.</summary>
+    /// <summary>All tools with their real schemas, exactly as the server advertises them.</summary>
     private static readonly IReadOnlyList<(string Name, string Description, JsonElement InputSchema)> Tools = BuildTools();
 
     private static IReadOnlyList<(string, string, JsonElement)> BuildTools()
@@ -63,9 +63,9 @@ public sealed class McpFailureShapeTests
         Tools.Single(t => t.Name == name);
 
     [Fact]
-    public void AllFifteenToolsAreUnderTest()
+    public void AllToolsAreUnderTest()
     {
-        Assert.Equal(15, Tools.Count);
+        Assert.Equal(19, Tools.Count); // 15 + find_unused_symbols, get_attribute_usages, get_di_registrations, find_callers_of_external (v0.14.0)
     }
 
     // ---- case (a): wrong parameter name ---------------------------------------------------------
@@ -136,7 +136,7 @@ public sealed class McpFailureShapeTests
     public void WrongParameterType_ReturnsInvalidParameterShape(string toolName, string requiredName)
     {
         var (_, _, schema) = Tool(toolName);
-        // Every required parameter across the 15 tools is a string; a number is always the wrong type.
+        // Every required parameter across the tools is a string; a number is always the wrong type.
         var arguments = new Dictionary<string, JsonElement> { [requiredName] = JsonDocument.Parse("42").RootElement };
 
         string? failure = ToolCallValidator.Validate(schema, arguments);
