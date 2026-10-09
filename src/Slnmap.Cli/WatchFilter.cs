@@ -97,7 +97,9 @@ internal sealed class WatchRoot
     /// is all <see cref="FileSystemInfo.ResolveLinkTarget"/> does). Components that don't exist or
     /// can't be read are kept as they are.
     /// </summary>
-    internal static string ResolveRealPath(string path)
+    internal static string ResolveRealPath(string path) => ResolveRealPath(path, depth: 0);
+
+    private static string ResolveRealPath(string path, int depth)
     {
         string full = Path.GetFullPath(path);
         string root = Path.GetPathRoot(full) ?? string.Empty;
@@ -109,9 +111,14 @@ internal sealed class WatchRoot
             try
             {
                 var info = new DirectoryInfo(current);
-                if (info.LinkTarget is not null && info.ResolveLinkTarget(returnFinalTarget: true) is { } target)
+                // A link's target is stored as written and may itself pass through a link
+                // (macOS: a target under /var is really under /private/var), so resolve it again.
+                // The depth bound stops a link cycle.
+                if (info.LinkTarget is not null
+                    && depth < 32
+                    && info.ResolveLinkTarget(returnFinalTarget: true) is { } target)
                 {
-                    current = target.FullName;
+                    current = ResolveRealPath(target.FullName, depth + 1);
                 }
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)

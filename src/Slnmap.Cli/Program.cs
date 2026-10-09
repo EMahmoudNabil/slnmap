@@ -622,7 +622,6 @@ watchCommand.SetAction(async (parseResult, cancellationToken) =>
     Console.WriteLine(pal.Label("Graph:     ") + pal.Number(snapshot.Graph.NodeCount.ToString(CultureInfo.InvariantCulture)) + pal.Label(" nodes, ") + pal.Number(snapshot.Graph.EdgeCount.ToString(CultureInfo.InvariantCulture)) + pal.Label(" edges"));
     Console.WriteLine(pal.Label("Elapsed:   ") + pal.Success($"{stopwatch.Elapsed.TotalSeconds.ToString("F1", CultureInfo.InvariantCulture)}s"));
     Console.WriteLine(pal.Label("Saved:     ") + pal.Label(store.DatabasePath));
-    Console.WriteLine(pal.Label("Watching:  ") + pal.Label(Path.GetDirectoryName(solution)!) + pal.Label("  (Ctrl+C to stop; run 'slnmap serve' beside this — it reads the same file)"));
 
     string watchRoot = Path.GetDirectoryName(solution)!;
     var realWatchRoot = new Slnmap.Cli.WatchRoot(watchRoot);
@@ -656,6 +655,11 @@ watchCommand.SetAction(async (parseResult, cancellationToken) =>
     watcher.Deleted += (_, e) => Enqueue(e.FullPath);
     watcher.Renamed += (_, e) => { Enqueue(e.OldFullPath); Enqueue(e.FullPath); };
     watcher.EnableRaisingEvents = true;
+
+    // Printed only once the watcher is live: a save made after this line is never missed. On
+    // macOS, FSEvents takes a moment to start, and a save between an earlier readiness line and
+    // the stream starting was silently lost (found by the first macOS CI run).
+    Console.WriteLine(pal.Label("Watching:  ") + pal.Label(Path.GetDirectoryName(solution)!) + pal.Label("  (Ctrl+C to stop; run 'slnmap serve' beside this — it reads the same file)"));
 
     var current = snapshot;
     try
