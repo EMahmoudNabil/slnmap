@@ -58,3 +58,68 @@ internal sealed class WatchFilter
         return WatchVerdict.Ignore;
     }
 }
+
+/// <summary>
+/// Maps between the directory `slnmap watch` was given and its fully resolved real path (v0.14.1).
+/// On macOS, FileSystemWatcher (FSEvents) reports nothing when the watched directory is reached
+/// through a symlink — the default temp folder `/var/folders/…` is really `/private/var/folders/…`
+/// — so the watcher must watch the real path, and each event path is mapped back to the path the
+/// workspace knows its documents by. Found by the first macOS CI run: watch never saw a save.
+/// </summary>
+internal sealed class WatchRoot
+{
+    private readonly string _givenRoot;
+
+    public WatchRoot(string givenRoot)
+    {
+        _givenRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(givenRoot));
+        RealRoot = Path.TrimEndingDirectorySeparator(ResolveRealPath(_givenRoot));
+    }
+
+    /// <summary>The directory to hand to FileSystemWatcher.</summary>
+    public string RealRoot { get; }
+
+    /// <summary>An event path under <see cref="RealRoot"/>, rewritten under the given root.</summary>
+    public string MapBack(string eventPath)
+    {
+        if (string.Equals(RealRoot, _givenRoot, StringComparison.Ordinal)
+            || !eventPath.StartsWith(RealRoot, StringComparison.Ordinal)
+            || (eventPath.Length > RealRoot.Length && eventPath[RealRoot.Length] != Path.DirectorySeparatorChar))
+        {
+            return eventPath;
+        }
+
+        return _givenRoot + eventPath[RealRoot.Length..];
+    }
+
+    /// <summary>
+    /// Resolves every symlinked component of <paramref name="path"/> (not just the last one, which
+    /// is all <see cref="FileSystemInfo.ResolveLinkTarget"/> does). Components that don't exist or
+    /// can't be read are kept as they are.
+    /// </summary>
+    internal static string ResolveRealPath(string path)
+    {
+        string full = Path.GetFullPath(path);
+        string root = Path.GetPathRoot(full) ?? string.Empty;
+        string current = root;
+        foreach (string part in full[root.Length..].Split(
+            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries))
+        {
+            current = Path.Combine(current, part);
+            try
+            {
+                var info = new DirectoryInfo(current);
+                if (info.LinkTarget is not null && info.ResolveLinkTarget(returnFinalTarget: true) is { } target)
+                {
+                    current = target.FullName;
+                }
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // Keep the component as written.
+            }
+        }
+
+        return current;
+    }
+}

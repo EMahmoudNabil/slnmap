@@ -625,13 +625,15 @@ watchCommand.SetAction(async (parseResult, cancellationToken) =>
     Console.WriteLine(pal.Label("Watching:  ") + pal.Label(Path.GetDirectoryName(solution)!) + pal.Label("  (Ctrl+C to stop; run 'slnmap serve' beside this — it reads the same file)"));
 
     string watchRoot = Path.GetDirectoryName(solution)!;
+    var realWatchRoot = new Slnmap.Cli.WatchRoot(watchRoot);
     var filter = new Slnmap.Cli.WatchFilter(store.DatabasePath);
     var pendingLock = new object();
     var pending = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     var lastEvent = Stopwatch.StartNew();
 
-    void Enqueue(string path)
+    void Enqueue(string eventPath)
     {
+        string path = realWatchRoot.MapBack(eventPath);
         if (filter.Classify(path) == Slnmap.Cli.WatchVerdict.Ignore)
         {
             return;
@@ -644,7 +646,7 @@ watchCommand.SetAction(async (parseResult, cancellationToken) =>
         }
     }
 
-    using var watcher = new FileSystemWatcher(watchRoot)
+    using var watcher = new FileSystemWatcher(realWatchRoot.RealRoot)
     {
         IncludeSubdirectories = true,
         NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.Size,
