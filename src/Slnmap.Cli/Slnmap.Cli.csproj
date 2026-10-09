@@ -8,7 +8,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>slnmap</ToolCommandName>
     <PackageId>Slnmap</PackageId>
-    <Version>0.14.0</Version>
+    <Version>0.14.1</Version>
     <RollForward>Major</RollForward>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>
@@ -16,28 +16,20 @@
     <Copyright>Copyright (c) 2026 the Slnmap authors. All rights reserved.</Copyright>
     <PackageProjectUrl>https://slnmap.dev</PackageProjectUrl>
     <PackageTags>dotnet;roslyn;mcp;ai;code-analysis;claude-code;knowledge-graph</PackageTags>
-    <PackageReleaseNotes>Added: four new MCP tools (15 -> 19). find_unused_symbols (public/internal
-symbols nothing references, caveat-first; overrides, interface implementations, entry points, tests
-and generated files excluded and counted), get_attribute_usages (where an attribute is applied),
-get_di_registrations (service -> implementation [lifetime] from your DI registrations; shapes that
-can't be read statically are listed, never dropped), and find_callers_of_external (where the
-solution calls into a package or the framework, by namespace prefix or assembly name).
+    <PackageReleaseNotes>Fixed: slnmap watch never saw a save on macOS (the readiness line was printed before
+the file watcher started; symlinked solution directories are now followed to their real path).
+Fixed: controllers whose [Route]/[Http*] attributes don't resolve (usually an unrestored project)
+were called conventionally routed; they are now disclosed as having unresolved route attributes.
+Fixed: identical refusals on one action are counted separately; find_unused_symbols under a project
+scope reports symbols it can't attribute instead of dropping them.
 
-Added: slnmap analyze --route-prefix states a prefix your app adds to controller routes at startup;
-applied to controller endpoints only and marked [prefix: user-supplied]. Token-transformer-tolerant
-route matching (ignores -/_ in [controller]/[action] segments when a RouteTokenTransformerConvention
-is registered), tried last and always marked.
+Added: stale-restore detection (a package declared after the last restore) in analyze, status,
+every MCP answer and doctor. impact_analysis and find_endpoint mark inferred frontend links.
+macOS CI.
 
-Added: projects analyzed without their dependencies (restore never ran or failed) are now
-disclosed: a warning, a count in analyze and status, a one-line warning on every MCP answer, and a
-Projects restored check in slnmap doctor. A change in restore state forces a full re-analysis.
+Changed: find_circular_dependencies(namespace) about 10x faster on large graphs, same output.
 
-Changed: route-convention disclosure now covers controller/action model conventions and
-convention attributes, and is noted by the endpoint tools. Graph schema v2: the next analyze
-rebuilds an existing graph automatically. The database is larger (+27-41%) and cold analyze
-+6.5-9%.
-
-Fixed: disclosure counters reset to zero on every incremental analyze and watch save.
+No schema change; the next analyze rebuilds once because the version changed.
 
 Source: https://github.com/EMahmoudNabil/slnmap</PackageReleaseNotes>
   </PropertyGroup>

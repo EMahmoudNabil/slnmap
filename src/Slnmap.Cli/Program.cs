@@ -136,6 +136,7 @@ analyzeCommand.SetAction(async (parseResult, cancellationToken) =>
         [MetaKeys.ControllerLikeClassesUnrecognized] = snapshot.Stats.ControllerLikeClassesUnrecognized.ToString(CultureInfo.InvariantCulture),
         [MetaKeys.RouteConventionsRegistered] = snapshot.Stats.RouteConventionsRegistered.ToString(CultureInfo.InvariantCulture),
         [MetaKeys.ProjectsNotRestored] = snapshot.Stats.ProjectsNotRestored.ToString(CultureInfo.InvariantCulture),
+        [MetaKeys.ControllersRouteAttributesUnresolved] = snapshot.Stats.ControllersRouteAttributesUnresolved.ToString(CultureInfo.InvariantCulture),
     };
     SetRoutePrefixMeta(meta, routePrefix);
     await store.SaveAsync(snapshot.Graph, snapshot.Files, meta, cancellationToken).ConfigureAwait(false);
@@ -165,7 +166,7 @@ analyzeCommand.SetAction(async (parseResult, cancellationToken) =>
         ? pal.Success("0")
         : pal.Warn(warnings.Count.ToString(CultureInfo.InvariantCulture));
     string notRestoredNote = stats.ProjectsNotRestored > 0
-        ? pal.Label(", ") + pal.Warn(stats.ProjectsNotRestored.ToString(CultureInfo.InvariantCulture)) + pal.Label(" analyzed without dependencies (not restored?) - their results are incomplete; run 'dotnet restore' and re-analyze (see warnings)")
+        ? pal.Label(", ") + pal.Warn(stats.ProjectsNotRestored.ToString(CultureInfo.InvariantCulture)) + pal.Label(" analyzed with missing dependencies (restore needed?) - their results are incomplete; run 'dotnet restore' and re-analyze (see warnings)")
         : string.Empty;
     Console.WriteLine(pal.Label("Projects:  ") + pal.Number(stats.ProjectCount.ToString(CultureInfo.InvariantCulture)) + notRestoredNote);
     string razorFilesNote = stats.RazorFilesDetected > 0
@@ -174,7 +175,7 @@ analyzeCommand.SetAction(async (parseResult, cancellationToken) =>
     Console.WriteLine(pal.Label("Documents: ") + pal.Number(stats.DocumentsAnalyzed.ToString(CultureInfo.InvariantCulture)) + pal.Label(" analyzed, ") + pal.Number(stats.DocumentsSkipped.ToString(CultureInfo.InvariantCulture)) + pal.Label(" skipped") + razorFilesNote);
     Console.WriteLine(pal.Label("Graph:     ") + pal.Number(graph.NodeCount.ToString(CultureInfo.InvariantCulture)) + pal.Label(" nodes, ") + pal.Number(graph.EdgeCount.ToString(CultureInfo.InvariantCulture)) + pal.Label(" edges"));
     int endpointCount = graph.Nodes.Count(static n => n.Kind == NodeKind.Endpoint);
-    if (endpointCount > 0 || stats.UnresolvedEndpoints > 0 || stats.ConventionalControllers > 0 || stats.RazorPagesNotModeled > 0 || stats.ControllerLikeClassesUnrecognized > 0 || stats.RouteConventionsRegistered > 0)
+    if (endpointCount > 0 || stats.UnresolvedEndpoints > 0 || stats.ConventionalControllers > 0 || stats.RazorPagesNotModeled > 0 || stats.ControllerLikeClassesUnrecognized > 0 || stats.RouteConventionsRegistered > 0 || stats.ControllersRouteAttributesUnresolved > 0)
     {
         string unresolvedValue = stats.UnresolvedEndpoints == 0
             ? pal.Success("0")
@@ -188,10 +189,13 @@ analyzeCommand.SetAction(async (parseResult, cancellationToken) =>
         string controllerLikeNote = stats.ControllerLikeClassesUnrecognized > 0
             ? pal.Label(", ") + pal.Warn(stats.ControllerLikeClassesUnrecognized.ToString(CultureInfo.InvariantCulture)) + pal.Label(" controller-like class(es) not recognized (see warnings)")
             : string.Empty;
+        string unresolvedAttributesNote = stats.ControllersRouteAttributesUnresolved > 0
+            ? pal.Label(", ") + pal.Warn(stats.ControllersRouteAttributesUnresolved.ToString(CultureInfo.InvariantCulture)) + pal.Label(" controller(s) with unresolved route attributes (see warnings)")
+            : string.Empty;
         string conventionsNote = stats.RouteConventionsRegistered > 0
             ? pal.Label(", ") + pal.Warn(stats.RouteConventionsRegistered.ToString(CultureInfo.InvariantCulture)) + pal.Label(" route convention(s) registered - served routes may differ (see warnings)")
             : string.Empty;
-        Console.WriteLine(pal.Label("Endpoints: ") + pal.Number(endpointCount.ToString(CultureInfo.InvariantCulture)) + pal.Label(" mapped, ") + unresolvedValue + pal.Label(" unresolved" + (stats.UnresolvedEndpoints > 0 ? " (see warnings; run --verbose for locations)" : "")) + conventionalNote + razorPagesNote + controllerLikeNote + conventionsNote);
+        Console.WriteLine(pal.Label("Endpoints: ") + pal.Number(endpointCount.ToString(CultureInfo.InvariantCulture)) + pal.Label(" mapped, ") + unresolvedValue + pal.Label(" unresolved" + (stats.UnresolvedEndpoints > 0 ? " (see warnings; run --verbose for locations)" : "")) + conventionalNote + unresolvedAttributesNote + razorPagesNote + controllerLikeNote + conventionsNote);
         int prefixed = snapshot.Graph.Disclosures.Count(static d => d.Kind == DisclosureKinds.RoutePrefixApplied);
         if (prefixed > 0)
         {
@@ -622,16 +626,17 @@ watchCommand.SetAction(async (parseResult, cancellationToken) =>
     Console.WriteLine(pal.Label("Graph:     ") + pal.Number(snapshot.Graph.NodeCount.ToString(CultureInfo.InvariantCulture)) + pal.Label(" nodes, ") + pal.Number(snapshot.Graph.EdgeCount.ToString(CultureInfo.InvariantCulture)) + pal.Label(" edges"));
     Console.WriteLine(pal.Label("Elapsed:   ") + pal.Success($"{stopwatch.Elapsed.TotalSeconds.ToString("F1", CultureInfo.InvariantCulture)}s"));
     Console.WriteLine(pal.Label("Saved:     ") + pal.Label(store.DatabasePath));
-    Console.WriteLine(pal.Label("Watching:  ") + pal.Label(Path.GetDirectoryName(solution)!) + pal.Label("  (Ctrl+C to stop; run 'slnmap serve' beside this — it reads the same file)"));
 
     string watchRoot = Path.GetDirectoryName(solution)!;
+    var realWatchRoot = new Slnmap.Cli.WatchRoot(watchRoot);
     var filter = new Slnmap.Cli.WatchFilter(store.DatabasePath);
     var pendingLock = new object();
     var pending = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     var lastEvent = Stopwatch.StartNew();
 
-    void Enqueue(string path)
+    void Enqueue(string eventPath)
     {
+        string path = realWatchRoot.MapBack(eventPath);
         if (filter.Classify(path) == Slnmap.Cli.WatchVerdict.Ignore)
         {
             return;
@@ -644,7 +649,7 @@ watchCommand.SetAction(async (parseResult, cancellationToken) =>
         }
     }
 
-    using var watcher = new FileSystemWatcher(watchRoot)
+    using var watcher = new FileSystemWatcher(realWatchRoot.RealRoot)
     {
         IncludeSubdirectories = true,
         NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.Size,
@@ -654,6 +659,11 @@ watchCommand.SetAction(async (parseResult, cancellationToken) =>
     watcher.Deleted += (_, e) => Enqueue(e.FullPath);
     watcher.Renamed += (_, e) => { Enqueue(e.OldFullPath); Enqueue(e.FullPath); };
     watcher.EnableRaisingEvents = true;
+
+    // Printed only once the watcher is live: a save made after this line is never missed. On
+    // macOS, FSEvents takes a moment to start, and a save between an earlier readiness line and
+    // the stream starting was silently lost (found by the first macOS CI run).
+    Console.WriteLine(pal.Label("Watching:  ") + pal.Label(Path.GetDirectoryName(solution)!) + pal.Label("  (Ctrl+C to stop; run 'slnmap serve' beside this — it reads the same file)"));
 
     var current = snapshot;
     try
@@ -814,7 +824,7 @@ statusCommand.SetAction(async (parseResult, cancellationToken) =>
         && int.TryParse(notRestoredRaw, NumberStyles.None, CultureInfo.InvariantCulture, out int notRestored)
         && notRestored > 0)
     {
-        Console.WriteLine(pal.Label("Not restored:  ") + pal.Warn(notRestored.ToString(CultureInfo.InvariantCulture)) + pal.Label(" project(s) analyzed without dependencies - results incomplete; run 'dotnet restore' and re-analyze"));
+        Console.WriteLine(pal.Label("Not restored:  ") + pal.Warn(notRestored.ToString(CultureInfo.InvariantCulture)) + pal.Label(" project(s) analyzed with missing dependencies - results incomplete; run 'dotnet restore' and re-analyze"));
     }
 
     if (stats.NodeCount == 0)
@@ -1052,6 +1062,7 @@ static IReadOnlyDictionary<string, string> BuildMeta(string solution, AnalysisSn
         [MetaKeys.ControllerLikeClassesUnrecognized] = snapshot.Stats.ControllerLikeClassesUnrecognized.ToString(CultureInfo.InvariantCulture),
         [MetaKeys.RouteConventionsRegistered] = snapshot.Stats.RouteConventionsRegistered.ToString(CultureInfo.InvariantCulture),
         [MetaKeys.ProjectsNotRestored] = snapshot.Stats.ProjectsNotRestored.ToString(CultureInfo.InvariantCulture),
+        [MetaKeys.ControllersRouteAttributesUnresolved] = snapshot.Stats.ControllersRouteAttributesUnresolved.ToString(CultureInfo.InvariantCulture),
     };
     SetRoutePrefixMeta(meta, routePrefix);
     return meta;

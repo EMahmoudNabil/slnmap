@@ -2,6 +2,49 @@
 
 All notable changes to Slnmap are documented here. Versions follow [SemVer](https://semver.org).
 
+## 0.14.1
+
+Honesty and polish follow-ups to 0.14.0. There is no schema change; the next `analyze` does a full
+rebuild once, because the version changed.
+
+### Fixed
+
+- **`slnmap watch` never saw a save on macOS.** The `Watching:` line was printed before the file
+  watcher had started. FSEvents takes a moment to start on macOS, so a save made right after the
+  line was lost. The line now appears only once the watcher is live. The watcher also follows a
+  symlinked solution directory to its real path (macOS temp folders are under `/var` →
+  `/private/var`). Found by the new macOS CI leg.
+- **Controllers whose route attributes don't resolve were called "conventionally routed".** A
+  controller with `[Route]`/`[Http*]` written on it whose attribute types don't bind (usually an
+  unrestored project) is now reported as "route attributes present but unresolved". It is counted
+  in the `analyze` summary and noted by `list_endpoints`, and is never described as a different
+  routing system.
+- **Two identical refusals on one action counted once.** Two `[HttpHead]` attributes are two
+  unmodeled routes again, as in 0.13.x.
+- **`find_unused_symbols` with a project `scope`** silently skipped symbols it couldn't attribute
+  to a project (no source file, or a file outside every project directory, such as a linked
+  file). It now reports how many it couldn't attribute.
+
+### Added
+
+- **Stale restores are detected.** A package declared in the project file that
+  `project.assets.json` doesn't list (added since the last restore) is reported as "restore is out
+  of date", in `analyze`, `status`, every MCP answer and `slnmap doctor`. Only unconditional,
+  literal `PackageReference` items count, so the check never guesses. It found zero false
+  positives across every restored solution it was tried on.
+- **Inferred frontend links are marked everywhere.** `impact_analysis` and `find_endpoint` now show
+  `via prefix-stripped path` / `via token-transformer-tolerant match` on a link the linker
+  inferred, as `list_frontend_callsites` already did. They also note when the stored links may be
+  older than the graph.
+- **CI runs on macOS** too (Ubuntu, Windows, macOS).
+
+### Changed
+
+- **`find_circular_dependencies(scope: namespace)` is about 10× faster** on large graphs (~14 s →
+  ~1.4 s on a 33k-node solution), with identical output.
+- Equal counts in `impact_analysis` and `get_architecture_overview` are now listed in a fixed
+  order.
+
 ## 0.14.0
 
 Four new MCP tools (15 -> **19**), honest handling of route conventions, and a fix for projects

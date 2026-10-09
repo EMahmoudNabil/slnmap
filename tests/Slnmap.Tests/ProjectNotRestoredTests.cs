@@ -106,7 +106,7 @@ public sealed class ProjectNotRestoredTests : IDisposable
                 || reason.Contains("no project.assets.json", StringComparison.Ordinal),
             reason);
         Assert.Equal(1, before.Stats.ProjectsNotRestored);
-        Assert.Contains(warnings, w => w.Contains("'Probe' was analyzed without its dependencies", StringComparison.Ordinal)
+        Assert.Contains(warnings, w => w.Contains("'Probe' was analyzed with missing dependencies", StringComparison.Ordinal)
             && w.Contains("dotnet restore", StringComparison.Ordinal));
 
         DotNet.Run($"restore \"{csproj}\"", _directory);
@@ -201,6 +201,71 @@ public sealed class ProjectNotRestoredTests : IDisposable
         File.WriteAllText(Path.Combine(_directory, "global.json"),
             $$"""{ "sdk": { "version": "{{major}}.0.100", "rollForward": "latestMinor" } }""");
         return true;
+    }
+
+    [Fact]
+    public async Task StaleRestore_PackageAddedAfterRestore_IsDisclosed_AndClearsOnRestore()
+    {
+        // v0.14.1 (R1): the project was restored, then a package was added to the project file.
+        string csproj = CreateProject();
+        DotNet.Run($"restore \"{csproj}\"", _directory);
+        File.WriteAllText(csproj, WebProject.Replace(
+            "</Project>",
+            """
+              <ItemGroup>
+                <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+              </ItemGroup>
+            </Project>
+            """,
+            StringComparison.Ordinal));
+
+        var stale = await new RoslynSolutionAnalyzer().AnalyzeAsync(csproj);
+        var disclosure = Assert.Single(stale.Graph.Disclosures, d => d.Kind == DisclosureKinds.ProjectNotRestored);
+        Assert.Contains("restore is out of date: Newtonsoft.Json not restored yet", disclosure.Detail, StringComparison.Ordinal);
+        var check = EnvironmentDoctor.CheckProjectsRestored(csproj);
+        Assert.False(check.Ok);
+        Assert.Contains("restore out of date: Newtonsoft.Json", check.Detail, StringComparison.Ordinal);
+
+        DotNet.Run($"restore \"{csproj}\" --force", _directory);
+        var fresh = await new RoslynSolutionAnalyzer().AnalyzeAsync(csproj, stale);
+        Assert.DoesNotContain(fresh.Graph.Disclosures, d => d.Kind == DisclosureKinds.ProjectNotRestored);
+        Assert.True(EnvironmentDoctor.CheckProjectsRestored(csproj).Ok);
+    }
+
+    [Fact]
+    public void MissingPackages_CountsOnlyUnconditionalLiteralReferences()
+    {
+        string csproj = Path.Combine(_directory, "Declared.csproj");
+        File.WriteAllText(csproj, """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <ItemGroup>
+                <PackageReference Include="Restored.Package" Version="1.0.0" />
+                <PackageReference Include="missing.package; Other.Missing" Version="1.0.0" />
+                <PackageReference Include="$(FromAProperty)" Version="1.0.0" />
+                <PackageReference Update="Updated.Only" Version="2.0.0" />
+                <PackageReference Include="Conditional.Item" Version="1.0.0" Condition="'$(X)' == 'y'" />
+                <PackageReference Include="Microsoft.AspNetCore.App" />
+              </ItemGroup>
+              <Choose>
+                <When Condition="'$(X)' == 'y'"><ItemGroup><PackageReference Include="In.When" Version="1.0.0" /></ItemGroup></When>
+                <Otherwise><ItemGroup><PackageReference Include="In.Otherwise" Version="1.0.0" /></ItemGroup></Otherwise>
+              </Choose>
+              <Target Name="Late"><ItemGroup><PackageReference Include="In.Target" Version="1.0.0" /></ItemGroup></Target>
+              <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+                <PackageReference Include="Conditional.Group" Version="1.0.0" />
+              </ItemGroup>
+            </Project>
+            """);
+        string assets = Path.Combine(_directory, "project.assets.json");
+        File.WriteAllText(assets, """
+            { "version": 3, "targets": { "net9.0": {} }, "libraries": {},
+              "project": { "frameworks": { "net9.0": { "dependencies": { "restored.package": { "target": "Package" } } } } } }
+            """);
+
+        Assert.Equal(["missing.package", "Other.Missing"], ProjectRestoreCheck.MissingPackages(csproj, assets));
+
+        File.WriteAllText(assets, """{ "logs": [ not json""");
+        Assert.Empty(ProjectRestoreCheck.MissingPackages(csproj, assets)); // unreadable: never a guess
     }
 
     [Fact]

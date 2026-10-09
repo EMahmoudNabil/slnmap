@@ -193,6 +193,15 @@ public sealed partial class SlnmapQueries
                 + "routed by MapControllerRoute patterns) — those are a different routing system and are not modeled.");
         }
 
+        if (meta.TryGetValue(MetaKeys.ControllersRouteAttributesUnresolved, out var unresolvedAttributesRaw)
+            && int.TryParse(unresolvedAttributesRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out int unresolvedAttributes)
+            && unresolvedAttributes > 0)
+        {
+            builder.Append(
+                $" Note: {unresolvedAttributes} controller(s) have route attributes whose types don't resolve (is the "
+                + "project restored?) — their routes can't be read, so their actions are not modeled.");
+        }
+
         if (meta.TryGetValue(MetaKeys.RazorPagesNotModeled, out var razorPagesRaw)
             && int.TryParse(razorPagesRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out int razorPages)
             && razorPages > 0)
@@ -234,6 +243,7 @@ public sealed partial class SlnmapQueries
         var attributor = ProjectAttributor.From(
             await _store.GetNodesByKindAsync(NodeKind.Project, cancellationToken).ConfigureAwait(false));
         var resolver = new LineResolver();
+        IReadOnlyDictionary<string, string>? inferredLinks = null;
 
         // --route-prefix (v0.14.0): a user-stated prefix is never presented as derived from code.
         var prefixed = (await _store.GetDisclosuresAsync(DisclosureKinds.RoutePrefixApplied, cancellationToken).ConfigureAwait(false))
@@ -267,11 +277,19 @@ public sealed partial class SlnmapQueries
                     if (callerEdges.Count > 0)
                     {
                         var callers = await _store.GetNodesByIdsAsync(callerEdges.Select(e => e.SourceId), cancellationToken).ConfigureAwait(false);
-                        string callerList = string.Join(", ", callers.Select(c => c.Fqn).OrderBy(f => f, StringComparer.Ordinal));
+                        inferredLinks ??= await InferredLinkMarkersAsync(cancellationToken).ConfigureAwait(false);
+                        string callerList = string.Join(", ", callers
+                            .OrderBy(c => c.Fqn, StringComparer.Ordinal)
+                            .Select(c => c.Fqn + (inferredLinks.GetValueOrDefault(c.Id) ?? string.Empty)));
                         builder.AppendLine($"    Called from the frontend by: {callerList}");
                     }
                 }
             }
+        }
+
+        if (inferredLinks is not null)
+        {
+            await AppendStoredLinksStalenessNoteAsync(builder, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -290,6 +308,13 @@ public sealed partial class SlnmapQueries
             && conventional > 0)
         {
             builder.AppendLine($"note: {conventional} conventionally-routed controller(s) (no route attributes) are not modeled — a different routing system, not an extraction failure.");
+        }
+
+        if (meta.TryGetValue(MetaKeys.ControllersRouteAttributesUnresolved, out var unresolvedAttributesRaw)
+            && int.TryParse(unresolvedAttributesRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out int unresolvedAttributes)
+            && unresolvedAttributes > 0)
+        {
+            builder.AppendLine($"note: {unresolvedAttributes} controller(s) have route attributes whose types don't resolve (is the project restored?) — their routes can't be read, so their actions are not listed.");
         }
 
         if (meta.TryGetValue(MetaKeys.RazorPagesNotModeled, out var razorPagesRaw)

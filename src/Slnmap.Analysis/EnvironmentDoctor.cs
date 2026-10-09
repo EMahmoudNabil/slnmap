@@ -68,6 +68,10 @@ public static partial class EnvironmentDoctor
             {
                 problems.Add($"{Path.GetFileNameWithoutExtension(project)} (restore errors: {errors})");
             }
+            else if (ProjectRestoreCheck.MissingPackages(project, assets) is { Count: > 0 } missing)
+            {
+                problems.Add($"{Path.GetFileNameWithoutExtension(project)} (restore out of date: {string.Join(", ", missing)} not restored)");
+            }
         }
 
         if (problems.Count == 0)

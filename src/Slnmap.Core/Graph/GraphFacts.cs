@@ -97,6 +97,13 @@ public static class DisclosureKinds
     /// <summary>A Razor Page with handlers. Detail: the class FQN.</summary>
     public const string RazorPageNotModeled = "razor_page_not_modeled";
 
+    /// <summary>
+    /// A controller whose [Route]/[Http*] attributes are written but whose attribute types don't
+    /// resolve (usually: the project wasn't restored), so its routes can't be read (v0.14.1).
+    /// Before, it was mislabeled conventionally routed. Detail: the class FQN.
+    /// </summary>
+    public const string RouteAttributesUnresolved = "route_attributes_unresolved";
+
     /// <summary>A class that looks like a controller but is not recognized as one. Detail: the class FQN.</summary>
     public const string ControllerLikeUnrecognized = "controller_like_unrecognized";
 

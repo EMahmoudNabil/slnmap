@@ -38,6 +38,7 @@ internal sealed class DocumentWalker
     private readonly List<RelationshipEdge> _edges = [];
     private readonly List<string> _warnings = [];
     private readonly HashSet<INamedTypeSymbol> _conventionalControllers = new(SymbolEqualityComparer.Default);
+    private readonly HashSet<INamedTypeSymbol> _routeAttributesUnresolved = new(SymbolEqualityComparer.Default);
     private readonly HashSet<INamedTypeSymbol> _razorPagesNotModeled = new(SymbolEqualityComparer.Default);
     private readonly HashSet<INamedTypeSymbol> _controllerLikeUnrecognized = new(SymbolEqualityComparer.Default);
     private readonly List<Disclosure> _disclosures = [];
@@ -899,6 +900,22 @@ internal sealed class DocumentWalker
             return;
         }
 
+        if (classification.RouteAttributesUnresolved)
+        {
+            // Resolved refusals on the same action (an [HttpHead] beside an unresolved [HttpGet])
+            // are still unmodeled routes: counted, not dropped (QA review of v0.14.1).
+            DiscloseRefusals(classification, declaration);
+            if (_routeAttributesUnresolved.Add(method.ContainingType))
+            {
+                Disclose(DisclosureKinds.RouteAttributesUnresolved, TypeFqn(method.ContainingType), declaration);
+                _warnings.Add(
+                    $"Controller '{method.ContainingType.Name}' has route attributes whose types don't resolve "
+                    + "(is the project restored?) — its routes can't be read, so its actions are not modeled as endpoints.");
+            }
+
+            return;
+        }
+
         if (classification.IsConventionallyRouted)
         {
             if (_conventionalControllers.Add(method.ContainingType))
@@ -912,11 +929,7 @@ internal sealed class DocumentWalker
             return;
         }
 
-        foreach (string reason in classification.UnresolvedReasons)
-        {
-            Disclose(DisclosureKinds.UnresolvedEndpoint, reason, declaration);
-            _warnings.Add($"Unresolved endpoint registration at {Location(declaration)}: {reason} (counted, not guessed).");
-        }
+        DiscloseRefusals(classification, declaration);
 
         if (classification.Routes.Count == 0)
         {
@@ -1004,6 +1017,23 @@ internal sealed class DocumentWalker
         }
 
         return symbol is INamedTypeSymbol type ? GetOrCreateNode(type) : null;
+    }
+
+    /// <summary>
+    /// Every refusal is one unmodeled route, so identical reasons on one action (two [HttpHead]
+    /// attributes) count separately. They share the declaration's location, so the stored detail
+    /// carries an occurrence number to keep the facts distinct (v0.14.1, QA #6); the detail is only
+    /// ever counted, never shown.
+    /// </summary>
+    private void DiscloseRefusals(ControllerActionClassification classification, MethodDeclarationSyntax declaration)
+    {
+        var seenReasons = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (string reason in classification.UnresolvedReasons)
+        {
+            int occurrence = seenReasons[reason] = seenReasons.GetValueOrDefault(reason) + 1;
+            Disclose(DisclosureKinds.UnresolvedEndpoint, occurrence == 1 ? reason : $"{reason} (#{occurrence})", declaration);
+            _warnings.Add($"Unresolved endpoint registration at {Location(declaration)}: {reason} (counted, not guessed).");
+        }
     }
 
     private void Disclose(string kind, string detail, SyntaxNode at) =>

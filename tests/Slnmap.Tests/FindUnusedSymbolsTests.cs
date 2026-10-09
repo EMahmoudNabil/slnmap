@@ -168,6 +168,31 @@ public sealed class FindUnusedSymbolsTests : IDisposable
         return await new SlnmapQueries(store).FindUnusedSymbolsAsync(scope, kind);
     }
 
+    [Fact]
+    public async Task ScopeFilter_CountsSymbolsWithoutASourceFile_InsteadOfDroppingThem()
+    {
+        // QA #10 (v0.14.1): a node with no FilePath can't be attributed to a project. Under a
+        // project scope it used to vanish without a trace; scope 'all' still lists it.
+        var graph = new CodeGraph();
+        string projectDirectory = Path.Combine(_root, "Lib");
+        graph.AddNode(SymbolNode.Create(NodeKind.Project, "Lib", "Lib", Path.Combine(projectDirectory, "Lib.csproj")));
+        graph.AddNode(SymbolNode.Create(NodeKind.Class, "Located", "Lib.Located", Path.Combine(projectDirectory, "Located.cs"), new SourceSpan(0, 10), "Public"));
+        graph.AddNode(SymbolNode.Create(NodeKind.Class, "Fileless", "Lib.Fileless", filePath: null, accessibility: "Public"));
+        // A linked file outside every project directory (<Compile Include="..\Shared\X.cs">).
+        graph.AddNode(SymbolNode.Create(NodeKind.Class, "Linked", "Lib.Linked", Path.Combine(_root, "Shared", "Linked.cs"), new SourceSpan(0, 10), "Public"));
+        await using var store = await SeedAsync(graph);
+
+        string scoped = await new SlnmapQueries(store).FindUnusedSymbolsAsync("Lib", "Class");
+        Assert.Contains("Lib.Located", scoped, StringComparison.Ordinal);
+        Assert.DoesNotContain("Lib.Fileless", scoped, StringComparison.Ordinal);
+        Assert.DoesNotContain("Lib.Linked", scoped, StringComparison.Ordinal);
+        Assert.Contains("Not shown: 2 unreferenced symbol(s) can't be attributed to 'Lib'", scoped, StringComparison.Ordinal);
+
+        string all = await new SlnmapQueries(store).FindUnusedSymbolsAsync("all", "Class");
+        Assert.Contains("Lib.Fileless", all, StringComparison.Ordinal);
+        Assert.DoesNotContain("Not shown:", all, StringComparison.Ordinal);
+    }
+
     private async Task<SqliteGraphStore> SeedAsync(CodeGraph graph)
     {
         string dbPath = Path.Combine(_root, $"{Guid.NewGuid():N}.db");

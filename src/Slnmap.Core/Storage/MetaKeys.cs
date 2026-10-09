@@ -115,4 +115,11 @@ public static class MetaKeys
     /// in the <c>disclosures</c> table. Absent or "0" when every project resolved.
     /// </summary>
     public const string ProjectsNotRestored = "projects_not_restored";
+
+    /// <summary>
+    /// Count of controllers whose route attributes are written but don't resolve (v0.14.1,
+    /// <see cref="Slnmap.Core.Graph.DisclosureKinds.RouteAttributesUnresolved"/>). Absent or "0"
+    /// when there are none.
+    /// </summary>
+    public const string ControllersRouteAttributesUnresolved = "controllers_route_attributes_unresolved";
 }

@@ -31,6 +31,7 @@ public sealed record AnalysisSnapshot(CodeGraph Graph, IReadOnlyList<FileRecord>
 /// <param name="RazorPagesNotModeled">Razor Pages (PageModel-derived classes with OnGet/OnPost/... handlers) — route by file location, a different routing system this tool cannot resolve statically; noted (one warning per class), never counted as unresolved (v0.12.2).</param>
 /// <param name="RazorFilesDetected">.razor files found on disk under an analyzed project's directory — Blazor component markup is not walked as an analyzer document at all (v0.12.2, foreign-patterns-trial finding #1); disclosed here instead of silently vanishing from the document count.</param>
 /// <param name="ControllerLikeClassesUnrecognized">Classes that LOOK like an MVC controller syntactically (name ends in "Controller", an [ApiController]/[Route]/[Controller] attribute on the class, or an [Http*] attribute on a member) but do not classify as one semantically — neither ControllerBase-derived nor matching ASP.NET's POCO-controller discovery rule (v0.13.1). Disclosed (one warning per class) rather than silently skipped — the class this closes was previously invisible to controller-endpoint extraction with zero trace of any kind.</param>
+/// <param name="ControllersRouteAttributesUnresolved">Controllers whose [Route]/[Http*] attributes are written but whose attribute types don't resolve (usually an unrestored project), so their routes can't be read (v0.14.1). Before, they were mislabeled conventionally routed.</param>
 /// <param name="ProjectsNotRestored">Projects analyzed without their dependencies — no resolved metadata references (restore never ran or failed), or a restore that recorded errors (v0.14.0). Their results are incomplete; disclosed per project, never silent.</param>
 /// <param name="RouteConventionsRegistered">MVC application-/controller-/action-model convention registrations (Conventions.Add/Insert, or a convention attribute) — each can rewrite route templates at startup, invisibly to static analysis (v0.14.0). Disclosed, never interpreted.</param>
 public sealed record AnalysisStats(
@@ -43,7 +44,8 @@ public sealed record AnalysisStats(
     int RazorFilesDetected = 0,
     int ControllerLikeClassesUnrecognized = 0,
     int RouteConventionsRegistered = 0,
-    int ProjectsNotRestored = 0);
+    int ProjectsNotRestored = 0,
+    int ControllersRouteAttributesUnresolved = 0);
 
 /// <summary>User-supplied analysis settings that change what the graph contains.</summary>
 /// <param name="RoutePrefix">

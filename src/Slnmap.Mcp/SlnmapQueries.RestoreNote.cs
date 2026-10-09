@@ -32,8 +32,8 @@ public sealed partial class SlnmapQueries
             listed += $" (+{names.Count - NotRestoredNamesCap} more)";
         }
 
-        return $"Warning: incomplete graph. {names.Count} project(s) were analyzed without their dependencies "
-            + $"(not restored, or the restore failed): {listed}. In those projects, framework and package types did "
+        return $"Warning: incomplete graph. {names.Count} project(s) were analyzed with missing dependencies "
+            + $"(not restored, the restore failed, or it is out of date): {listed}. In those projects, framework and package types did "
             + "not resolve, so endpoints, DI registrations, attribute usages, external calls and references are "
             + "missing or wrong. Run 'dotnet restore', then 'slnmap analyze'.";
     }
