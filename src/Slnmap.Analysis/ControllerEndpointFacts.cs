@@ -18,7 +18,8 @@ internal sealed record ControllerActionClassification(
     IReadOnlyList<(string Verb, string Template)> Routes,
     IReadOnlyList<string> UnresolvedReasons,
     bool IsConventionallyRouted,
-    IReadOnlyList<IReadOnlyList<int>>? RouteTokenSegments = null);
+    IReadOnlyList<IReadOnlyList<int>>? RouteTokenSegments = null,
+    bool RouteAttributesUnresolved = false);
 
 /// <summary>
 /// Pure semantic-model extraction for attribute-routed ASP.NET Core controllers (the v1.1
@@ -118,6 +119,14 @@ internal static partial class ControllerEndpointFacts
         bool hasAnyTemplate = classTemplates.Count > 0 || templatedProviders.Count > 0;
         if (!hasAnyTemplate)
         {
+            // Route attributes that are written but whose types don't bind (the project wasn't
+            // restored, or a reference is missing) are not conventional routing: saying so would
+            // be a false statement about the code (v0.14.1, BACKLOG MED item).
+            if (HasUnresolvedRouteAttribute(method))
+            {
+                return new ControllerActionClassification([], refusals, IsConventionallyRouted: false, RouteAttributesUnresolved: true);
+            }
+
             return refusals.Count > 0
                 ? new ControllerActionClassification([], refusals, IsConventionallyRouted: false)
                 : new ControllerActionClassification([], [], IsConventionallyRouted: true);
@@ -420,10 +429,55 @@ internal static partial class ControllerEndpointFacts
             ? s
             : null;
 
+    /// <summary>
+    /// True when the controller — the class, a base class, or ANY of their methods — carries a
+    /// <c>[Route]</c> or <c>[Http*]</c> attribute whose type does not resolve (an error type,
+    /// matched by the name as written, with or without the <c>Attribute</c> suffix). A class-level
+    /// fact: with method-only routes, an attribute-less helper method on the same controller must
+    /// not get the class called conventionally routed (QA review of v0.14.1).
+    /// </summary>
+    private static bool HasUnresolvedRouteAttribute(IMethodSymbol method)
+    {
+        if (method.GetAttributes().Any(IsUnresolvedRouteAttribute))
+        {
+            return true;
+        }
+
+        for (INamedTypeSymbol? current = method.ContainingType; current is not null; current = current.BaseType)
+        {
+            if (current.GetAttributes().Any(IsUnresolvedRouteAttribute)
+                || current.GetMembers().OfType<IMethodSymbol>().Any(m => m.GetAttributes().Any(IsUnresolvedRouteAttribute)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsUnresolvedRouteAttribute(AttributeData attribute)
+    {
+        if (attribute.AttributeClass is not { TypeKind: TypeKind.Error } attributeClass)
+        {
+            return false;
+        }
+
+        string name = attributeClass.Name.EndsWith("Attribute", StringComparison.Ordinal)
+            ? attributeClass.Name
+            : attributeClass.Name + "Attribute";
+        return name == "RouteAttribute" || VerbAttributes.ContainsKey(name);
+    }
+
+    /// <summary>
+    /// True when <paramref name="symbol"/> carries the MVC attribute <paramref name="attributeName"/>.
+    /// An attribute whose type doesn't resolve (an unrestored project) still counts, matched by the
+    /// name as written: an unresolved <c>[NonAction]</c> means the same thing to the reader.
+    /// </summary>
     private static bool HasAttribute(ISymbol symbol, string attributeName) =>
         symbol.GetAttributes().Any(a => a.AttributeClass is { } attributeClass
-            && attributeClass.Name == attributeName
-            && IsMvcAttribute(attributeClass));
+            && (attributeClass.TypeKind == TypeKind.Error
+                ? attributeClass.Name == attributeName || attributeClass.Name + "Attribute" == attributeName
+                : attributeClass.Name == attributeName && IsMvcAttribute(attributeClass)));
 
     private static bool IsMvcAttribute(INamedTypeSymbol attributeClass) =>
         attributeClass.ContainingNamespace?.ToDisplayString() == MvcNamespace;

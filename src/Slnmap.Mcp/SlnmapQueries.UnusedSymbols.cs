@@ -84,6 +84,7 @@ public sealed partial class SlnmapQueries
 
         var candidates = await _store.GetUnreferencedNodesAsync(kinds, ["Public", "Internal"], cancellationToken).ConfigureAwait(false);
         var excluded = new Dictionary<string, int>(StringComparer.Ordinal);
+        int unattributed = 0;
         var unused = new List<SymbolNode>();
         var frameworkDerived = new List<SymbolNode>();
         foreach (var node in candidates)
@@ -91,6 +92,14 @@ public sealed partial class SlnmapQueries
             string? project = attributor.ProjectOf(node.FilePath);
             if (projectFilter is not null && project != projectFilter)
             {
+                // A node with no source file, or one outside every project directory (a linked
+                // <Compile Include="..\Shared\X.cs">), can't be attributed to any project, so a
+                // project filter can't tell whether it belongs: counted, never dropped silently (QA #10).
+                if (project is null)
+                {
+                    unattributed++;
+                }
+
                 continue;
             }
 
@@ -148,6 +157,13 @@ public sealed partial class SlnmapQueries
                 "Excluded as reached another way: "
                 + string.Join(", ", excluded.OrderByDescending(e => e.Value).Select(e => $"{e.Value} {e.Key}"))
                 + ".");
+        }
+
+        if (unattributed > 0)
+        {
+            builder.AppendLine(
+                $"Not shown: {unattributed} unreferenced symbol(s) can't be attributed to '{projectFilter}' or any other "
+                + "project (no source file, or a file outside every project directory) — run with scope 'all' to see them.");
         }
 
         builder.AppendLine("Only Public/Internal declared accessibility is searched; private and protected members are not.");

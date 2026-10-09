@@ -116,28 +116,46 @@ public sealed partial class SlnmapQueries
     private static Func<string, string?> BuildNamespaceContainerMap(CodeGraph graph)
     {
         // Longest namespace whose FQN is a prefix (on a dot boundary) of the node's FQN wins.
+        // Such a prefix is either the whole FQN or ends right before one of its dots, so checking
+        // those candidates longest-first against a set gives the same answer as scanning every
+        // namespace, in time proportional to the FQN, not the namespace count (v0.14.1: 21.7 s on
+        // a 33k-node graph, where each of 125k edges scanned every namespace). Memoized per node.
         var namespaces = graph.Nodes
             .Where(n => n.Kind == NodeKind.Namespace)
             .Select(n => n.Fqn)
-            .OrderByDescending(f => f.Length)
-            .ToList();
+            .ToHashSet(StringComparer.Ordinal);
         var fqnById = graph.Nodes.ToDictionary(n => n.Id, n => n.Fqn, StringComparer.Ordinal);
+        var cache = new Dictionary<string, string?>(StringComparer.Ordinal);
         return id =>
         {
-            if (!fqnById.TryGetValue(id, out var fqn))
+            if (cache.TryGetValue(id, out var cached))
             {
-                return null;
+                return cached;
             }
 
-            foreach (var ns in namespaces)
+            string? container = null;
+            if (fqnById.TryGetValue(id, out var fqn))
             {
-                if (fqn.Equals(ns, StringComparison.Ordinal) || fqn.StartsWith(ns + ".", StringComparison.Ordinal))
+                if (namespaces.Contains(fqn))
                 {
-                    return ns;
+                    container = fqn;
+                }
+                else
+                {
+                    for (int dot = fqn.LastIndexOf('.'); dot > 0; dot = fqn.LastIndexOf('.', dot - 1))
+                    {
+                        string candidate = fqn[..dot];
+                        if (namespaces.Contains(candidate))
+                        {
+                            container = candidate;
+                            break;
+                        }
+                    }
                 }
             }
 
-            return null;
+            cache[id] = container;
+            return container;
         };
     }
 

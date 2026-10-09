@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
         # Add '10.0.x' to this list to also test on .NET 10 (one-line change).
         dotnet: ['9.0.x']
     runs-on: ${{ matrix.os }}

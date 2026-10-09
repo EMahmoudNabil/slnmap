@@ -54,11 +54,52 @@ public sealed partial class SlnmapQueries
     }
 
     /// <summary>
+    /// For each frontend call site whose link is inferred rather than literal, the marker every
+    /// listing of it must carry (v0.14.1, Gate 8 QA #9). Stored CallsEndpoint edges don't record
+    /// how they were made, so this recomputes the links live (the same computation
+    /// list_frontend_callsites shows) and keys the marker by call-site node id.
+    /// </summary>
+    private async Task<IReadOnlyDictionary<string, string>> InferredLinkMarkersAsync(CancellationToken cancellationToken)
+    {
+        var markers = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var result in await ComputeLiveLinkResultsAsync(cancellationToken).ConfigureAwait(false))
+        {
+            string marker = (result.ViaPrefixStripped ? " via prefix-stripped path" : string.Empty)
+                + (result.ViaTokenTransformerTolerance ? " via token-transformer-tolerant match" : string.Empty);
+            if (marker.Length > 0)
+            {
+                markers[result.CallSite.Id] = marker;
+            }
+        }
+
+        return markers;
+    }
+
+    /// <summary>
     /// Appends the note when `slnmap link`'s last stored edges (the ones `impact_analysis`/
     /// `find_usages` actually walk) may be older than the current graph — the listing above this
     /// note is always fresh regardless (§ComputeLiveLinkResultsAsync), so this is about a
     /// DIFFERENT consumer's staleness, honestly scoped as such.
     /// </summary>
+    /// <summary>
+    /// The staleness note for tools that walk the STORED CallsEndpoint edges (impact_analysis,
+    /// find_endpoint's frontend callers): when the graph changed after the last `slnmap link`,
+    /// those edges — and the inferred-link markers recomputed live beside them — may disagree
+    /// (QA review of v0.14.1).
+    /// </summary>
+    private async Task AppendStoredLinksStalenessNoteAsync(StringBuilder builder, CancellationToken cancellationToken)
+    {
+        var meta = await _store.GetMetaAsync(cancellationToken).ConfigureAwait(false);
+        if (meta.TryGetValue(MetaKeys.LastAnalyzed, out var lastAnalyzedRaw)
+            && DateTimeOffset.TryParse(lastAnalyzedRaw, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var lastAnalyzed)
+            && meta.TryGetValue(MetaKeys.LinkerLastRun, out var linkerLastRunRaw)
+            && DateTimeOffset.TryParse(linkerLastRunRaw, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var linkerLastRun)
+            && lastAnalyzed > linkerLastRun)
+        {
+            builder.AppendLine("note: the graph changed since the last 'slnmap link' run — the frontend links above may be out of date; re-run 'slnmap link'.");
+        }
+    }
+
     private async Task AppendLinkerStalenessNoteAsync(StringBuilder builder, CancellationToken cancellationToken)
     {
         var meta = await _store.GetMetaAsync(cancellationToken).ConfigureAwait(false);

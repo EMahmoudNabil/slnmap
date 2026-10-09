@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Xml;
+using System.Xml.Linq;
 using Microsoft.CodeAnalysis;
 
 namespace Slnmap.Analysis;
@@ -27,6 +29,11 @@ public static class ProjectRestoreCheck
         if (assets is not null && AssetsErrorsAt(assets) is { } errors)
         {
             return $"restore recorded errors ({errors}); package types may be unresolved";
+        }
+
+        if (assets is not null && project.FilePath is { } projectFile && MissingPackages(projectFile, assets) is { Count: > 0 } missing)
+        {
+            return $"restore is out of date: {string.Join(", ", missing)} not restored yet; those package types are unresolved";
         }
 
         if (project.MetadataReferences.Count == 0)
@@ -84,6 +91,118 @@ public static class ProjectRestoreCheck
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Packages the project file itself declares that its assets file doesn't list: the restore
+    /// predates them (v0.14.1). Only unconditional <c>&lt;PackageReference Include="…"&gt;</c>
+    /// items with a literal name count — anything under a <c>Condition</c>, built from a property
+    /// or item, or declared in an imported file is skipped, so a mismatch is never a guess.
+    /// </summary>
+    public static IReadOnlyList<string> MissingPackages(string projectFilePath, string assetsPath)
+    {
+        var declared = DeclaredPackages(projectFilePath);
+        if (declared.Count == 0 || RestoredDependencies(assetsPath) is not { } restored)
+        {
+            return [];
+        }
+
+        return declared.Where(name => !restored.Contains(name)).Order(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>
+    /// References the SDK removes or supplies itself (a shared framework referenced as a package,
+    /// NETSDK1080), which a correct restore never lists as a dependency.
+    /// </summary>
+    private static readonly HashSet<string> SdkImplicitPackages = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Microsoft.AspNetCore.App", "Microsoft.AspNetCore.All", "Microsoft.NETCore.App",
+        "Microsoft.WindowsDesktop.App", "NETStandard.Library",
+    };
+
+    private static HashSet<string> DeclaredPackages(string projectFilePath)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            var document = XDocument.Load(projectFilePath);
+            foreach (var item in document.Descendants().Where(e => e.Name.LocalName == "PackageReference"))
+            {
+                // A Condition anywhere above it, a <Choose> branch, or a <Target> body: whether the
+                // item exists depends on evaluation this check doesn't do — skipped, never guessed.
+                if (item.AncestorsAndSelf().Any(e => e.Attribute("Condition") is not null
+                        || e.Name.LocalName is "Choose" or "When" or "Otherwise" or "Target")
+                    || item.Attribute("Include")?.Value is not { Length: > 0 } include)
+                {
+                    continue;
+                }
+
+                foreach (string name in include.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    if (name.IndexOfAny(['$', '@', '%', '*', '?']) < 0 && !SdkImplicitPackages.Contains(name))
+                    {
+                        names.Add(name);
+                    }
+                }
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or XmlException)
+        {
+            names.Clear();
+        }
+
+        return names;
+    }
+
+    /// <summary>
+    /// The package names under <c>project.frameworks.*.dependencies</c> of an assets file, or null
+    /// when it can't be read. Streams past every other section: assets files run to megabytes.
+    /// </summary>
+    private static HashSet<string>? RestoredDependencies(string assetsPath)
+    {
+        try
+        {
+            var reader = new Utf8JsonReader(File.ReadAllBytes(assetsPath));
+            if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
+            {
+                return null;
+            }
+
+            while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+            {
+                bool isProject = reader.ValueTextEquals("project"u8);
+                reader.Read();
+                if (!isProject)
+                {
+                    reader.Skip();
+                    continue;
+                }
+
+                using var project = JsonDocument.ParseValue(ref reader);
+                var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                if (project.RootElement.TryGetProperty("frameworks", out var frameworks) && frameworks.ValueKind == JsonValueKind.Object)
+                {
+                    foreach (var framework in frameworks.EnumerateObject())
+                    {
+                        if (framework.Value.TryGetProperty("dependencies", out var dependencies) && dependencies.ValueKind == JsonValueKind.Object)
+                        {
+                            foreach (var dependency in dependencies.EnumerateObject())
+                            {
+                                names.Add(dependency.Name);
+                            }
+                        }
+                    }
+                }
+
+                return names;
+            }
+
+            return null;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return null;
+        }
     }
 
     /// <summary>True when the project file uses an MSBuild SDK (<c>&lt;Project Sdk=…&gt;</c> or an <c>&lt;Sdk&gt;</c> element).</summary>

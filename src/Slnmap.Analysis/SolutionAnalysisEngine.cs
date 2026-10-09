@@ -220,7 +220,7 @@ internal static class SolutionAnalysisEngine
         {
             graph.AddDisclosure(disclosure);
             warningSink?.Invoke(
-                $"Project '{DisclosureKinds.ProjectNotRestoredName(disclosure.Detail)}' was analyzed without its dependencies "
+                $"Project '{DisclosureKinds.ProjectNotRestoredName(disclosure.Detail)}' was analyzed with missing dependencies "
                 + $"({DisclosureKinds.ProjectNotRestoredReason(disclosure.Detail)}). Its endpoints, DI registrations, "
                 + "attribute usages, external calls and references are incomplete. Run 'dotnet restore' and re-analyze.");
         }
@@ -247,7 +247,8 @@ internal static class SolutionAnalysisEngine
             RazorFilesDetected: razorFilesDetected,
             ControllerLikeClassesUnrecognized: CountDisclosures(graph, DisclosureKinds.ControllerLikeUnrecognized, distinctDetail: true),
             RouteConventionsRegistered: CountDisclosures(graph, DisclosureKinds.RouteConvention, distinctDetail: false),
-            ProjectsNotRestored: CountDisclosures(graph, DisclosureKinds.ProjectNotRestored, distinctDetail: true));
+            ProjectsNotRestored: CountDisclosures(graph, DisclosureKinds.ProjectNotRestored, distinctDetail: true),
+            ControllersRouteAttributesUnresolved: CountDisclosures(graph, DisclosureKinds.RouteAttributesUnresolved, distinctDetail: true));
         return new AnalysisSnapshot(graph, files, stats);
     }
 

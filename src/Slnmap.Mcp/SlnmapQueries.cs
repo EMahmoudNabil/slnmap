@@ -286,21 +286,27 @@ public sealed partial class SlnmapQueries
         builder.AppendLine("By project:");
         foreach (var group in all
             .GroupBy(r => attributor.ProjectOf(r.Node.FilePath) ?? "(unknown)")
-            .OrderByDescending(g => g.Count()))
+            .OrderByDescending(g => g.Count())
+            .ThenBy(g => g.Key, StringComparer.Ordinal))
         {
             builder.AppendLine($"  {group.Key}: {group.Count()}");
         }
 
         builder.AppendLine("By kind:");
-        foreach (var group in all.GroupBy(r => r.Node.Kind).OrderByDescending(g => g.Count()))
+        foreach (var group in all.GroupBy(r => r.Node.Kind).OrderByDescending(g => g.Count()).ThenBy(g => g.Key.ToString(), StringComparer.Ordinal))
         {
             builder.AppendLine($"  {group.Key}: {group.Count()}");
         }
 
+        // An inferred frontend link is marked here too, never shown like a literal one.
+        var inferredLinks = all.Take(ImpactListCap).Any(r => r.Node.Kind == NodeKind.FrontendCallSite)
+            ? await InferredLinkMarkersAsync(cancellationToken).ConfigureAwait(false)
+            : new Dictionary<string, string>(StringComparer.Ordinal);
         builder.AppendLine($"Dependents (nearest first, up to {ImpactListCap}):");
         foreach (var reached in all.Take(ImpactListCap))
         {
-            builder.AppendLine($"  [{reached.Node.Kind}] {reached.Node.Fqn} @depth {reached.Depth}");
+            string marker = inferredLinks.GetValueOrDefault(reached.Node.Id) ?? string.Empty;
+            builder.AppendLine($"  [{reached.Node.Kind}] {reached.Node.Fqn} @depth {reached.Depth}{marker}");
         }
 
         if (all.Count > ImpactListCap)
@@ -313,6 +319,11 @@ public sealed partial class SlnmapQueries
         if (all.Any(r => r.Node.Kind is NodeKind.Endpoint or NodeKind.FrontendCallSite))
         {
             await AppendRouteConventionNoteAsync(builder, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (all.Any(r => r.Node.Kind == NodeKind.FrontendCallSite))
+        {
+            await AppendStoredLinksStalenessNoteAsync(builder, cancellationToken).ConfigureAwait(false);
         }
 
         return builder.ToString().TrimEnd();
@@ -385,13 +396,13 @@ public sealed partial class SlnmapQueries
         }
 
         builder.AppendLine("Node kinds:");
-        foreach (var (kind, count) in nodesByKind.OrderByDescending(kv => kv.Value))
+        foreach (var (kind, count) in nodesByKind.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key.ToString(), StringComparer.Ordinal))
         {
             builder.AppendLine($"  {kind}: {count}");
         }
 
         builder.AppendLine("Edge kinds:");
-        foreach (var (kind, count) in edgesByKind.OrderByDescending(kv => kv.Value))
+        foreach (var (kind, count) in edgesByKind.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key.ToString(), StringComparer.Ordinal))
         {
             builder.AppendLine($"  {kind}: {count}");
         }
