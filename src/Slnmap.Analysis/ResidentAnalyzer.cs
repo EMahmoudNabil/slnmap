@@ -27,11 +27,16 @@ public sealed record WarmAnalysisResult(AnalysisSnapshot? Snapshot, bool Require
 public sealed class ResidentAnalyzer : IDisposable
 {
     private readonly Action<string>? _warningSink;
+    private readonly AnalysisOptions _options;
     private MSBuildWorkspace? _workspace;
     private Solution? _solution;
     private string? _solutionPath;
 
-    public ResidentAnalyzer(Action<string>? warningSink = null) => _warningSink = warningSink;
+    public ResidentAnalyzer(Action<string>? warningSink = null, AnalysisOptions? options = null)
+    {
+        _warningSink = warningSink;
+        _options = options ?? AnalysisOptions.Default;
+    }
 
     /// <summary>The snapshot produced by the most recent analysis, warm or cold.</summary>
     public AnalysisSnapshot? Current { get; private set; }
@@ -54,7 +59,7 @@ public sealed class ResidentAnalyzer : IDisposable
         _workspace?.Dispose();
         _workspace = MSBuildWorkspace.Create();
         _solution = await SolutionAnalysisEngine.OpenAsync(_workspace, solutionPath, _warningSink, progress, cancellationToken).ConfigureAwait(false);
-        Current = await SolutionAnalysisEngine.AnalyzeAsync(_solution, previous, _warningSink, progress, cancellationToken).ConfigureAwait(false);
+        Current = await SolutionAnalysisEngine.AnalyzeAsync(_solution, previous, _warningSink, progress, cancellationToken, _options).ConfigureAwait(false);
         return Current;
     }
 
@@ -95,7 +100,7 @@ public sealed class ResidentAnalyzer : IDisposable
             }
         }
 
-        var snapshot = await SolutionAnalysisEngine.AnalyzeAsync(solution, Current, _warningSink, progress: null, cancellationToken).ConfigureAwait(false);
+        var snapshot = await SolutionAnalysisEngine.AnalyzeAsync(solution, Current, _warningSink, progress: null, cancellationToken, _options).ConfigureAwait(false);
         _solution = solution;
         Current = snapshot;
         return new WarmAnalysisResult(snapshot, RequiresReload: false);

@@ -73,11 +73,12 @@ public sealed class EnvironmentDoctorTests
         try
         {
             var checks = await EnvironmentDoctor.RunAsync(Path.Combine(dir, "graph.db"), dir);
-            Assert.Equal(4, checks.Count);
+            Assert.Equal(5, checks.Count);
             // The build/test host has an SDK and a writable temp dir with no global.json, so these pass.
             Assert.True(checks.Single(c => c.Name == ".NET SDK").Ok);
             Assert.True(checks.Single(c => c.Name == "Graph directory").Ok);
             Assert.True(checks.Single(c => c.Name == "global.json SDK").Ok);
+            Assert.True(checks.Single(c => c.Name == "Projects restored").Ok); // no solution in the dir: nothing to check
         }
         finally
         {

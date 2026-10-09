@@ -100,6 +100,38 @@ public sealed class McpStdioErrorShapeTests : IClassFixture<AnalyzedFixtureGraph
         Assert.Contains("re-run 'slnmap analyze'", payload.GetProperty("message").GetString(), StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task NotRestoredGraph_PrefixesEverySuccess_AndLeavesFailurePayloadsParseable()
+    {
+        // v0.14.0: a graph built from an unrestored project carries a project_not_restored
+        // disclosure; the choke point prefixes the warning to every successful answer.
+        string db = Path.Combine(_directory, "not-restored.db");
+        File.Copy(_fixture.Store.DatabasePath, db);
+        await using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={db};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            await using var insert = connection.CreateCommand();
+            insert.CommandText = "INSERT INTO disclosures (kind, detail, file, span_start) VALUES ($kind, $detail, 'FixtureWeb.csproj', 0)";
+            insert.Parameters.AddWithValue("$kind", Slnmap.Core.Graph.DisclosureKinds.ProjectNotRestored);
+            insert.Parameters.AddWithValue("$detail", Slnmap.Core.Graph.DisclosureKinds.ProjectNotRestoredDetail(
+                "FixtureWeb", "no references resolved; restore never ran or failed"));
+            await insert.ExecuteNonQueryAsync();
+        }
+
+        using var server = StartServer(db);
+        await server.InitializeAsync();
+
+        var success = await server.CallToolAsync("find_symbol", "{\"query\": \"Circle\"}");
+        string text = success.GetProperty("result").GetProperty("content")[0].GetProperty("text").GetString()!;
+        Assert.StartsWith("Warning: incomplete graph. 1 project(s)", text, StringComparison.Ordinal);
+        Assert.Contains("FixtureWeb", text, StringComparison.Ordinal);
+        Assert.Contains("Circle", text, StringComparison.Ordinal); // the answer itself follows the note
+
+        var failure = await server.CallToolAsync("find_usages", "{\"symbol\": \"Fixture.Lib.Circle.Area()\"}");
+        string failureText = failure.GetProperty("result").GetProperty("content")[0].GetProperty("text").GetString()!;
+        McpFailureShapeTests.AssertFailureShape(failureText, ToolFailure.CodeInvalidParameter, ToolFailure.HintFixCall);
+    }
+
     private static StdioServer StartServer(string databasePath)
     {
         string config = AppContext.BaseDirectory.Replace('\\', '/')

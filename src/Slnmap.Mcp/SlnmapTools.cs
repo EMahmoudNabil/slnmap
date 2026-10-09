@@ -91,7 +91,8 @@ public static class SlnmapTools
         "that implement or override an interface member or virtual/abstract member. Transitive over " +
         "Implements + Inherits, grouped by project with file:line. Pass a fully qualified name. Use " +
         "this for \"who are the concrete types/overrides\"; for the full blast radius of a change use " +
-        "impact_analysis; for the inheritance shape as a tree use get_type_hierarchy. " +
+        "impact_analysis; for the inheritance shape as a tree use get_type_hierarchy; for which one the " +
+        "DI container is actually wired with use get_di_registrations. " +
         "Example: {\"fqn\": \"Fixture.Lib.IShape\"}")]
     public static Task<string> FindImplementations(
         IGraphStore store,
@@ -140,6 +141,69 @@ public static class SlnmapTools
         [Description("A project name, or 'all' for the full map.")] string project = "all",
         CancellationToken cancellationToken = default)
         => new SlnmapQueries(store).GetProjectDependenciesAsync(project, cancellationToken);
+
+    [McpServerTool(Name = "find_unused_symbols")]
+    [Description(
+        "Find public/internal types and members that nothing in the solution references (zero incoming " +
+        "dependencies of any kind). Output LEADS with a caveat: zero static references is not dead code " +
+        "(reflection, serialization, DI-only, framework-invoked, external consumers). Overrides, interface " +
+        "implementations, entry points, test projects and generated files are excluded and counted. " +
+        "scope: a project name or 'all'; kind: optional filter (Class, Interface, Struct, Record, Enum, " +
+        "Delegate, Method, Property, Field, Event). For the usages of one symbol use " +
+        "find_usages. Example: {\"scope\": \"all\", \"kind\": \"Method\"}")]
+    public static Task<string> FindUnusedSymbols(
+        IGraphStore store,
+        [Description("A project name, or 'all'.")] string scope = "all",
+        [Description("Optional kind filter, e.g. 'Method' or 'Class'.")] string? kind = null,
+        CancellationToken cancellationToken = default)
+        => new SlnmapQueries(store).FindUnusedSymbolsAsync(scope, kind, cancellationToken);
+
+    [McpServerTool(Name = "get_attribute_usages")]
+    [Description(
+        "List where an attribute is applied — types, members, and (attributed to their member) " +
+        "parameters/return values; assembly-level ones to the project. Grouped by project with " +
+        "file:line. Accepts a short name or a fully qualified name, with or without the 'Attribute' " +
+        "suffix or brackets; a short name matching several attribute types lists them instead of " +
+        "guessing. Works for framework attributes ([Authorize], [Obsolete], [HttpPost]) too. " +
+        "Example: {\"attribute\": \"Obsolete\"}")]
+    public static Task<string> GetAttributeUsages(
+        IGraphStore store,
+        [Description("The attribute: a short name like 'Authorize' or a fully qualified name.")] string attribute,
+        CancellationToken cancellationToken = default)
+        => new SlnmapQueries(store).GetAttributeUsagesAsync(attribute, cancellationToken);
+
+    [McpServerTool(Name = "get_di_registrations")]
+    [Description(
+        "List what the dependency-injection container is wired with — service -> implementation " +
+        "[lifetime] — from Microsoft.Extensions.DependencyInjection calls in this solution's source " +
+        "(AddScoped/AddSingleton/AddTransient incl. TryAdd/Keyed, typeof and open-generic forms, factory " +
+        "lambdas, instances, AddDbContext, AddHostedService), grouped by project with file:line. " +
+        "Registrations whose types can't be read statically are listed separately. project: a project " +
+        "name or 'all'; type: optional substring matched against service and implementation FQNs. For " +
+        "every type that COULD implement an interface use find_implementations. " +
+        "Example: {\"project\": \"all\", \"type\": \"IShape\"}")]
+    public static Task<string> GetDiRegistrations(
+        IGraphStore store,
+        [Description("A project name, or 'all'.")] string project = "all",
+        [Description("Optional type filter: a substring of the service or implementation FQN, e.g. 'IBasketService'.")] string? type = null,
+        CancellationToken cancellationToken = default)
+        => new SlnmapQueries(store).GetDiRegistrationsAsync(project, type, cancellationToken);
+
+    [McpServerTool(Name = "find_callers_of_external")]
+    [Description(
+        "Find where this solution calls into a package or framework: every member calling a method " +
+        "(or constructor) whose namespace starts with the given prefix — or whose assembly has that " +
+        "name — counts first (call sites, callers, most-called targets), then callers grouped by " +
+        "project with file:line and what each calls. The only tool that looks outside the solution. " +
+        "target: a namespace prefix like 'Microsoft.EntityFrameworkCore' or 'Newtonsoft.Json', or an " +
+        "assembly name; project: a project name or 'all'. " +
+        "Example: {\"target\": \"System.Linq\"}")]
+    public static Task<string> FindCallersOfExternal(
+        IGraphStore store,
+        [Description("Namespace prefix or assembly name of the external code, e.g. 'Microsoft.EntityFrameworkCore'.")] string target,
+        [Description("A project name, or 'all'.")] string project = "all",
+        CancellationToken cancellationToken = default)
+        => new SlnmapQueries(store).FindCallersOfExternalAsync(target, project, cancellationToken);
 
     [McpServerTool(Name = "find_circular_dependencies")]
     [Description(

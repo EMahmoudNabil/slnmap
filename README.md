@@ -64,7 +64,7 @@ That's it. Ask your agent an architecture question and it will call Slnmap.
 
 ## What you can ask
 
-The server exposes fifteen read-only tools. Give them fully qualified names; results are capped and
+The server exposes nineteen read-only tools. Give them fully qualified names; results are capped and
 counts-first. (A note the tools also carry: an FQN does not reveal whether a member is an explicit
 interface implementation.)
 
@@ -85,6 +85,10 @@ interface implementation.)
 | `find_endpoint` | "Which endpoint serves `/api/basket/42/items`, and which method handles it?" |
 | `find_orphan_calls` | "Which frontend API calls don't hit any real endpoint?" (after `slnmap link`) |
 | `list_frontend_callsites` | "List every frontend HTTP call site and what it links to." (after `slnmap link`) |
+| `find_unused_symbols` | "Which public classes in `Infrastructure` does nothing reference?" |
+| `get_attribute_usages` | "Where is `[Authorize]` applied?" |
+| `get_di_registrations` | "What is `IBasketService` registered as, and with which lifetime?" |
+| `find_callers_of_external` | "Where do we call EF Core directly?" |
 
 For an interface (or interface member), `impact_analysis` follows both the interface's callers **and**
 its concrete implementations/overrides — so the answer includes code that only touches the interface,
@@ -105,6 +109,17 @@ different routing system `analyze` counts and notes rather than modeling). **Bla
 markup is not analyzed** — `analyze` detects and reports how many `.razor` files exist in the
 solution rather than silently excluding them from the document count; component-usage edges
 aren't modeled yet ([#30](https://github.com/EMahmoudNabil/slnmap/issues/30) tracks that).
+
+**Route conventions.** An MVC model convention (`IApplicationModelConvention`,
+`IControllerModelConvention`, `IActionModelConvention`, registered in code or applied as an
+attribute) can rewrite routes at startup, which static analysis can't see. `analyze` counts every
+registration, and the endpoint tools note that served routes may differ. Conventions are never
+interpreted. If your app adds a route prefix that way, state it:
+`slnmap analyze YourSolution.sln --route-prefix /api`. The prefix is applied to controller
+endpoints only, and each affected endpoint is marked `[prefix: user-supplied]`. (A template
+declared absolute, `/x` or `~/x`, is prefixed too, even though ASP.NET would not combine it.) When a
+`RouteTokenTransformerConvention` is registered, `find_endpoint` and `link` fall back to matching
+`[controller]`/`[action]` segments while ignoring `-`/`_`, always marked as a tolerant match.
 
 ## MCP tools reference
 
@@ -129,6 +144,10 @@ call.
 | `find_endpoint` | `route` *(required: a template or a concrete path)*, `verb` *(optional)* | Endpoints matching a route — case-insensitive, `{param}` holes bind concrete segments; a miss suggests near matches. After `slnmap link`, also lists its frontend callers. |
 | `find_orphan_calls` | `category` *(optional: `no-match`/`verb-mismatch`/`verb-unknown`)* | Frontend call sites with no matching endpoint, grouped by exact reason — computed live, always current even if `slnmap link` hasn't run since the last change. |
 | `list_frontend_callsites` | `verb` *(optional)*, `prefix` *(optional)* | Every frontend HTTP call site with its live linking status — the endpoint(s) it hits, or why it doesn't. |
+| `find_unused_symbols` | `scope` *(optional: a project name or `all`, default `all`)*, `kind` *(optional: `Class`/`Interface`/`Struct`/`Record`/`Enum`/`Delegate`/`Method`/`Property`/`Field`/`Event`)* | Public/internal symbols with zero incoming references. Leads with a caveat (zero static references is not dead code); overrides, interface implementations, entry points, tests and generated files are excluded and counted. |
+| `get_attribute_usages` | `attribute` *(required: short or fully qualified name)* | Where an attribute is applied — types, members, parameters/return values (attributed to their member), assembly-level (to the project) — grouped by project with file:line. |
+| `get_di_registrations` | `project` *(optional, default `all`)*, `type` *(optional: substring of the service or implementation FQN)* | DI registrations as `service -> implementation [lifetime]`, grouped by project with file:line; registrations that can't be read statically are listed separately. |
+| `find_callers_of_external` | `target` *(required: namespace prefix or assembly name)*, `project` *(optional, default `all`)* | Calls from this solution into a package or the framework — counts first, then callers by project and what each calls. |
 
 A malformed call never returns an opaque error: failures come back as a normal result carrying a
 small JSON payload — `status`/`code`/`message`/`hint` plus the offending parameter and the valid
@@ -152,7 +171,8 @@ slnmap doctor                    # check the environment can run Slnmap
 These eight verbs are the whole CLI. Symbol, usage, and impact querying is MCP-only — there is no
 `find`/`usages`/`impact` command; connect an MCP client to `slnmap serve` to query the graph.
 
-`--db <path>` selects the database file (default `slnmap.db`). `-v`/`--verbose` prints per-document
+`--db <path>` selects the database file (default `slnmap.db`). `analyze` and `watch` also take
+`--route-prefix <prefix>` (see [route conventions](#what-you-can-ask)). `-v`/`--verbose` prints per-document
 progress on its own line per update — useful in an interactive terminal, but it floods piped or
 redirected output (logs, CI), so omit it there.
 
@@ -260,6 +280,7 @@ dotnet tool update -g Slnmap
 To hear about releases, watch the GitHub repo (**Watch → Custom → Releases**); each release ships
 with notes in the [changelog](CHANGELOG.md). After a major-version update, re-run
 `slnmap analyze` if the tool asks for it — release notes call out when a graph rebuild is needed.
+(0.14.0 is one: its graph schema changed, and the next `analyze` rebuilds the graph by itself.)
 
 ## Build from source
 
@@ -319,6 +340,10 @@ v0.5.0 (1,311 / 2,922 edges). Timings are flat within normal run-to-run noise; t
 per-document work is otherwise unchanged. Full before/after detail, including the v0.5.0 and
 v0.3.0 baselines, is in [BENCHMARKS.md](BENCHMARKS.md).
 
+v0.14.0's new facts (external calls, DI registrations, attribute usages) cost about +6.5% cold
+analyze time and +41% database size on eShopOnWeb (+0.6 MB), with incremental runs unchanged;
+see [BENCHMARKS.md](BENCHMARKS.md).
+
 To estimate your own solution's cold analyze time, scale by size rather than anchoring on any single
 number above: field measurements on real-world solutions (antivirus real-time protection on, no
 exclusions) come out at roughly **55–60 seconds per 1,000 analyzed documents**. Treat it as
@@ -337,7 +362,7 @@ large solutions.
 
 ## Troubleshooting
 
-Run **`slnmap doctor`** first — it checks the three things that actually block analysis and prints a
+Run **`slnmap doctor`** first — it checks what actually blocks analysis (SDK, MSBuild, graph directory, project restore) and prints a
 fix for each:
 
 ```console
@@ -345,13 +370,23 @@ $ slnmap doctor
 [ok] .NET SDK: 1 SDK(s) installed; newest: 9.0.314 …
 [ok] MSBuild workspace: Roslyn MSBuild workspace initialized …
 [ok] Graph directory: Writable: /path/to/cwd
+[ok] Projects restored: 10 project(s) in YourSolution.sln restored.
 ```
+
+Pass the solution path (`slnmap doctor YourSolution.sln`) so the restore check knows what to look
+at.
 
 - **"No .NET SDKs are installed" / MSBuild fails to load projects.** Slnmap analyzes via
   `MSBuildWorkspace`, which runs design-time builds using your installed .NET SDK. Install the SDK
   (not just the runtime) from <https://dotnet.microsoft.com/download>. On **Windows**, if projects
   still fail to load, install the **Visual Studio Build Tools** (or Visual Studio) so MSBuild and the
   targeting packs resolve.
+- **"analyzed without dependencies (not restored?)".** A project whose `dotnet restore` never ran
+  or failed still loads, but without its NuGet packages (and, on newer SDKs, without the framework
+  either), so those types don't resolve and
+  its endpoints, DI registrations, attributes and calls are incomplete. Slnmap reports it in the
+  `analyze` summary, in `status`, and at the top of every MCP answer. Run `dotnet restore` (and fix
+  any restore errors), then `slnmap analyze`; the next run rebuilds the graph automatically.
 - **Analysis reports warnings but finishes.** That is expected and safe: a project that can't be loaded
   (e.g. a missing SDK or targeting pack) is reported as a warning and skipped — Slnmap indexes everything
   that *did* load rather than failing the whole run (a *partial load*). By default these are condensed

@@ -125,6 +125,10 @@ public sealed class McpErrorBehaviorTests : IClassFixture<AnalyzedFixtureGraphSt
             "find_endpoint" => _queries.FindEndpointAsync(Str("route")!, Str("verb")),
             "find_orphan_calls" => _queries.FindOrphanCallsAsync(Str("category")),
             "list_frontend_callsites" => _queries.ListFrontendCallSitesAsync(Str("verb"), Str("prefix")),
+            "find_unused_symbols" => _queries.FindUnusedSymbolsAsync(Str("scope") ?? "all", Str("kind")),
+            "get_attribute_usages" => _queries.GetAttributeUsagesAsync(Str("attribute")!),
+            "get_di_registrations" => _queries.GetDiRegistrationsAsync(Str("project") ?? "all", Str("type")),
+            "find_callers_of_external" => _queries.FindCallersOfExternalAsync(Str("target")!, Str("project") ?? "all"),
             _ => throw new InvalidOperationException($"example dispatch is missing tool '{tool}'"),
         };
     }

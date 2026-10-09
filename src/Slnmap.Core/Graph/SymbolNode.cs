@@ -12,20 +12,31 @@ namespace Slnmap.Core.Graph;
 /// <param name="Fqn">Fully qualified name, e.g. <c>Slnmap.Core.Analysis.ISolutionAnalyzer.AnalyzeAsync(string)</c>.</param>
 /// <param name="FilePath">Path of the file declaring the symbol, or null when it has no single location (e.g. a project or partial type).</param>
 /// <param name="Span">Character span of the declaration within <paramref name="FilePath"/>.</param>
+/// <param name="Accessibility">The symbol's declared accessibility as Roslyn names it (<c>Public</c>, <c>Internal</c>, <c>Private</c>, <c>Protected</c>, <c>ProtectedOrInternal</c>, <c>ProtectedAndInternal</c>), or null where it does not apply (projects, namespaces, endpoints, frontend nodes). Schema v2.</param>
+/// <param name="MemberFlags">Comma-separated facts about a member that the edges cannot show (schema v2): <c>override</c> (overrides a base member) and/or <c>interface-impl</c> (implements an interface member, explicitly or implicitly — including external interfaces such as <c>IDisposable</c>). Such a member is reached through its base/interface, so it has no direct callers of its own. On a type: <c>external-base</c> (derives from or implements a type outside the solution — the shape of framework-discovered types). Null when none applies.</param>
 public sealed record SymbolNode(
     string Id,
     NodeKind Kind,
     string Name,
     string Fqn,
     string? FilePath = null,
-    SourceSpan? Span = null)
+    SourceSpan? Span = null,
+    string? Accessibility = null,
+    string? MemberFlags = null)
 {
     /// <summary>Creates a node with its <see cref="Id"/> derived from <paramref name="kind"/> and <paramref name="fqn"/>.</summary>
-    public static SymbolNode Create(NodeKind kind, string name, string fqn, string? filePath = null, SourceSpan? span = null)
+    public static SymbolNode Create(
+        NodeKind kind,
+        string name,
+        string fqn,
+        string? filePath = null,
+        SourceSpan? span = null,
+        string? accessibility = null,
+        string? memberFlags = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentException.ThrowIfNullOrWhiteSpace(fqn);
-        return new SymbolNode(CreateId(kind, fqn), kind, name, fqn, filePath, span);
+        return new SymbolNode(CreateId(kind, fqn), kind, name, fqn, filePath, span, accessibility, memberFlags);
     }
 
     /// <summary>

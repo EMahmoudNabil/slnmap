@@ -1,5 +1,6 @@
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using Slnmap.Core.Storage;
 
 namespace Slnmap.Mcp;
 
@@ -14,9 +15,16 @@ namespace Slnmap.Mcp;
 /// </summary>
 internal sealed class ShapedFailureTool : DelegatingMcpServerTool
 {
-    public ShapedFailureTool(McpServerTool innerTool)
+    private readonly IGraphStore? _store;
+
+    /// <param name="store">
+    /// The graph store, used to prefix every successful answer with the not-restored warning when
+    /// the graph has one (v0.14.0). Null skips the note.
+    /// </param>
+    public ShapedFailureTool(McpServerTool innerTool, IGraphStore? store = null)
         : base(innerTool)
     {
+        _store = store;
     }
 
     public override async ValueTask<CallToolResult> InvokeAsync(
@@ -30,7 +38,8 @@ internal sealed class ShapedFailureTool : DelegatingMcpServerTool
 
         try
         {
-            return await base.InvokeAsync(request, cancellationToken).ConfigureAwait(false);
+            var result = await base.InvokeAsync(request, cancellationToken).ConfigureAwait(false);
+            return await WithNotRestoredNoteAsync(result, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -46,6 +55,40 @@ internal sealed class ShapedFailureTool : DelegatingMcpServerTool
                 $"'{ProtocolTool.Name}' failed unexpectedly while executing. The call was well-formed — retry once; "
                 + "if it persists, the graph database may be missing or corrupt: re-run 'slnmap analyze' and try again."));
         }
+    }
+
+    /// <summary>
+    /// Prefixes the not-restored warning to a successful prose answer. Failure payloads are left
+    /// untouched (they must stay machine-parseable), and a failure to read the note never fails the
+    /// call — the answer is still returned.
+    /// </summary>
+    private async Task<CallToolResult> WithNotRestoredNoteAsync(CallToolResult result, CancellationToken cancellationToken)
+    {
+        if (_store is null
+            || result.IsError == true
+            || result.Content is not [TextContentBlock first, ..]
+            || ToolFailure.IsFailurePayload(first.Text))
+        {
+            return result;
+        }
+
+        string? note;
+        try
+        {
+            note = await new SlnmapQueries(_store).NotRestoredNoteAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            Console.Error.WriteLine($"[slnmap] could not read the not-restored note: {e.Message}");
+            return result;
+        }
+
+        if (note is not null)
+        {
+            first.Text = note + Environment.NewLine + Environment.NewLine + first.Text;
+        }
+
+        return result;
     }
 
     private static CallToolResult Failure(string payload) => new()

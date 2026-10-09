@@ -12,6 +12,10 @@ public sealed class CodeGraph
     private readonly HashSet<RelationshipEdge> _edges = [];
     private readonly Dictionary<string, List<RelationshipEdge>> _outgoing = new(StringComparer.Ordinal);
     private readonly Dictionary<string, List<RelationshipEdge>> _incoming = new(StringComparer.Ordinal);
+    private readonly HashSet<ExternalCall> _externalCalls = [];
+    private readonly HashSet<DiRegistration> _diRegistrations = [];
+    private readonly HashSet<AttributeUsage> _attributeUsages = [];
+    private readonly HashSet<Disclosure> _disclosures = [];
 
     public int NodeCount => _nodes.Count;
 
@@ -20,6 +24,100 @@ public sealed class CodeGraph
     public IEnumerable<SymbolNode> Nodes => _nodes.Values;
 
     public IEnumerable<RelationshipEdge> Edges => _edges;
+
+    /// <summary>Calls from source members into symbols outside the solution (schema v2).</summary>
+    public IEnumerable<ExternalCall> ExternalCalls => _externalCalls;
+
+    /// <summary>Dependency-injection registration call sites (schema v2).</summary>
+    public IEnumerable<DiRegistration> DiRegistrations => _diRegistrations;
+
+    /// <summary>Attributes applied to source symbols (schema v2).</summary>
+    public IEnumerable<AttributeUsage> AttributeUsages => _attributeUsages;
+
+    /// <summary>Things analysis found but could not model, by location (v0.14.0).</summary>
+    public IEnumerable<Disclosure> Disclosures => _disclosures;
+
+    /// <summary>Total number of file-owned facts across all fact kinds.</summary>
+    public int FactCount => _externalCalls.Count + _diRegistrations.Count + _attributeUsages.Count + _disclosures.Count;
+
+    public bool AddDisclosure(Disclosure disclosure)
+    {
+        ArgumentNullException.ThrowIfNull(disclosure);
+        return _disclosures.Add(disclosure);
+    }
+
+    /// <summary>Removes every disclosure of <paramref name="kind"/>; returns how many were removed.</summary>
+    public int RemoveDisclosures(string kind) => _disclosures.RemoveWhere(d => d.Kind == kind);
+
+    public bool AddExternalCall(ExternalCall call)
+    {
+        ArgumentNullException.ThrowIfNull(call);
+        return _externalCalls.Add(call);
+    }
+
+    public bool AddDiRegistration(DiRegistration registration)
+    {
+        ArgumentNullException.ThrowIfNull(registration);
+        return _diRegistrations.Add(registration);
+    }
+
+    public bool AddAttributeUsage(AttributeUsage usage)
+    {
+        ArgumentNullException.ThrowIfNull(usage);
+        return _attributeUsages.Add(usage);
+    }
+
+    /// <summary>
+    /// Copies every file-owned fact from <paramref name="source"/> into this graph, keeping only
+    /// facts whose owning file satisfies <paramref name="keepFile"/> (all of them when null).
+    /// Every place that rebuilds a graph from an existing one must call this — a rebuild that
+    /// copies nodes and edges alone silently drops the facts.
+    /// </summary>
+    public void CopyFactsFrom(CodeGraph source, Func<string, bool>? keepFile = null)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        foreach (var call in source._externalCalls)
+        {
+            if (keepFile is null || keepFile(call.FilePath))
+            {
+                _externalCalls.Add(call);
+            }
+        }
+
+        foreach (var registration in source._diRegistrations)
+        {
+            if (keepFile is null || keepFile(registration.FilePath))
+            {
+                _diRegistrations.Add(registration);
+            }
+        }
+
+        foreach (var usage in source._attributeUsages)
+        {
+            if (keepFile is null || keepFile(usage.FilePath))
+            {
+                _attributeUsages.Add(usage);
+            }
+        }
+
+        foreach (var disclosure in source._disclosures)
+        {
+            if (keepFile is null || keepFile(disclosure.FilePath))
+            {
+                _disclosures.Add(disclosure);
+            }
+        }
+    }
+
+    /// <summary>Set equality over all fact kinds.</summary>
+    public bool FactsEqual(CodeGraph other)
+    {
+        ArgumentNullException.ThrowIfNull(other);
+        return _externalCalls.SetEquals(other._externalCalls)
+            && _diRegistrations.SetEquals(other._diRegistrations)
+            && _attributeUsages.SetEquals(other._attributeUsages)
+            && _disclosures.SetEquals(other._disclosures);
+    }
 
     /// <summary>Adds a node. Returns false if a node with the same id is already present (the existing node wins).</summary>
     public bool AddNode(SymbolNode node)

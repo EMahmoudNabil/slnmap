@@ -131,6 +131,10 @@ internal static class IncrementalPlanner
             }
         }
 
+        // Facts (schema v2) are owned by the file whose walk produced them, like edges by their
+        // source: keep exactly the facts of files that are not being re-walked or removed.
+        baseline.CopyFactsFrom(graph, file => !evicted.Contains(file));
+
         return new AnalysisPlan { FilesToAnalyze = filesToAnalyze, BaselineGraph = baseline };
     }
 }

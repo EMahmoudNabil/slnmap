@@ -92,4 +92,27 @@ public static class MetaKeys
     /// Absent when `link` has never run (or predates this key).
     /// </summary>
     public const string LinkerBasePathPrefix = "linker_base_path_prefix";
+
+    /// <summary>
+    /// Count of MVC model-convention registrations that can rewrite route templates at startup
+    /// (v0.14.0, <see cref="Slnmap.Core.Graph.DisclosureKinds.RouteConvention"/>). The per-location
+    /// detail lives in the <c>disclosures</c> table.
+    /// </summary>
+    public const string RouteConventionsRegistered = "route_conventions_registered";
+
+    /// <summary>
+    /// The prefix passed to <c>slnmap analyze --route-prefix</c> (normalized, e.g. <c>/api</c>),
+    /// applied to every controller endpoint. User-stated, never inferred. Absent when none was
+    /// given. A change forces a full re-analysis — carried-over endpoints would otherwise mix
+    /// prefixed and unprefixed templates.
+    /// </summary>
+    public const string RoutePrefix = "route_prefix";
+
+    /// <summary>
+    /// Count of projects analyzed without their dependencies (v0.14.0,
+    /// <see cref="Slnmap.Core.Graph.DisclosureKinds.ProjectNotRestored"/>): no resolved references,
+    /// or a restore that recorded errors. Their results are incomplete. The per-project reason lives
+    /// in the <c>disclosures</c> table. Absent or "0" when every project resolved.
+    /// </summary>
+    public const string ProjectsNotRestored = "projects_not_restored";
 }

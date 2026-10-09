@@ -18,8 +18,13 @@ namespace Slnmap.Analysis;
 public sealed class RoslynSolutionAnalyzer : ISolutionAnalyzer
 {
     private readonly Action<string>? _warningSink;
+    private readonly AnalysisOptions _options;
 
-    public RoslynSolutionAnalyzer(Action<string>? warningSink = null) => _warningSink = warningSink;
+    public RoslynSolutionAnalyzer(Action<string>? warningSink = null, AnalysisOptions? options = null)
+    {
+        _warningSink = warningSink;
+        _options = options ?? AnalysisOptions.Default;
+    }
 
     public async Task<AnalysisSnapshot> AnalyzeAsync(
         string solutionPath,
@@ -36,6 +41,6 @@ public sealed class RoslynSolutionAnalyzer : ISolutionAnalyzer
 
         using var workspace = MSBuildWorkspace.Create();
         var solution = await SolutionAnalysisEngine.OpenAsync(workspace, solutionPath, _warningSink, progress, cancellationToken).ConfigureAwait(false);
-        return await SolutionAnalysisEngine.AnalyzeAsync(solution, previous, _warningSink, progress, cancellationToken).ConfigureAwait(false);
+        return await SolutionAnalysisEngine.AnalyzeAsync(solution, previous, _warningSink, progress, cancellationToken, _options).ConfigureAwait(false);
     }
 }

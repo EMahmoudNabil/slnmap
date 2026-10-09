@@ -9,10 +9,16 @@ namespace Slnmap.Analysis;
 /// routing system — noted, not counted). A method that is not an action at all (not public, not
 /// ordinary, [NonAction], not on a controller) classifies to null.
 /// </summary>
+/// <remarks>
+/// <see cref="RouteTokenSegments"/> is aligned with <see cref="Routes"/>: for each route, the
+/// zero-based indexes of its path segments that contain a substituted [controller]/[action]/[area]
+/// token value (v0.14.0) — the only segments an MVC <c>RouteTokenTransformerConvention</c> rewrites.
+/// </remarks>
 internal sealed record ControllerActionClassification(
     IReadOnlyList<(string Verb, string Template)> Routes,
     IReadOnlyList<string> UnresolvedReasons,
-    bool IsConventionallyRouted);
+    bool IsConventionallyRouted,
+    IReadOnlyList<IReadOnlyList<int>>? RouteTokenSegments = null);
 
 /// <summary>
 /// Pure semantic-model extraction for attribute-routed ASP.NET Core controllers (the v1.1
@@ -131,6 +137,7 @@ internal static partial class ControllerEndpointFacts
         // takes the bare-verb constraints; with no verb anywhere the action matches every HTTP
         // verb — refused, because picking one would be a guess.
         var routes = new List<(string Verb, string Template)>();
+        var tokenSegments = new List<IReadOnlyList<int>>();
         if (templatedProviders.Count > 0)
         {
             foreach (var (providerVerb, template) in templatedProviders)
@@ -144,7 +151,7 @@ internal static partial class ControllerEndpointFacts
 
                 foreach (string verb in verbs.Distinct(StringComparer.Ordinal))
                 {
-                    AddComposedRoutes(routes, refusals, classTemplates, template, verb, method, type);
+                    AddComposedRoutes(routes, tokenSegments, refusals, classTemplates, template, verb, method, type);
                 }
             }
         }
@@ -160,11 +167,11 @@ internal static partial class ControllerEndpointFacts
 
             foreach (string verb in bareVerbs.Distinct(StringComparer.Ordinal))
             {
-                AddComposedRoutes(routes, refusals, classTemplates, actionTemplate: null, verb, method, type);
+                AddComposedRoutes(routes, tokenSegments, refusals, classTemplates, actionTemplate: null, verb, method, type);
             }
         }
 
-        return new ControllerActionClassification(routes, refusals, IsConventionallyRouted: false);
+        return new ControllerActionClassification(routes, refusals, IsConventionallyRouted: false, tokenSegments);
     }
 
     /// <summary>
@@ -257,6 +264,7 @@ internal static partial class ControllerEndpointFacts
     /// </summary>
     private static void AddComposedRoutes(
         List<(string Verb, string Template)> routes,
+        List<IReadOnlyList<int>> tokenSegments,
         List<string> refusals,
         IReadOnlyList<string> classTemplates,
         string? actionTemplate,
@@ -289,6 +297,11 @@ internal static partial class ControllerEndpointFacts
             if (TrySubstituteTokens(template, method, type, out string substituted, out string? reason))
             {
                 routes.Add((verb, EndpointFacts.ComposeTemplate(string.Empty, substituted)));
+
+                // Same substitution again with each token value wrapped in a marker, so the
+                // composed route reveals which segments carry a token value.
+                TrySubstituteTokens(template, method, type, out string marked, out _, markTokens: true);
+                tokenSegments.Add(TokenSegmentIndexes(EndpointFacts.ComposeTemplate(string.Empty, marked)));
             }
             else
             {
@@ -326,27 +339,29 @@ internal static partial class ControllerEndpointFacts
         IMethodSymbol method,
         INamedTypeSymbol type,
         out string substituted,
-        out string? reason)
+        out string? reason,
+        bool markTokens = false)
     {
         string? failure = null;
+        string Mark(string value) => markTokens ? TokenMarker + value : value;
         substituted = RouteToken().Replace(template, match =>
         {
             string token = match.Groups[1].Value;
             if (token.Equals("controller", StringComparison.OrdinalIgnoreCase))
             {
-                return TrimSuffix(type.Name, "Controller");
+                return Mark(TrimSuffix(type.Name, "Controller"));
             }
 
             if (token.Equals("action", StringComparison.OrdinalIgnoreCase))
             {
-                return TrimSuffix(method.Name, "Async");
+                return Mark(TrimSuffix(method.Name, "Async"));
             }
 
             if (token.Equals("area", StringComparison.OrdinalIgnoreCase))
             {
                 if (FindAreaName(type) is { } area)
                 {
-                    return area;
+                    return Mark(area);
                 }
 
                 failure = $"route '{template}' uses [area] but the controller has no [Area] attribute";
@@ -359,6 +374,25 @@ internal static partial class ControllerEndpointFacts
 
         reason = failure;
         return failure is null;
+    }
+
+    /// <summary>A character no route template or C# identifier contains.</summary>
+    private const char TokenMarker = '';
+
+    /// <summary>Indexes of the '/'-separated segments of a marked, composed route that contain a token value.</summary>
+    private static IReadOnlyList<int> TokenSegmentIndexes(string markedComposed)
+    {
+        string[] segments = markedComposed.Trim('/').Split('/');
+        var indexes = new List<int>();
+        for (int i = 0; i < segments.Length; i++)
+        {
+            if (segments[i].Contains(TokenMarker, StringComparison.Ordinal))
+            {
+                indexes.Add(i);
+            }
+        }
+
+        return indexes;
     }
 
     private static string? FindAreaName(INamedTypeSymbol type)

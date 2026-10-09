@@ -66,6 +66,14 @@ internal static class DotNet
             UseShellExecute = false,
         };
 
+        // MSBuildWorkspace's locator points these at the SDK the test host loaded. A child
+        // `dotnet` must resolve its own SDK (a global.json may pin another one); inheriting them
+        // mixes one SDK's targets with another's runtime (MSB4062).
+        foreach (string variable in new[] { "MSBUILD_EXE_PATH", "MSBuildExtensionsPath", "MSBuildSDKsPath" })
+        {
+            startInfo.Environment.Remove(variable);
+        }
+
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException("Failed to start dotnet.");
         // Both reads are started before either is awaited, so stdout and stderr drain

@@ -308,6 +308,13 @@ public sealed partial class SlnmapQueries
             builder.AppendLine($"  ...and {all.Count - ImpactListCap} more.");
         }
 
+        // The cross-stack leg (handler -> endpoint -> frontend call sites) is only as accurate as
+        // the endpoint's route template, which a registered route convention can rewrite.
+        if (all.Any(r => r.Node.Kind is NodeKind.Endpoint or NodeKind.FrontendCallSite))
+        {
+            await AppendRouteConventionNoteAsync(builder, cancellationToken).ConfigureAwait(false);
+        }
+
         return builder.ToString().TrimEnd();
     }
 

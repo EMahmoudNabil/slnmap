@@ -76,6 +76,44 @@ public interface IGraphStore : IAsyncDisposable
     /// <summary>All metadata key/value pairs (see <see cref="MetaKeys"/>).</summary>
     Task<IReadOnlyDictionary<string, string>> GetMetaAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Nodes of the given <paramref name="kinds"/> and declared <paramref name="accessibilities"/>
+    /// that no other node depends on — zero incoming edges of any kind except structural
+    /// <see cref="RelationshipKind.Contains"/> (so a handler reached via HandledBy, a type only
+    /// inherited from, or an interface only implemented all count as used). Ordered by FQN. Empty
+    /// for a graph built before schema v2 (no accessibility column).
+    /// </summary>
+    Task<IReadOnlyList<SymbolNode>> GetUnreferencedNodesAsync(
+        IReadOnlyCollection<NodeKind> kinds,
+        IReadOnlyCollection<string> accessibilities,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// External calls whose target namespace equals <paramref name="prefix"/> or starts with it
+    /// plus '.', or whose target assembly equals it (case-insensitive) — "where do we call EF
+    /// Core?". Each row is one (caller, target) pair with its first site and call count. Empty
+    /// for a graph built before schema v2.
+    /// </summary>
+    Task<IReadOnlyList<ExternalCall>> GetExternalCallsAsync(string prefix, CancellationToken cancellationToken = default);
+
+    /// <summary>Distinct external target namespaces with their (caller, target) pair counts, for suggestions.</summary>
+    Task<IReadOnlyList<(string Namespace, int Pairs)>> GetExternalNamespacesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Every recorded DI registration, ordered by file and position (schema v2; empty before).</summary>
+    Task<IReadOnlyList<DiRegistration>> GetDiRegistrationsAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Every distinct applied attribute FQN with its usage count (schema v2; empty before).</summary>
+    Task<IReadOnlyList<(string AttributeFqn, int Count)>> GetAttributeSummaryAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Every usage of the attribute with exactly this FQN, ordered by file and position.</summary>
+    Task<IReadOnlyList<AttributeUsage>> GetAttributeUsagesAsync(string attributeFqn, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Disclosures of the given <paramref name="kind"/> (see <see cref="DisclosureKinds"/>), ordered
+    /// by file and position. Empty for a graph built before schema v2.
+    /// </summary>
+    Task<IReadOnlyList<Disclosure>> GetDisclosuresAsync(string kind, CancellationToken cancellationToken = default);
+
     /// <summary>Content hashes of all files seen by the last analysis, keyed by path. Used for incremental re-analysis.</summary>
     Task<IReadOnlyDictionary<string, string>> GetFileHashesAsync(CancellationToken cancellationToken = default);
 }

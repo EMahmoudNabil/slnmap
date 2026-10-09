@@ -2,6 +2,93 @@
 
 All notable changes to Slnmap are documented here. Versions follow [SemVer](https://semver.org).
 
+## 0.14.0
+
+Four new MCP tools (15 -> **19**), honest handling of route conventions, and a fix for projects
+that were analyzed silently without their dependencies. **The graph schema changes (v1 -> v2):**
+the next `slnmap analyze` rebuilds an existing graph automatically. No other action is needed.
+
+### Added
+
+- **`find_unused_symbols`**: public and internal types and members that nothing in the solution
+  references. The output leads with a caveat: zero static references is not dead code
+  (reflection, serialization, DI-only, framework-invoked, external consumers). Overrides,
+  interface implementations, entry points, test projects and generated files are excluded and
+  counted. Types deriving from a framework base are listed separately, as lower confidence.
+  `scope` takes a project name or `all`; `kind` is an optional filter.
+- **`get_attribute_usages`**: where an attribute is applied (types, members, parameters and return
+  values attributed to their member, assembly-level attributes to the project), grouped by project
+  with file:line. Accepts a short or fully qualified name, with or without the `Attribute` suffix
+  or brackets. A short name matching several attribute types lists them instead of guessing.
+  Works for framework attributes (`[Authorize]`, `[Obsolete]`, `[HttpPost]`).
+- **`get_di_registrations`**: what the DI container is wired with, as `service -> implementation
+  [lifetime]`, read from `Microsoft.Extensions.DependencyInjection` calls in your source. Covers
+  `AddScoped`/`AddSingleton`/`AddTransient`, including `TryAdd*` and keyed forms (the key is
+  shown), `typeof` and open-generic forms, factories, instances, `AddDbContext`/
+  `AddDbContextFactory` and `AddHostedService`. A registration whose types can't be read
+  statically (a `ServiceDescriptor`, `Replace`, `TryAddEnumerable`, a runtime `Type`) is listed
+  separately as unrecognized, never dropped.
+- **`find_callers_of_external`**: where the solution calls into a package or the framework.
+  Matches by namespace prefix (`Microsoft.EntityFrameworkCore`) or assembly name. Counts come
+  first (call sites, callers, most-called targets), then callers by project with what each calls.
+  It is the only tool that looks outside the solution. Calls from generated files are counted but
+  not listed.
+- **`slnmap analyze --route-prefix <prefix>`** (also on `watch`): states a route prefix your app
+  adds to every attribute-routed controller at startup in a way static analysis can't see
+  (typically an `IApplicationModelConvention`). It is applied to controller endpoints only,
+  recorded in the graph, shown by `status`, and every affected endpoint is marked
+  `[prefix: user-supplied]` in tool output. Changing or removing it forces a full re-analysis.
+- **Token-transformer-tolerant route matching.** When the solution registers a
+  `RouteTokenTransformerConvention` (for example one that slugifies `[controller]`/`[action]`),
+  `find_endpoint` and `slnmap link` fall back to comparing only the token-derived segments while
+  ignoring `-`/`_`. It is tried last, never preferred over a literal match, and always marked
+  (`via token-transformer-tolerant match`).
+- **Projects analyzed without their dependencies are now disclosed.** A project whose restore
+  never ran or failed used to load with no references and no warning, so every framework type was
+  unresolved and its results were silently wrong (one real solution showed 0 endpoints before
+  `dotnet restore` and 6 after). Each project is now checked on every run. It is reported when it
+  has no resolved references (SDK 10), when it is SDK-style and has no `project.assets.json`
+  (SDK 9 still resolves the framework, but every NuGet package is missing), or when its restore
+  recorded errors. A restored `UseArtifactsOutput` layout is recognized. You see it
+  as a warning, in the `Projects:` line of `analyze`, in `status`, and in a one-line warning at the
+  top of **every MCP answer**. `slnmap doctor` gains a **Projects restored** check. Restoring
+  changes no source file, so a change in restore state now forces a full re-analysis.
+
+### Changed
+
+- **Route-convention disclosure is wider and persistent.** v0.13.1 warned about
+  `MvcOptions.Conventions.Add(IApplicationModelConvention)` only. Now the
+  `IControllerModelConvention`/`IActionModelConvention` overloads, `Insert`, and conventions
+  applied as attributes are also detected. They are counted in the `analyze` summary, stored in
+  the graph, and noted by the endpoint tools (`list_endpoints`, `find_endpoint`, linker
+  disclosures): served routes may differ. Conventions are never interpreted.
+- **Graph schema v2.** New per-file fact tables (external calls, DI registrations, attribute
+  usages, disclosures), plus symbol accessibility and member flags. An existing v1 graph is
+  rebuilt on the next `analyze`. `link` and `analyze-ts` refuse a v1 graph and ask you to re-run
+  `analyze` first. `serve` still answers from a v1 graph, but the four new tools ask for a rebuild
+  rather than answer from missing data.
+- **Graph size and analysis time.** The new facts make the database larger: +41% on eShopOnWeb
+  (1.55 -> 2.18 MB) and +27% on a ~33k-node production solution. Cold analyze is +6.5% and +9%
+  respectively. Incremental re-analysis is unchanged. See [BENCHMARKS.md](BENCHMARKS.md).
+- **A constructor that calls only external code is now a graph node.** Before, a constructor became a
+  node only by calling something in the solution. Recording its external calls needs a caller, so
+  such constructors now appear (one extra node and edge on the RealWorld sample, for example).
+
+### Fixed
+
+- **Disclosure counters reset to zero on every incremental run.** The unresolved-endpoint,
+  conventional-controller, Razor Pages and controller-like counts were summed over only the
+  documents a run re-walked, so any incremental `analyze` (and every `watch` save) overwrote them
+  with zero. They are now derived from the whole merged graph.
+
+### Notes
+
+- `--route-prefix` is added to every controller template, including one declared absolute (`/x`
+  or `~/x`), which ASP.NET would not combine with a convention prefix. slnmap does not keep that
+  distinction in stored templates yet.
+- A restore that is merely stale (a package added since the last restore) is not detected: the
+  framework resolves, and only that package's types are missing.
+
 ## 0.13.1
 
 ### Fixed
