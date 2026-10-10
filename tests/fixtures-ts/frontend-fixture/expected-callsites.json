@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "producer": "slnmap-ts",
-  "producerVersion": "0.3.0",
+  "producerVersion": "0.3.1",
   "project": {
     "root": ".",
     "tsconfig": "tsconfig.json"
