@@ -299,9 +299,9 @@ public sealed partial class SlnmapQueries
         }
 
         // An inferred frontend link is marked here too, never shown like a literal one.
-        var inferredLinks = all.Take(ImpactListCap).Any(r => r.Node.Kind == NodeKind.FrontendCallSite)
-            ? await InferredLinkMarkersAsync(cancellationToken).ConfigureAwait(false)
-            : new Dictionary<string, string>(StringComparer.Ordinal);
+        var inferredLinks = await InferredLinkMarkersAsync(
+            all.Take(ImpactListCap).Where(r => r.Node.Kind == NodeKind.FrontendCallSite).Select(r => r.Node).ToList(),
+            cancellationToken).ConfigureAwait(false);
         builder.AppendLine($"Dependents (nearest first, up to {ImpactListCap}):");
         foreach (var reached in all.Take(ImpactListCap))
         {

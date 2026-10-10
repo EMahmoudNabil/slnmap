@@ -2,6 +2,26 @@
 
 All notable changes to Slnmap are documented here. Versions follow [SemVer](https://semver.org).
 
+## 0.14.2
+
+A performance fix for a regression in 0.14.1. No schema change; the next `analyze` does a full
+rebuild once, because the version changed.
+
+### Fixed
+
+- **`find_endpoint` and `impact_analysis` were up to ~8× slower in 0.14.1** when the answer listed a
+  frontend caller. To mark inferred links (`via prefix-stripped path` / `via
+  token-transformer-tolerant match`), every call site in the graph was relinked on each call: about
+  0.8 s on a solution with 651 call sites, against 0.1 s in 0.14.0. Only the call sites shown are
+  linked now, and nothing is linked when no inferred link is possible (no absolute-URL call site
+  and no token transformer registered). Answers are byte-identical to 0.14.1.
+
+### Changed
+
+- The linker prepares each endpoint's route once instead of once per call site, so
+  `list_frontend_callsites`, `find_orphan_calls` and `slnmap link` are about 2–3× faster on large
+  graphs, with identical results.
+
 ## 0.14.1
 
 Honesty and polish follow-ups to 0.14.0. There is no schema change; the next `analyze` does a full
