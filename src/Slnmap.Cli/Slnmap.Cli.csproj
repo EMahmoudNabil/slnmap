@@ -8,7 +8,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>slnmap</ToolCommandName>
     <PackageId>Slnmap</PackageId>
-    <Version>0.14.1</Version>
+    <Version>0.14.2</Version>
     <RollForward>Major</RollForward>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>
@@ -16,18 +16,9 @@
     <Copyright>Copyright (c) 2026 the Slnmap authors. All rights reserved.</Copyright>
     <PackageProjectUrl>https://slnmap.dev</PackageProjectUrl>
     <PackageTags>dotnet;roslyn;mcp;ai;code-analysis;claude-code;knowledge-graph</PackageTags>
-    <PackageReleaseNotes>Fixed: slnmap watch never saw a save on macOS (the readiness line was printed before
-the file watcher started; symlinked solution directories are now followed to their real path).
-Fixed: controllers whose [Route]/[Http*] attributes don't resolve (usually an unrestored project)
-were called conventionally routed; they are now disclosed as having unresolved route attributes.
-Fixed: identical refusals on one action are counted separately; find_unused_symbols under a project
-scope reports symbols it can't attribute instead of dropping them.
-
-Added: stale-restore detection (a package declared after the last restore) in analyze, status,
-every MCP answer and doctor. impact_analysis and find_endpoint mark inferred frontend links.
-macOS CI.
-
-Changed: find_circular_dependencies(namespace) about 10x faster on large graphs, same output.
+    <PackageReleaseNotes>Fixed: find_endpoint and impact_analysis were up to ~8x slower in 0.14.1 when the answer listed a
+frontend caller (every call site was relinked to mark inferred links). Back to 0.14.0 speed, with
+identical output. list_frontend_callsites, find_orphan_calls and slnmap link are also faster.
 
 No schema change; the next analyze rebuilds once because the version changed.
 

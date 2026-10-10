@@ -152,12 +152,15 @@ internal static partial class RouteTemplate
             return true;
         }
 
-        string[] templateSegments = normalizedTemplate.Split('/');
-        string[] querySegments = normalizedQuery.Split('/');
-        if (templateSegments.Length != querySegments.Length)
+        // v0.14.2: the linker compares every call site with every endpoint, and most pairs
+        // differ in segment count, so reject those before allocating the split arrays.
+        if (!SameSegmentCount(normalizedTemplate, normalizedQuery))
         {
             return false;
         }
+
+        string[] templateSegments = normalizedTemplate.Split('/');
+        string[] querySegments = normalizedQuery.Split('/');
 
         bool templateHoleAbsorbedQueryLiteral = false;
         bool queryHoleAbsorbedTemplateLiteral = false;
@@ -209,6 +212,11 @@ internal static partial class RouteTemplate
             return Matches(normalizedTemplate, normalizedQuery);
         }
 
+        if (!SameSegmentCount(normalizedTemplate, normalizedQuery))
+        {
+            return false;
+        }
+
         string[] templateSegments = normalizedTemplate.Split('/');
         string[] querySegments = normalizedQuery.Split('/');
         if (templateSegments.Length != querySegments.Length)
@@ -229,6 +237,9 @@ internal static partial class RouteTemplate
 
         return Matches(string.Join('/', templateSegments), string.Join('/', querySegments));
     }
+
+    private static bool SameSegmentCount(string a, string b) =>
+        a.AsSpan().Count('/') == b.AsSpan().Count('/');
 
     private static string StripSeparators(string segment) =>
         segment.Replace("-", string.Empty, StringComparison.Ordinal).Replace("_", string.Empty, StringComparison.Ordinal);

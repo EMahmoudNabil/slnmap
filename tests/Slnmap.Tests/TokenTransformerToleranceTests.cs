@@ -127,6 +127,52 @@ public sealed class TokenTransformerToleranceTests : IDisposable
     }
 
     [Fact]
+    public async Task ARelativeCallerLinkedTolerantly_KeepsItsMarker_InFindEndpointAndImpactAnalysis()
+    {
+        // v0.14.2: the markers skip relinking when no inferred link is possible (no absolute-URL
+        // caller and no token transformer). A relative call site linked through the transformer
+        // must still be marked.
+        string dbPath = Path.Combine(_root, "graph.db");
+        var graph = new CodeGraph();
+        var handler = SymbolNode.Create(NodeKind.Method, "ChangePassword", "Demo.ManageController.ChangePassword()", "Manage.cs", new SourceSpan(0, 1), "Public");
+        var endpoint = SymbolNode.Create(NodeKind.Endpoint, "/Manage/ChangePassword", "GET /Manage/ChangePassword");
+        var call = SymbolNode.Create(NodeKind.FrontendCallSite, "/manage/change-password", "GET src/a.ts:1:1");
+        foreach (var node in new[] { handler, endpoint, call })
+        {
+            graph.AddNode(node);
+        }
+
+        graph.AddEdge(new RelationshipEdge(endpoint.Id, handler.Id, RelationshipKind.HandledBy));
+        graph.AddDisclosure(RouteConvention(TransformerConvention));
+        graph.AddDisclosure(TokenSegments(endpoint.Fqn, 0, 1));
+        var tolerance = CrossStackLinker.BuildTokenTolerance(graph.Disclosures, graph.Disclosures);
+        var results = CrossStackLinker.Link(graph, "", tolerance);
+        Assert.True(Assert.Single(results).ViaTokenTransformerTolerance);
+        foreach (var edge in CrossStackLinker.ToEdges(results))
+        {
+            graph.AddEdge(edge);
+        }
+
+        await using (var seed = new SqliteGraphStore(dbPath))
+        {
+            await seed.SaveAsync(graph, [], new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [MetaKeys.LastAnalyzed] = "test",
+                [MetaKeys.LinkerBasePathPrefix] = "",
+            });
+        }
+
+        await using var store = new SqliteGraphStore(dbPath);
+        var queries = new SlnmapQueries(store);
+
+        string found = await queries.FindEndpointAsync("/Manage/ChangePassword", "GET");
+        Assert.Contains("Called from the frontend by: GET src/a.ts:1:1 via token-transformer-tolerant match", found, StringComparison.Ordinal);
+
+        string impact = await queries.ImpactAnalysisAsync(handler.Fqn);
+        Assert.Contains("[FrontendCallSite] GET src/a.ts:1:1 @depth 2 via token-transformer-tolerant match", impact, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Analyze_RecordsTokenSegmentProvenance_ShiftedByTheRoutePrefix()
     {
         DotNet.Run($"restore \"{TestPaths.FixtureSolution}\"", TestPaths.RepoRoot);

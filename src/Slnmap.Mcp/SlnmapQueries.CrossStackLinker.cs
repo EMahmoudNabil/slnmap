@@ -26,7 +26,9 @@ public sealed partial class SlnmapQueries
     /// Only `impact_analysis`/`find_usages` depend on the persisted edges, since those need a
     /// real row to walk via SQL; a flat classification listing has no such requirement.
     /// </summary>
-    private async Task<IReadOnlyList<CallSiteLinkResult>> ComputeLiveLinkResultsAsync(CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<CallSiteLinkResult>> ComputeLiveLinkResultsAsync(
+        CancellationToken cancellationToken,
+        IEnumerable<SymbolNode>? onlyCallSites = null)
     {
         var graph = new CodeGraph();
         foreach (var node in await _store.GetNodesByKindAsync(NodeKind.Endpoint, cancellationToken).ConfigureAwait(false))
@@ -34,7 +36,9 @@ public sealed partial class SlnmapQueries
             graph.AddNode(node);
         }
 
-        foreach (var node in await _store.GetNodesByKindAsync(NodeKind.FrontendCallSite, cancellationToken).ConfigureAwait(false))
+        // Each call site links independently of the others, so a caller that needs only a few
+        // results (v0.14.2: the markers below) links only those.
+        foreach (var node in onlyCallSites ?? await _store.GetNodesByKindAsync(NodeKind.FrontendCallSite, cancellationToken).ConfigureAwait(false))
         {
             graph.AddNode(node);
         }
@@ -57,12 +61,32 @@ public sealed partial class SlnmapQueries
     /// For each frontend call site whose link is inferred rather than literal, the marker every
     /// listing of it must carry (v0.14.1, Gate 8 QA #9). Stored CallsEndpoint edges don't record
     /// how they were made, so this recomputes the links live (the same computation
-    /// list_frontend_callsites shows) and keys the marker by call-site node id.
+    /// list_frontend_callsites shows) and keys the marker by call-site node id. Only
+    /// <paramref name="callSites"/> are linked (v0.14.2: linking all of them on every
+    /// impact_analysis/find_endpoint call cost ~0.8 s on OSSUS).
     /// </summary>
-    private async Task<IReadOnlyDictionary<string, string>> InferredLinkMarkersAsync(CancellationToken cancellationToken)
+    private async Task<IReadOnlyDictionary<string, string>> InferredLinkMarkersAsync(
+        IReadOnlyCollection<SymbolNode> callSites,
+        CancellationToken cancellationToken)
     {
         var markers = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var result in await ComputeLiveLinkResultsAsync(cancellationToken).ConfigureAwait(false))
+        if (callSites.Count == 0)
+        {
+            return markers;
+        }
+
+        // Only an absolute-URL call site can link via a stripped prefix, and only a registered
+        // token transformer enables the tolerant match: with neither, every link is literal and
+        // there is nothing to relink.
+        bool anyAbsoluteUrl = callSites.Any(c => RouteTemplate.TrySplitAbsoluteUrl(c.Name, out _, out _) == RouteTemplate.AbsoluteUrlSplitResult.Clean);
+        if (!anyAbsoluteUrl
+            && CrossStackLinker.BuildTokenTolerance(
+                await _store.GetDisclosuresAsync(DisclosureKinds.RouteConvention, cancellationToken).ConfigureAwait(false), []) is null)
+        {
+            return markers;
+        }
+
+        foreach (var result in await ComputeLiveLinkResultsAsync(cancellationToken, callSites).ConfigureAwait(false))
         {
             string marker = (result.ViaPrefixStripped ? " via prefix-stripped path" : string.Empty)
                 + (result.ViaTokenTransformerTolerance ? " via token-transformer-tolerant match" : string.Empty);

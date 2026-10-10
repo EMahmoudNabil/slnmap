@@ -136,13 +136,28 @@ public static class CrossStackLinker
         ArgumentNullException.ThrowIfNull(graph);
         ArgumentNullException.ThrowIfNull(basePathPrefix);
 
-        var endpoints = graph.Nodes.Where(n => n.Kind == NodeKind.Endpoint).ToList();
-        return graph.Nodes
+        var callSites = graph.Nodes
             .Where(n => n.Kind == NodeKind.FrontendCallSite)
             .OrderBy(n => n.Id, StringComparer.Ordinal)
+            .ToList();
+        if (callSites.Count == 0)
+        {
+            return [];
+        }
+
+        // v0.14.2: each endpoint's verb and normalized template are computed once here, not once
+        // per call site per candidate skeleton (a regex Normalize ~1.5M times on OSSUS's 651 x 658).
+        var endpoints = graph.Nodes
+            .Where(n => n.Kind == NodeKind.Endpoint)
+            .Select(n => new PreparedEndpoint(n, VerbOf(n.Fqn), RouteTemplate.Normalize(n.Name)))
+            .ToList();
+        return callSites
             .Select(callSite => LinkOne(callSite, endpoints, basePathPrefix, tokenTolerance))
             .ToList();
     }
+
+    /// <summary>An endpoint with its verb and normalized route template precomputed.</summary>
+    private sealed record PreparedEndpoint(SymbolNode Node, string Verb, string Template);
 
     /// <summary>The framework convention whose registration turns token tolerance on.</summary>
     public const string RouteTokenTransformerConvention = "Microsoft.AspNetCore.Mvc.ApplicationModels.RouteTokenTransformerConvention";
@@ -198,7 +213,7 @@ public static class CrossStackLinker
     /// </summary>
     private static CallSiteLinkResult LinkOne(
         SymbolNode callSite,
-        IReadOnlyList<SymbolNode> endpoints,
+        IReadOnlyList<PreparedEndpoint> endpoints,
         string basePathPrefix,
         IReadOnlyDictionary<string, IReadOnlySet<int>>? tokenTolerance)
     {
@@ -303,7 +318,7 @@ public static class CrossStackLinker
         string verb,
         string host,
         string pathOnly,
-        IReadOnlyList<SymbolNode> endpoints,
+        IReadOnlyList<PreparedEndpoint> endpoints,
         string basePathPrefix,
         IReadOnlyDictionary<string, IReadOnlySet<int>>? tokenTolerance)
     {
@@ -398,7 +413,7 @@ public static class CrossStackLinker
     private static CallSiteLinkResult? TryLinkWithTokenTolerance(
         SymbolNode callSite,
         string verb,
-        IReadOnlyList<SymbolNode> endpoints,
+        IReadOnlyList<PreparedEndpoint> endpoints,
         IReadOnlyDictionary<string, IReadOnlySet<int>>? tokenTolerance,
         string basePathPrefix,
         string firstSkeleton,
@@ -444,26 +459,29 @@ public static class CrossStackLinker
     }
 
     private static List<SymbolNode> MatchSameVerbTolerant(
-        IReadOnlyList<SymbolNode> endpoints,
+        IReadOnlyList<PreparedEndpoint> endpoints,
         string verb,
         string skeleton,
         IReadOnlyDictionary<string, IReadOnlySet<int>> tokenTolerance) =>
         endpoints
-            .Where(e => VerbOf(e.Fqn) == verb
-                && tokenTolerance.TryGetValue(e.Id, out var segments)
-                && RouteTemplate.MatchesWithTokenTolerance(RouteTemplate.Normalize(e.Name), skeleton, segments))
+            .Where(e => e.Verb == verb
+                && tokenTolerance.TryGetValue(e.Node.Id, out var segments)
+                && RouteTemplate.MatchesWithTokenTolerance(e.Template, skeleton, segments))
+            .Select(e => e.Node)
             .OrderBy(e => e.Id, StringComparer.Ordinal)
             .ToList();
 
-    private static List<SymbolNode> MatchSameVerb(IReadOnlyList<SymbolNode> endpoints, string verb, string skeleton) =>
+    private static List<SymbolNode> MatchSameVerb(IReadOnlyList<PreparedEndpoint> endpoints, string verb, string skeleton) =>
         endpoints
-            .Where(e => VerbOf(e.Fqn) == verb && RouteTemplate.Matches(RouteTemplate.Normalize(e.Name), skeleton))
+            .Where(e => e.Verb == verb && RouteTemplate.Matches(e.Template, skeleton))
+            .Select(e => e.Node)
             .OrderBy(e => e.Id, StringComparer.Ordinal)
             .ToList();
 
-    private static List<SymbolNode> MatchAnyVerb(IReadOnlyList<SymbolNode> endpoints, string skeleton) =>
+    private static List<SymbolNode> MatchAnyVerb(IReadOnlyList<PreparedEndpoint> endpoints, string skeleton) =>
         endpoints
-            .Where(e => RouteTemplate.Matches(RouteTemplate.Normalize(e.Name), skeleton))
+            .Where(e => RouteTemplate.Matches(e.Template, skeleton))
+            .Select(e => e.Node)
             .OrderBy(e => e.Id, StringComparer.Ordinal)
             .ToList();
 

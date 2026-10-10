@@ -243,7 +243,7 @@ public sealed partial class SlnmapQueries
         var attributor = ProjectAttributor.From(
             await _store.GetNodesByKindAsync(NodeKind.Project, cancellationToken).ConfigureAwait(false));
         var resolver = new LineResolver();
-        IReadOnlyDictionary<string, string>? inferredLinks = null;
+        bool listedFrontendCallers = false;
 
         // --route-prefix (v0.14.0): a user-stated prefix is never presented as derived from code.
         var prefixed = (await _store.GetDisclosuresAsync(DisclosureKinds.RoutePrefixApplied, cancellationToken).ConfigureAwait(false))
@@ -277,7 +277,8 @@ public sealed partial class SlnmapQueries
                     if (callerEdges.Count > 0)
                     {
                         var callers = await _store.GetNodesByIdsAsync(callerEdges.Select(e => e.SourceId), cancellationToken).ConfigureAwait(false);
-                        inferredLinks ??= await InferredLinkMarkersAsync(cancellationToken).ConfigureAwait(false);
+                        var inferredLinks = await InferredLinkMarkersAsync(callers, cancellationToken).ConfigureAwait(false);
+                        listedFrontendCallers = true;
                         string callerList = string.Join(", ", callers
                             .OrderBy(c => c.Fqn, StringComparer.Ordinal)
                             .Select(c => c.Fqn + (inferredLinks.GetValueOrDefault(c.Id) ?? string.Empty)));
@@ -287,7 +288,7 @@ public sealed partial class SlnmapQueries
             }
         }
 
-        if (inferredLinks is not null)
+        if (listedFrontendCallers)
         {
             await AppendStoredLinksStalenessNoteAsync(builder, cancellationToken).ConfigureAwait(false);
         }
