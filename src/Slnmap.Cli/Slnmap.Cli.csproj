@@ -8,7 +8,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>slnmap</ToolCommandName>
     <PackageId>Slnmap</PackageId>
-    <Version>0.14.2</Version>
+    <Version>0.15.0</Version>
     <RollForward>Major</RollForward>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>
@@ -16,9 +16,14 @@
     <Copyright>Copyright (c) 2026 the Slnmap authors. All rights reserved.</Copyright>
     <PackageProjectUrl>https://slnmap.dev</PackageProjectUrl>
     <PackageTags>dotnet;roslyn;mcp;ai;code-analysis;claude-code;knowledge-graph</PackageTags>
-    <PackageReleaseNotes>Fixed: find_endpoint and impact_analysis were up to ~8x slower in 0.14.1 when the answer listed a
-frontend caller (every call site was relinked to mark inferred links). Back to 0.14.0 speed, with
-identical output. list_frontend_callsites, find_orphan_calls and slnmap link are also faster.
+    <PackageReleaseNotes>New: `slnmap check`, a CI gate. Fails (exit 1) on NEW orphan frontend calls, project-level
+dependency cycles or unrestored projects compared with a committed baseline (slnmap-baseline.json);
+--update-baseline accepts the current state; exit 2 when the graph could not be checked; GitHub
+Actions annotations for new findings.
+
+Fixed: an optional query string in a template literal (`/items${q ? '?' + q : ''}`) is no longer
+mistaken for a path segment (slnmap-ts 0.3.1). A call site whose base URL is computed at runtime
+(`${apiUrl}/api/vendors`) now links by the rest of its path, marked "via dynamic-base path".
 
 No schema change; the next analyze rebuilds once because the version changed.
 

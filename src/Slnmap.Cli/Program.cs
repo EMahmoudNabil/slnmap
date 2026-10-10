@@ -490,6 +490,8 @@ linkCommand.SetAction(async (parseResult, cancellationToken) =>
     int viaPrefixStripped = results.Count(static r => r.ViaPrefixStripped);
     // v0.14.0: linked only via the token-transformer-tolerant fallback — also inferred.
     int viaTokenTolerance = results.Count(static r => r.ViaTokenTransformerTolerance);
+    // v0.15.0: linked by the remainder after an unresolved leading hole — also inferred.
+    int viaDynamicBase = results.Count(static r => r.ViaDynamicBase);
 
     var meta = new Dictionary<string, string>(existingMeta, StringComparer.Ordinal)
     {
@@ -508,6 +510,9 @@ linkCommand.SetAction(async (parseResult, cancellationToken) =>
         : string.Empty;
     viaPrefixStrippedSuffix += viaTokenTolerance > 0
         ? pal.Label(", ") + pal.Warn(viaTokenTolerance.ToString(CultureInfo.InvariantCulture)) + pal.Label(" via token-transformer-tolerant match")
+        : string.Empty;
+    viaPrefixStrippedSuffix += viaDynamicBase > 0
+        ? pal.Label(", ") + pal.Warn(viaDynamicBase.ToString(CultureInfo.InvariantCulture)) + pal.Label(" via dynamic-base path")
         : string.Empty;
     Console.WriteLine(
         pal.Label("Linked:    ")
@@ -550,10 +555,8 @@ linkCommand.SetAction(async (parseResult, cancellationToken) =>
                 ? $" — no {callSiteVerb} registered; " + string.Join(", ", result.ConflictingVerbEndpoints.Select(static e => e.Fqn)) + " exists"
                 : string.Empty;
             string ambiguityNote = result.AmbiguityReason is { } reason ? $" — {reason}" : string.Empty;
-            string strippedNote = result.ViaPrefixStripped ? " via prefix-stripped path" : string.Empty;
-            strippedNote += result.ViaTokenTransformerTolerance ? " via token-transformer-tolerant match" : string.Empty;
             string hostNote = result.Host is { } host ? $" [host: {host}]" : string.Empty;
-            Console.WriteLine(pal.Label($"  {result.CallSite.Fqn} — {result.Outcome}{conflictNote}{ambiguityNote}{strippedNote}{hostNote}"));
+            Console.WriteLine(pal.Label($"  {result.CallSite.Fqn} — {result.Outcome}{conflictNote}{ambiguityNote}{result.InferredMarker}{hostNote}"));
         }
     }
 
@@ -974,11 +977,233 @@ doctorCommand.SetAction(async (parseResult, cancellationToken) =>
     return allOk ? 0 : 1;
 });
 
+var baselineOption = new Option<string>("--baseline")
+{
+    Description = "Path of the baseline file. Findings listed in it are known and do not fail the check.",
+    DefaultValueFactory = _ => Slnmap.Cli.CheckGate.DefaultBaselineFile,
+};
+
+var updateBaselineOption = new Option<bool>("--update-baseline")
+{
+    Description = "Write the current findings to the baseline file, accepting them as known, and exit 0.",
+};
+
+var failOnOption = new Option<string>("--fail-on")
+{
+    Description = "Comma-separated categories that fail the check: orphans, cycles, unrestored. Others are still reported.",
+    DefaultValueFactory = _ => string.Join(",", Slnmap.Cli.CheckGate.AllCategories),
+};
+
+var checkBasePathOption = new Option<string?>("--base-path")
+{
+    Description = "Prefix prepended to a frontend call site's own path before matching (see 'slnmap link --base-path'). " +
+        "Defaults to the prefix the last 'slnmap link' used, or \"/api\".",
+};
+
+var checkCommand = new Command(
+    "check",
+    "CI gate: fail on NEW orphan frontend calls, project dependency cycles, or unrestored projects, compared against a baseline. " +
+    "Exit 0 = pass, 1 = new findings, 2 = the graph could not be checked.")
+{
+    dbOption,
+    baselineOption,
+    updateBaselineOption,
+    failOnOption,
+    checkBasePathOption,
+};
+checkCommand.SetAction(async (parseResult, cancellationToken) =>
+{
+    string db = parseResult.GetRequiredValue(dbOption);
+    string baselinePath = Path.GetFullPath(parseResult.GetRequiredValue(baselineOption));
+    bool updateBaseline = parseResult.GetValue(updateBaselineOption);
+    string? basePath = parseResult.GetValue(checkBasePathOption);
+    var failOn = Slnmap.Cli.CheckGate.ParseFailOn(parseResult.GetRequiredValue(failOnOption), out string? failOnError);
+    if (failOn is null)
+    {
+        Console.Error.WriteLine(Palette.Err.Error(failOnError!));
+        return 2;
+    }
+
+    // Exit 2 for every "could not check" path: a CI job must be able to tell "the code has a new
+    // problem" (1) from "the gate itself did not run" (2).
+    await using var store = new SqliteGraphStore(db);
+    if (!File.Exists(store.DatabasePath))
+    {
+        Console.Error.WriteLine(Palette.Err.Error($"No graph at {store.DatabasePath}."));
+        Console.Error.WriteLine(Palette.Err.Label("Run 'slnmap analyze <solution>' (and 'slnmap analyze-ts <frontend-root>' for frontend calls) first."));
+        return 2;
+    }
+
+    IReadOnlyDictionary<string, string> meta;
+    CodeGraph graph;
+    try
+    {
+        await store.InitializeAsync(cancellationToken).ConfigureAwait(false);
+        meta = await store.GetMetaAsync(cancellationToken).ConfigureAwait(false);
+        if (OlderSchemaMessage(meta, "check") is { } olderSchema)
+        {
+            Console.Error.WriteLine(Palette.Err.Error(olderSchema));
+            return 2;
+        }
+
+        graph = await store.LoadGraphAsync(cancellationToken).ConfigureAwait(false);
+    }
+    catch (Exception e) when (e is not OperationCanceledException)
+    {
+        Console.Error.WriteLine(Palette.Err.Error("The graph file is corrupted or not a Slnmap database."));
+        Console.Error.WriteLine(Palette.Err.Label($"Delete {store.DatabasePath} and re-run 'slnmap analyze'."));
+        return 2;
+    }
+
+    if (graph.NodeCount == 0)
+    {
+        Console.Error.WriteLine(Palette.Err.Error("The graph is empty. Run 'slnmap analyze <solution>' first."));
+        return 2;
+    }
+
+    var findings = Slnmap.Cli.CheckGate.Compute(graph, meta, basePath);
+    var pal = Palette.Out;
+    int orphanCount = findings.Orphans?.Count ?? 0;
+
+    if (updateBaseline)
+    {
+        Slnmap.Cli.CheckGate.Save(baselinePath, findings);
+        Console.WriteLine(
+            pal.Label("Baseline:      ") + pal.Label($"written to {baselinePath} — ")
+            + pal.Number(orphanCount.ToString(CultureInfo.InvariantCulture)) + pal.Label(" orphan call(s), ")
+            + pal.Number(findings.Cycles.Count.ToString(CultureInfo.InvariantCulture)) + pal.Label(" project cycle(s) accepted as known"));
+        if (findings.Orphans is null)
+        {
+            Console.WriteLine(pal.Label("               the graph has no frontend data; run 'slnmap analyze-ts <frontend-root>' before the baseline can cover orphan calls"));
+        }
+
+        return 0;
+    }
+
+    Slnmap.Cli.CheckGate.Baseline? baseline;
+    try
+    {
+        baseline = Slnmap.Cli.CheckGate.Load(baselinePath);
+    }
+    catch (Slnmap.Cli.CheckGate.BaselineException e)
+    {
+        Console.Error.WriteLine(Palette.Err.Error(e.Message));
+        return 2;
+    }
+
+    var comparison = Slnmap.Cli.CheckGate.Compare(findings, baseline);
+    bool fails = Slnmap.Cli.CheckGate.Fails(findings, comparison, failOn);
+
+    string NewCount(int count, string category)
+    {
+        if (count == 0)
+        {
+            return pal.Success("0 new");
+        }
+
+        return failOn.Contains(category)
+            ? pal.Error($"{count.ToString(CultureInfo.InvariantCulture)} new")
+            : pal.Warn($"{count.ToString(CultureInfo.InvariantCulture)} new") + pal.Label(" (not enforced by --fail-on)");
+    }
+
+    if (findings.Orphans is null)
+    {
+        Console.WriteLine(pal.Label("Orphan calls:  ") + pal.Label("skipped — the graph has no frontend data; run 'slnmap analyze-ts <frontend-root>' to include it"));
+    }
+    else
+    {
+        Console.WriteLine(
+            pal.Label("Orphan calls:  ") + pal.Number(orphanCount.ToString(CultureInfo.InvariantCulture)) + pal.Label(" found, ")
+            + pal.Number((orphanCount - comparison.NewOrphans.Count).ToString(CultureInfo.InvariantCulture)) + pal.Label(" in baseline, ")
+            + NewCount(comparison.NewOrphans.Count, Slnmap.Cli.CheckGate.OrphansCategory));
+        foreach (var orphan in comparison.NewOrphans)
+        {
+            string line = orphan.Line > 0 ? $":{orphan.Line.ToString(CultureInfo.InvariantCulture)}" : string.Empty;
+            string detail = orphan.Detail.Length > 0 ? $"; {orphan.Detail}" : string.Empty;
+            Console.WriteLine("  " + pal.Error("NEW") + pal.Label($"  {orphan.Verb} {orphan.File}{line} ({orphan.Template}) — {orphan.Category}{detail}"));
+        }
+    }
+
+    Console.WriteLine(
+        pal.Label("Cycles:        ") + pal.Number(findings.Cycles.Count.ToString(CultureInfo.InvariantCulture)) + pal.Label(" project-level, ")
+        + pal.Number((findings.Cycles.Count - comparison.NewCycles.Count).ToString(CultureInfo.InvariantCulture)) + pal.Label(" in baseline, ")
+        + NewCount(comparison.NewCycles.Count, Slnmap.Cli.CheckGate.CyclesCategory));
+    foreach (string cycle in comparison.NewCycles)
+    {
+        Console.WriteLine("  " + pal.Error("NEW") + pal.Label($"  {cycle}"));
+    }
+
+    string notRestoredValue = findings.ProjectsNotRestored == 0
+        ? pal.Success("0")
+        : (failOn.Contains(Slnmap.Cli.CheckGate.UnrestoredCategory) ? pal.Error(findings.ProjectsNotRestored.ToString(CultureInfo.InvariantCulture)) : pal.Warn(findings.ProjectsNotRestored.ToString(CultureInfo.InvariantCulture)));
+    string notRestoredNote = findings.ProjectsNotRestored > 0
+        ? " — analyzed with missing dependencies, so every result above is incomplete; run 'dotnet restore' and re-analyze"
+        : string.Empty;
+    Console.WriteLine(pal.Label("Not restored:  ") + notRestoredValue + pal.Label(" project(s)" + notRestoredNote));
+
+    if (meta.TryGetValue(MetaKeys.FrontendUnresolvedCallSites, out var unresolvedRaw)
+        && int.TryParse(unresolvedRaw, NumberStyles.None, CultureInfo.InvariantCulture, out int unresolved)
+        && unresolved > 0)
+    {
+        Console.WriteLine(pal.Label("Unresolved:    ") + pal.Number(unresolved.ToString(CultureInfo.InvariantCulture)) + pal.Label(" frontend call site(s) could not be resolved statically and are not checked (see 'slnmap analyze-ts --verbose')"));
+    }
+
+    if (baseline is null)
+    {
+        Console.WriteLine(pal.Label("Baseline:      ") + pal.Label($"none at {baselinePath} — every finding counts as new; run 'slnmap check --update-baseline' to accept the current state"));
+    }
+    else
+    {
+        int resolved = comparison.ResolvedOrphans + comparison.ResolvedCycles;
+        string resolvedNote = resolved > 0
+            ? $"; {resolved.ToString(CultureInfo.InvariantCulture)} entr{(resolved == 1 ? "y" : "ies")} no longer found — --update-baseline prunes them"
+            : string.Empty;
+        Console.WriteLine(pal.Label("Baseline:      ") + pal.Label($"{baselinePath} ({baseline.Orphans.Count.ToString(CultureInfo.InvariantCulture)} orphan call(s), {baseline.Cycles.Count.ToString(CultureInfo.InvariantCulture)} cycle(s)){resolvedNote}"));
+    }
+
+    if (fails)
+    {
+        var reasons = new List<string>();
+        if (failOn.Contains(Slnmap.Cli.CheckGate.OrphansCategory) && comparison.NewOrphans.Count > 0)
+        {
+            reasons.Add($"{comparison.NewOrphans.Count.ToString(CultureInfo.InvariantCulture)} new orphan call(s)");
+        }
+
+        if (failOn.Contains(Slnmap.Cli.CheckGate.CyclesCategory) && comparison.NewCycles.Count > 0)
+        {
+            reasons.Add($"{comparison.NewCycles.Count.ToString(CultureInfo.InvariantCulture)} new cycle(s)");
+        }
+
+        if (failOn.Contains(Slnmap.Cli.CheckGate.UnrestoredCategory) && findings.ProjectsNotRestored > 0)
+        {
+            reasons.Add($"{findings.ProjectsNotRestored.ToString(CultureInfo.InvariantCulture)} unrestored project(s)");
+        }
+
+        Console.WriteLine(pal.Label("Result:        ") + pal.Error("FAIL") + pal.Label(" — " + string.Join(", ", reasons)));
+    }
+    else
+    {
+        Console.WriteLine(pal.Label("Result:        ") + pal.Success("PASS"));
+    }
+
+    // Annotations only where they are understood; anywhere else they would be noise.
+    if (string.Equals(Environment.GetEnvironmentVariable("GITHUB_ACTIONS"), "true", StringComparison.OrdinalIgnoreCase))
+    {
+        foreach (string annotation in Slnmap.Cli.CheckGate.GitHubAnnotations(comparison, findings, failOn))
+        {
+            Console.WriteLine(annotation);
+        }
+    }
+
+    return fails ? 1 : 0;
+});
+
 var rootCommand = new RootCommand("Slnmap — maps a .NET solution into a queryable code graph.")
 {
     analyzeCommand,
     analyzeTsCommand,
     linkCommand,
+    checkCommand,
     watchCommand,
     serveCommand,
     statusCommand,
@@ -1124,7 +1349,7 @@ static string CurrentVersion() =>
 /// two today (they live in different toolchains); a version bump on one side without the other
 /// is a real drift risk worth a manual note in the release checklist.
 /// </summary>
-static string PinnedSlnmapTsVersion() => "0.3.0";
+static string PinnedSlnmapTsVersion() => "0.3.1";
 
 /// <summary>Whether `node` is reachable at all — a simple `node --version` probe, 5s ceiling.</summary>
 static async Task<bool> IsNodeAvailableAsync(CancellationToken cancellationToken)

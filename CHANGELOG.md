@@ -2,6 +2,34 @@
 
 All notable changes to Slnmap are documented here. Versions follow [SemVer](https://semver.org).
 
+## 0.15.0
+
+A CI gate, and two linking gaps found by tracing every orphan call on a real codebase. No schema
+change; the next `analyze` does a full rebuild once, because the version changed.
+
+### Added
+
+- **`slnmap check`** — a pull-request gate. It fails (exit 1) on anything **new** compared with a
+  baseline you commit (`slnmap-baseline.json`): frontend HTTP calls no endpoint answers,
+  project-level dependency cycles, and projects analyzed without a restore. `--update-baseline`
+  accepts the current state, so an existing codebase adopts the gate as it is; `--fail-on` picks
+  the enforced categories; a baseline entry is `VERB file template` (no line number), so moving
+  code never creates a finding; entries that no longer occur are reported, never failed. Exit 2
+  means the graph could not be checked (no database, older schema), distinct from "new problem".
+  Under GitHub Actions each new finding is also an annotation on the changed file. Orphans are
+  computed live, so `check` does not need `slnmap link` first.
+
+### Fixed
+
+- **An optional query string was folded into the path** (slnmap-ts 0.3.1). A template hole whose
+  every value is empty or starts with `?` — `` `/items${q ? `?${q}` : ''}` `` and the like — became
+  `/items{*}`, which matched nothing. It now folds to `/items?{*}` and links by its path.
+- **A call site with a runtime-computed base URL never linked.** `` `${apiUrl}/api/vendors` ``
+  arrives as `{*}/api/vendors`; the rest of the path is now linked like a relative call site and
+  the link is marked `via dynamic-base path` wherever links are listed (`list_frontend_callsites`,
+  `find_endpoint`, `impact_analysis`, `slnmap link --verbose`). A no-match stays an unmarked
+  orphan; a holes-only template (`{*}/{*}`, a catch-all proxy) is still never linked.
+
 ## 0.14.2
 
 A performance fix for a regression in 0.14.1. No schema change; the next `analyze` does a full

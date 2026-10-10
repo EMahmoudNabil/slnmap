@@ -77,6 +77,10 @@ public enum CallSiteLinkOutcome
 /// <paramref name="ViaTokenTransformerTolerance"/> is true (v0.14.0) only when the link was made
 /// by the last-resort token-transformer-tolerant fallback (<see cref="RouteTemplate.MatchesWithTokenTolerance"/>)
 /// — an inferred link, never rendered like a literal one.
+/// <paramref name="ViaDynamicBase"/> is true (v0.15.0) only when the call site's template starts
+/// with an unresolved hole (<c>{*}/api/VendorPortal</c>, from <c>`${apiUrl}/api/VendorPortal`</c>
+/// where <c>apiUrl</c> is computed at runtime) and the remainder linked as if it were the whole
+/// path — the base may have been a host, a base path, or both, so this is an inferred link.
 /// </summary>
 public sealed record CallSiteLinkResult(
     SymbolNode CallSite,
@@ -86,7 +90,18 @@ public sealed record CallSiteLinkResult(
     string? AmbiguityReason = null,
     string? Host = null,
     bool ViaPrefixStripped = false,
-    bool ViaTokenTransformerTolerance = false);
+    bool ViaTokenTransformerTolerance = false,
+    bool ViaDynamicBase = false)
+{
+    /// <summary>
+    /// The text every listing appends to a link that was inferred rather than literal — one
+    /// marker per fallback, in the order the fallbacks were introduced; empty for a literal link.
+    /// </summary>
+    public string InferredMarker =>
+        (ViaPrefixStripped ? " via prefix-stripped path" : string.Empty)
+        + (ViaTokenTransformerTolerance ? " via token-transformer-tolerant match" : string.Empty)
+        + (ViaDynamicBase ? " via dynamic-base path" : string.Empty);
+}
 
 /// <summary>
 /// Phase 3: joins <see cref="NodeKind.FrontendCallSite"/> nodes to <see cref="NodeKind.Endpoint"/>
@@ -243,8 +258,54 @@ public static class CrossStackLinker
             return LinkAbsoluteUrl(callSite, verb, host!, pathOnly, endpoints, basePathPrefix, tokenTolerance);
         }
 
-        string rawSkeleton = RouteTemplate.Normalize(callSite.Name);
-        string prefixedSkeleton = RouteTemplate.Normalize(basePathPrefix + callSite.Name);
+        // v0.15.0: `${apiUrl}/api/VendorPortal` with a runtime-computed apiUrl arrives as
+        // `{*}/api/VendorPortal`. The hole is the base (a host, a base path, or both — unknown),
+        // so the remainder is linked exactly like a relative call site and any link made this way
+        // is marked inferred. Found on OSSUS (vendorPortalService.ts), where it was an orphan.
+        if (TrySplitDynamicBase(callSite.Name, out string remainder))
+        {
+            var viaBase = LinkRelative(callSite, verb, remainder, endpoints, basePathPrefix, tokenTolerance);
+            return viaBase.Endpoints.Count > 0 ? viaBase with { ViaDynamicBase = true } : viaBase;
+        }
+
+        return LinkRelative(callSite, verb, callSite.Name, endpoints, basePathPrefix, tokenTolerance);
+    }
+
+    /// <summary>
+    /// Whether <paramref name="template"/> starts with the extractor's anonymous hole as its whole
+    /// first segment (<c>{*}/...</c>) and keeps at least one literal segment after it. A template
+    /// of holes only (<c>{*}/{*}</c>) is not split: its remainder would match every parameterized
+    /// endpoint. <paramref name="remainder"/> keeps its leading slash.
+    /// </summary>
+    public static bool TrySplitDynamicBase(string template, out string remainder)
+    {
+        remainder = template;
+        if (!template.StartsWith("{*}/", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        string rest = template["{*}".Length..];
+        if (!RouteTemplate.Normalize(rest).Split('/').Any(static s => s != "{x}"))
+        {
+            return false;
+        }
+
+        remainder = rest;
+        return true;
+    }
+
+    /// <summary>The relative-path flow: the path as-is and with <paramref name="basePathPrefix"/> applied, then the token-tolerant fallback.</summary>
+    private static CallSiteLinkResult LinkRelative(
+        SymbolNode callSite,
+        string verb,
+        string path,
+        IReadOnlyList<PreparedEndpoint> endpoints,
+        string basePathPrefix,
+        IReadOnlyDictionary<string, IReadOnlySet<int>>? tokenTolerance)
+    {
+        string rawSkeleton = RouteTemplate.Normalize(path);
+        string prefixedSkeleton = RouteTemplate.Normalize(basePathPrefix + path);
         bool singleCandidate = rawSkeleton == prefixedSkeleton;
 
         var rawMatches = MatchSameVerb(endpoints, verb, rawSkeleton);

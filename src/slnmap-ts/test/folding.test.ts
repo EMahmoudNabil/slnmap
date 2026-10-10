@@ -143,6 +143,56 @@ test('row 6: template literal with a genuinely runtime hole folds to an anonymou
   assert.equal((site as { resolutionTier: string }).resolutionTier, 'template-param-holes');
 });
 
+test('v0.15.0: an optional-query-string hole becomes ?{*}, leaving the path intact', () => {
+  // OSSUS indicatorsService.ts: was the orphan '/Indicators/{*}/linked-risks{*}'.
+  const root = project({
+    'src/apiClient.ts': AXIOS_CLIENT,
+    'src/call.ts': `
+      import apiClient from './apiClient';
+      export function linkedRisks(id: number, search?: string) {
+        const qs = new URLSearchParams();
+        if (search) qs.set('search', search);
+        const query = qs.toString();
+        return apiClient.get(\`/Indicators/\${id}/linked-risks\${query ? \`?\${query}\` : ''}\`);
+      }
+      export function vendors(filter?: string) {
+        return apiClient.get(\`/Vendors\${filter ? '?filter=' + filter : ''}\`);
+      }
+      export function items(qs: string) {
+        const query = qs ? \`?\${qs}\` : '';
+        return apiClient.get(\`/Items\${query}\`);
+      }
+      export function orders(qs: string) {
+        return apiClient.get(\`/Orders\${qs && '?' + qs}\`);
+      }
+    `,
+  });
+
+  const artifact = extract({ projectRoot: root });
+  const templates = artifact.callSites.map((c) => (c as { template: string }).template).sort();
+  assert.deepEqual(templates, ['/Indicators/{*}/linked-risks?{*}', '/Items?{*}', '/Orders?{*}', '/Vendors?{*}']);
+  for (const site of artifact.callSites) {
+    assert.equal((site as { resolutionTier: string }).resolutionTier, 'template-param-holes');
+  }
+});
+
+test('v0.15.0: a hole that is not query-shaped stays an honest {*} segment', () => {
+  const root = project({
+    'src/apiClient.ts': AXIOS_CLIENT,
+    'src/call.ts': `
+      import apiClient from './apiClient';
+      export function a(suffix: string) { return apiClient.get(\`/Vendors\${suffix}\`); }
+      export function b(flag: boolean, id: string) { return apiClient.get(\`/Vendors\${flag ? '/' + id : ''}\`); }
+      function build(id: string) { return '?x=' + id; }
+      export function c(id: string) { return apiClient.get(\`/Vendors\${build(id)}\`); }
+    `,
+  });
+
+  const artifact = extract({ projectRoot: root });
+  const templates = artifact.callSites.map((c) => (c as { template: string }).template).sort();
+  assert.deepEqual(templates, ['/Vendors{*}', '/Vendors{*}', '/Vendors{*}']);
+});
+
 test('5 distinct import spellings of the same axios instance all resolve to one identity', () => {
   const root = project({
     'src/shared/services/apiClient.ts': AXIOS_CLIENT,

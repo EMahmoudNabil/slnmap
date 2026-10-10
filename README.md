@@ -161,6 +161,7 @@ error. Stack traces and file paths never appear in a payload.
 slnmap analyze <solution>        # build or update the code graph (incremental on re-run)
 slnmap analyze-ts <frontend>     # add TypeScript/React frontend HTTP call sites to the same graph
 slnmap link                      # join frontend call sites to the C# endpoints they hit
+slnmap check                     # CI gate: fail on new orphan frontend calls, project cycles, unrestored projects
 slnmap watch <solution>          # analyze once, then keep a warm workspace and re-analyze on save
 slnmap serve                     # serve the graph to MCP clients over stdio
 slnmap status                    # show node/edge counts and when it was last analyzed
@@ -168,7 +169,7 @@ slnmap viz                       # export the graph as a self-contained interact
 slnmap doctor                    # check the environment can run Slnmap
 ```
 
-These eight verbs are the whole CLI. Symbol, usage, and impact querying is MCP-only — there is no
+These nine verbs are the whole CLI. Symbol, usage, and impact querying is MCP-only — there is no
 `find`/`usages`/`impact` command; connect an MCP client to `slnmap serve` to query the graph.
 
 `--db <path>` selects the database file (default `slnmap.db`). `analyze` and `watch` also take
@@ -235,13 +236,11 @@ can resolve statically) gets a truthful edge to every one of them, never a guess
 Everything that doesn't link is individually disclosed by exact reason — nothing is silently
 dropped.
 
-**Known limits:** a BFF-style proxy call site whose own template starts with a dynamic hole
-rather than a literal path segment — e.g. a Next.js catch-all API route forwarder such as
-`app/api/[...path]/route.ts` producing a call-site template like `{*}/Authentication/refresh` —
-can't be correctly aligned by the linker's base-path-prefix concatenation, and shows up as a
-disclosed no-match rather than a link. This is infrastructure (a proxy forwarding whatever path
-it's given), not a real frontend→backend call site, so it's a correctly disclosed non-link, not a
-bug to fix.
+A call site whose base is computed at runtime (`` `${apiUrl}/api/vendors` ``, arriving as
+`{*}/api/vendors`) is linked by the rest of its path and marked `via dynamic-base path` wherever
+links are listed — an inferred link, never shown like a literal one. A template that is holes
+only (a Next.js catch-all forwarder's `{*}/{*}`) is not linked: it is a proxy forwarding whatever
+it is given, not a call site, and stays a disclosed no-match.
 
 Once linked, `impact_analysis` and `find_usages` continue straight through a C# handler into its
 frontend callers, with no separate query:
@@ -255,6 +254,36 @@ impact_analysis("BasketController.UpdateQuantities"):
 Change the handler, see the exact React call sites that break — one graph, zero guessing.
 Re-run `slnmap link` after `analyze` or `analyze-ts` changes the graph — a one-line note appears
 on both when the stored links may be stale.
+
+## CI gate (`check`)
+
+`slnmap check` turns the graph into a pull-request check. It fails (exit 1) on anything **new**
+compared with a baseline you commit, so an existing codebase adopts it as it is:
+
+```console
+slnmap analyze YourSolution.sln --db slnmap.db
+slnmap analyze-ts path/to/your-frontend --db slnmap.db
+slnmap check --update-baseline     # accept today's findings into slnmap-baseline.json (commit it)
+slnmap check                       # from now on: exit 1 only for a NEW finding
+```
+
+```
+Orphan calls:  24 found, 24 in baseline, 0 new
+Cycles:        0 project-level, 0 in baseline, 0 new
+Not restored:  0 project(s)
+Baseline:      slnmap-baseline.json (24 orphan call(s), 0 cycle(s))
+Result:        PASS
+```
+
+It reports three things: frontend HTTP calls no endpoint answers (`/api/orders` renamed on one side
+only, a `POST` to a `GET`-only route), project-level dependency cycles, and projects analyzed without
+a restore (whose results would be incomplete). `--fail-on orphans,cycles,unrestored` picks which of
+them fail the build; the others are still reported. A baseline entry is `VERB file template` with
+no line number, so moving code never creates a new finding; entries that no longer occur are
+listed, never failed, and `--update-baseline` prunes them. Exit 2 means the graph could not be
+checked at all (no database, older schema), so a job can tell "new problem" from "the gate did not
+run". Under GitHub Actions, each new finding is also emitted as an annotation on the changed file.
+Orphans are computed live from the current graph, so `check` does not need `slnmap link` first.
 
 ## Visualizing the graph
 

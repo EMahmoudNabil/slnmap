@@ -3,6 +3,9 @@ using Slnmap.Core.Graph;
 
 namespace Slnmap.Mcp;
 
+/// <summary>One dependency cycle: the container path (first element repeated last), its hop count, and the crossing references along it.</summary>
+public sealed record DependencyCycle(IReadOnlyList<string> Path, int Hops, int Weight);
+
 public sealed partial class SlnmapQueries
 {
     private const int CycleCap = 25;
@@ -28,7 +31,39 @@ public sealed partial class SlnmapQueries
         }
 
         var graph = await _store.LoadGraphAsync(cancellationToken).ConfigureAwait(false);
+        int containerCount = level == "project"
+            ? graph.Nodes.Count(n => n.Kind == NodeKind.Project)
+            : graph.Nodes.Count(n => n.Kind == NodeKind.Namespace);
+        var ranked = FindCycles(graph, level);
 
+        var builder = new StringBuilder();
+        if (ranked.Count == 0)
+        {
+            builder.AppendLine($"0 {level}-level dependency cycle(s) found ({containerCount} {level}(s), derived from cross-{level} references).");
+            return builder.ToString().TrimEnd();
+        }
+
+        builder.AppendLine($"{ranked.Count} {level}-level dependency cycle(s) found (scope={level}), worst first:");
+        foreach (var cycle in ranked.Take(CycleCap))
+        {
+            builder.AppendLine($"  {FormatCyclePath(cycle.Path)} ({cycle.Hops} hops, {cycle.Weight} crossing refs)");
+        }
+
+        if (ranked.Count > CycleCap)
+        {
+            builder.AppendLine($"  {CycleCap}+ cycles, showing first {CycleCap}.");
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    /// <summary>
+    /// The cycles find_circular_dependencies reports, worst (most crossing references) first;
+    /// <paramref name="level"/> is "project" or "namespace". Also the input of the `slnmap check`
+    /// gate (v0.15.0), which is why the computation is separate from the rendering.
+    /// </summary>
+    public static IReadOnlyList<DependencyCycle> FindCycles(CodeGraph graph, string level)
+    {
         // Map each node to its container (project or namespace); build a weighted directed graph of
         // cross-container edges. Both derivations reuse the file-path / fqn-prefix attribution the
         // other tools use — container edges are not stored, so this is computed, and the output says so.
@@ -38,9 +73,6 @@ public sealed partial class SlnmapQueries
 
         var weights = new Dictionary<(string From, string To), int>();
         var adjacency = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
-        int containerCount = level == "project"
-            ? graph.Nodes.Count(n => n.Kind == NodeKind.Project)
-            : graph.Nodes.Count(n => n.Kind == NodeKind.Namespace);
 
         foreach (var edge in graph.Edges)
         {
@@ -66,7 +98,7 @@ public sealed partial class SlnmapQueries
             set.Add(to);
         }
 
-        var cycles = new List<(List<string> Path, int Hops, int Weight)>();
+        var cycles = new List<DependencyCycle>();
         foreach (var component in StronglyConnectedComponents(adjacency).Where(c => c.Count > 1))
         {
             var path = FindCycleWithin(component, adjacency);
@@ -81,32 +113,13 @@ public sealed partial class SlnmapQueries
                 weight += weights.GetValueOrDefault((path[i], path[i + 1]));
             }
 
-            cycles.Add((path, path.Count - 1, weight));
+            cycles.Add(new DependencyCycle(path, path.Count - 1, weight));
         }
 
-        var builder = new StringBuilder();
-        if (cycles.Count == 0)
-        {
-            builder.AppendLine($"0 {level}-level dependency cycle(s) found ({containerCount} {level}(s), derived from cross-{level} references).");
-            return builder.ToString().TrimEnd();
-        }
-
-        var ranked = cycles.OrderByDescending(c => c.Weight).ThenByDescending(c => c.Hops).ToList();
-        builder.AppendLine($"{ranked.Count} {level}-level dependency cycle(s) found (scope={level}), worst first:");
-        foreach (var (path, hops, weight) in ranked.Take(CycleCap))
-        {
-            builder.AppendLine($"  {FormatCyclePath(path)} ({hops} hops, {weight} crossing refs)");
-        }
-
-        if (ranked.Count > CycleCap)
-        {
-            builder.AppendLine($"  {CycleCap}+ cycles, showing first {CycleCap}.");
-        }
-
-        return builder.ToString().TrimEnd();
+        return cycles.OrderByDescending(c => c.Weight).ThenByDescending(c => c.Hops).ToList();
     }
 
-    private Func<string, string?> BuildProjectContainerMap(CodeGraph graph)
+    private static Func<string, string?> BuildProjectContainerMap(CodeGraph graph)
     {
         var attributor = ProjectAttributor.From(graph.Nodes.Where(n => n.Kind == NodeKind.Project));
         var fileById = graph.Nodes.ToDictionary(n => n.Id, n => n.FilePath, StringComparer.Ordinal);
@@ -262,7 +275,7 @@ public sealed partial class SlnmapQueries
         return result;
     }
 
-    private static string FormatCyclePath(List<string> path)
+    private static string FormatCyclePath(IReadOnlyList<string> path)
     {
         if (path.Count <= CyclePathDisplayCap)
         {
