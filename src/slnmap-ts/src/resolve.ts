@@ -324,10 +324,62 @@ export function resolveConstantExpression(
 }
 
 /**
+ * v0.15.0: whether every value `expr` can take is empty or starts with `?` — the shape of an
+ * optional query string appended to a path: `${query ? \`?${query}\` : ''}`, `${qs && '?' + qs}`,
+ * or a const holding one of those. Such a hole is not a path segment, and folding it to `{*}`
+ * made `/Indicators/${id}/linked-risks${query ? ...}` the orphan `/Indicators/{*}/linked-risks{*}`
+ * on OSSUS, while the endpoint `/Indicators/{id}/linked-risks` existed. Anything else — a bare
+ * `${suffix}` whose values are unknown — stays an honest `{*}` hole.
+ */
+function isQueryStringShaped(expr: ts.Expression, checker: ts.TypeChecker, depth = MAX_RESOLUTION_DEPTH): boolean {
+  if (depth <= 0) {
+    return false;
+  }
+  const e = unwrap(expr);
+  if (ts.isStringLiteralLike(e)) {
+    return e.text === '' || e.text.startsWith('?');
+  }
+  if (ts.isTemplateExpression(e)) {
+    return e.head.text.startsWith('?');
+  }
+  if (ts.isConditionalExpression(e)) {
+    return isQueryStringShaped(e.whenTrue, checker, depth - 1) && isQueryStringShaped(e.whenFalse, checker, depth - 1);
+  }
+  if (ts.isBinaryExpression(e)) {
+    switch (e.operatorToken.kind) {
+      case ts.SyntaxKind.PlusToken:
+        return isQueryStringShaped(e.left, checker, depth - 1);
+      case ts.SyntaxKind.AmpersandAmpersandToken:
+        // `qs && '?' + qs`: the value is either the (falsy) left operand or the right one.
+        return isQueryStringShaped(e.right, checker, depth - 1);
+      case ts.SyntaxKind.BarBarToken:
+      case ts.SyntaxKind.QuestionQuestionToken:
+        return isQueryStringShaped(e.left, checker, depth - 1) && isQueryStringShaped(e.right, checker, depth - 1);
+      default:
+        return false;
+    }
+  }
+  if (ts.isIdentifier(e)) {
+    // `const query = qs ? \`?${qs}\` : ''` one hop away — the same const-only rule
+    // resolveConstantExpression applies: a mutable binding is never trusted.
+    const symbol = checker.getSymbolAtLocation(e);
+    const decl = symbol?.valueDeclaration ?? symbol?.declarations?.[0];
+    if (decl && ts.isVariableDeclaration(decl) && decl.initializer) {
+      const declList = decl.parent;
+      const isConst = ts.isVariableDeclarationList(declList) && (declList.flags & ts.NodeFlags.Const) !== 0;
+      return isConst && isQueryStringShaped(decl.initializer, checker, depth - 1);
+    }
+  }
+  return false;
+}
+
+/**
  * Folds the URL argument of a recognized HTTP call to a route template. A template literal
  * ALWAYS succeeds (investigation §Q3.2 row 6): literal segments are kept verbatim and every
  * unresolvable hole becomes an anonymous `{*}` token — only a bare (non-template) argument that
- * fails to resolve at all pushes the call site to the declared-unresolvable bucket.
+ * fails to resolve at all pushes the call site to the declared-unresolvable bucket. A hole that
+ * can only ever be a query string (see `isQueryStringShaped`) becomes `?{*}` instead, so the path
+ * before it stays intact (v0.15.0).
  *
  * `substitutions` forwards straight through to `resolveConstantExpression` — see its doc comment.
  */
@@ -349,6 +401,10 @@ export function foldUrlArgument(
       const hole = resolveConstantExpression(span.expression, checker, MAX_RESOLUTION_DEPTH, substitutions);
       if (hole.ok) {
         out += hole.value;
+      } else if (isQueryStringShaped(span.expression, checker)) {
+        // An optional query string, not a path segment: the path is complete up to here.
+        out += '?{*}';
+        hasHole = true;
       } else if (hole.failure.category === 'runtime-computed-segment' || hole.failure.category === 'string-concatenation') {
         // The generic "some runtime value flows in" bucket — including a concatenation-shaped
         // one, v0.12.2 — is exactly an ordinary template hole (§Q3.2 row 6 / Case B's

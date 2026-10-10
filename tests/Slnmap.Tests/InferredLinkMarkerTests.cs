@@ -31,7 +31,9 @@ public sealed class InferredLinkMarkerTests : IAsyncLifetime
         var inferred = SymbolNode.Create(NodeKind.FrontendCallSite, "https://conduit.example.org/api/articles/{*}", "GET src/agent.ts:10:5", "agent.ts", new SourceSpan(0, 1));
         // Same backend path as authored: a literal link.
         var literal = SymbolNode.Create(NodeKind.FrontendCallSite, "https://conduit.example.org/articles/{*}", "GET src/legacy.ts:3:7", "legacy.ts", new SourceSpan(0, 1));
-        foreach (var node in new[] { controller, handler, endpoint, inferred, literal })
+        // v0.15.0: `${apiUrl}/articles/${slug}` with a runtime-computed base — links by its remainder.
+        var dynamicBase = SymbolNode.Create(NodeKind.FrontendCallSite, "{*}/articles/{*}", "GET src/dyn.ts:1:1", "dyn.ts", new SourceSpan(0, 1));
+        foreach (var node in new[] { controller, handler, endpoint, inferred, literal, dynamicBase })
         {
             graph.AddNode(node);
         }
@@ -41,6 +43,7 @@ public sealed class InferredLinkMarkerTests : IAsyncLifetime
         var results = CrossStackLinker.Link(graph);
         Assert.Contains(results, r => r.CallSite.Id == inferred.Id && r.ViaPrefixStripped);
         Assert.Contains(results, r => r.CallSite.Id == literal.Id && !r.ViaPrefixStripped && r.Endpoints.Count == 1);
+        Assert.Contains(results, r => r.CallSite.Id == dynamicBase.Id && r.ViaDynamicBase && r.Endpoints.Count == 1);
         foreach (var edge in CrossStackLinker.ToEdges(results))
         {
             graph.AddEdge(edge);
@@ -73,6 +76,7 @@ public sealed class InferredLinkMarkerTests : IAsyncLifetime
         string result = await new SlnmapQueries(_store).ImpactAnalysisAsync(HandlerFqn);
 
         Assert.Contains("[FrontendCallSite] GET src/agent.ts:10:5 @depth 2 via prefix-stripped path", result, StringComparison.Ordinal);
+        Assert.Contains("[FrontendCallSite] GET src/dyn.ts:1:1 @depth 2 via dynamic-base path", result, StringComparison.Ordinal);
         Assert.Contains("[FrontendCallSite] GET src/legacy.ts:3:7 @depth 2", result, StringComparison.Ordinal);
         Assert.DoesNotContain("legacy.ts:3:7 @depth 2 via", result, StringComparison.Ordinal);
     }
@@ -82,6 +86,6 @@ public sealed class InferredLinkMarkerTests : IAsyncLifetime
     {
         string result = await new SlnmapQueries(_store).FindEndpointAsync("/articles/how-to", "GET");
 
-        Assert.Contains("Called from the frontend by: GET src/agent.ts:10:5 via prefix-stripped path, GET src/legacy.ts:3:7", result, StringComparison.Ordinal);
+        Assert.Contains("Called from the frontend by: GET src/agent.ts:10:5 via prefix-stripped path, GET src/dyn.ts:1:1 via dynamic-base path, GET src/legacy.ts:3:7", result, StringComparison.Ordinal);
     }
 }

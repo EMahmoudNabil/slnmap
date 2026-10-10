@@ -75,11 +75,13 @@ public sealed partial class SlnmapQueries
             return markers;
         }
 
-        // Only an absolute-URL call site can link via a stripped prefix, and only a registered
-        // token transformer enables the tolerant match: with neither, every link is literal and
-        // there is nothing to relink.
-        bool anyAbsoluteUrl = callSites.Any(c => RouteTemplate.TrySplitAbsoluteUrl(c.Name, out _, out _) == RouteTemplate.AbsoluteUrlSplitResult.Clean);
-        if (!anyAbsoluteUrl
+        // Only an absolute-URL call site can link via a stripped prefix, only a dynamic-base one
+        // via its remainder, and only a registered token transformer enables the tolerant match:
+        // with none of these, every link is literal and there is nothing to relink.
+        bool anyInferrable = callSites.Any(c =>
+            RouteTemplate.TrySplitAbsoluteUrl(c.Name, out _, out _) == RouteTemplate.AbsoluteUrlSplitResult.Clean
+            || CrossStackLinker.TrySplitDynamicBase(c.Name, out _));
+        if (!anyInferrable
             && CrossStackLinker.BuildTokenTolerance(
                 await _store.GetDisclosuresAsync(DisclosureKinds.RouteConvention, cancellationToken).ConfigureAwait(false), []) is null)
         {
@@ -88,8 +90,7 @@ public sealed partial class SlnmapQueries
 
         foreach (var result in await ComputeLiveLinkResultsAsync(cancellationToken, callSites).ConfigureAwait(false))
         {
-            string marker = (result.ViaPrefixStripped ? " via prefix-stripped path" : string.Empty)
-                + (result.ViaTokenTransformerTolerance ? " via token-transformer-tolerant match" : string.Empty);
+            string marker = result.InferredMarker;
             if (marker.Length > 0)
             {
                 markers[result.CallSite.Id] = marker;
@@ -269,11 +270,9 @@ public sealed partial class SlnmapQueries
             // regardless of link outcome, including a genuinely external API that still links
             // by path (CallSiteLinkResult.Host's own doc comment).
             string hostNote = result.Host is { } host ? $" [host: {host}]" : string.Empty;
-            // v0.13.1: an inferred (prefix-stripped) link must never look identical to a literal
-            // one (CallSiteLinkResult.ViaPrefixStripped's own doc comment).
-            string strippedNote = result.ViaPrefixStripped ? " via prefix-stripped path" : string.Empty;
-            strippedNote += result.ViaTokenTransformerTolerance ? " via token-transformer-tolerant match" : string.Empty;
-            builder.AppendLine($"  {result.CallSite.Fqn} ({result.CallSite.Name}) {status}{strippedNote}{hostNote}");
+            // v0.13.1: an inferred link must never look identical to a literal one
+            // (CallSiteLinkResult.InferredMarker).
+            builder.AppendLine($"  {result.CallSite.Fqn} ({result.CallSite.Name}) {status}{result.InferredMarker}{hostNote}");
         }
 
         if (filtered.Count > CrossStackListCap)
