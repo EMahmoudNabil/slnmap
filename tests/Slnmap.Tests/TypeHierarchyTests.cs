@@ -56,4 +56,34 @@ public sealed class TypeHierarchyTests
 
         Assert.Contains("No symbol with FQN", result, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public async Task Up_ExternalBaseOnly_DistinguishesFromNoBaseAtAll()
+    {
+        // A type with member_flags="external-base" (e.g. `: IPipelineBehavior<TRequest,TResponse>`)
+        // DOES have a base — just not one the graph has a node for. Reporting the same flat
+        // "(no base types or interfaces)" as a type with genuinely no base misleads a reader into
+        // thinking the type is a root type, when the real story is "check the source, there's an
+        // external base here."
+        await using var graph = await TestGraph.CreateAsync(Build.TypeWithExternalBaseOnly());
+
+        string result = await graph.Queries.GetTypeHierarchyAsync("Fixture.Lib.Behaviour", "up", 5);
+
+        Assert.DoesNotContain("(no base types or interfaces)", result, StringComparison.Ordinal);
+        Assert.Contains("external", result, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Up_NoBaseAtAll_StillReportsThePlainMessage()
+    {
+        // Regression guard: a type with neither a modeled base NOR the external-base flag (IShape
+        // in the Shapes fixture has no Inherits/Implements edges of its own and no member_flags)
+        // must keep the original, unqualified message — only the external-base case gets the more
+        // specific one.
+        await using var graph = await TestGraph.CreateAsync(Build.Shapes());
+
+        string result = await graph.Queries.GetTypeHierarchyAsync("Fixture.Lib.IShape", "up", 5);
+
+        Assert.Contains("(no base types or interfaces)", result, StringComparison.Ordinal);
+    }
 }

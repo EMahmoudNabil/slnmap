@@ -50,8 +50,8 @@ internal sealed class TestGraph : IAsyncDisposable
 /// <summary>Fluent-ish builders for synthetic graphs used across the v0.3.0 tool tests.</summary>
 internal static class Build
 {
-    public static SymbolNode Node(NodeKind kind, string fqn, string? file = null, int spanStart = 0) =>
-        SymbolNode.Create(kind, LastSegment(fqn), fqn, file, file is null ? null : new SourceSpan(spanStart, spanStart + 1));
+    public static SymbolNode Node(NodeKind kind, string fqn, string? file = null, int spanStart = 0, string? memberFlags = null) =>
+        SymbolNode.Create(kind, LastSegment(fqn), fqn, file, file is null ? null : new SourceSpan(spanStart, spanStart + 1), memberFlags: memberFlags);
 
     public static void Edge(CodeGraph graph, SymbolNode source, SymbolNode target, RelationshipKind kind) =>
         graph.AddEdge(new RelationshipEdge(source.Id, target.Id, kind));
@@ -93,6 +93,31 @@ internal static class Build
         Edge(graph, shapeBase, ishape, RelationshipKind.Implements);
         Edge(graph, circle, shapeBase, RelationshipKind.Inherits);
         Edge(graph, square, shapeBase, RelationshipKind.Inherits);
+
+        return graph;
+    }
+
+    /// <summary>
+    /// A single class with no first-party Inherits/Implements edges, but flagged member_flags=
+    /// "external-base" (as SymbolFacts.MemberFlagsOf would set for a type declaring
+    /// `: IPipelineBehavior&lt;T,R&gt;` or similar) — the "has a base, just not one the graph models"
+    /// shape get_type_hierarchy's "up" direction must distinguish from a type with no base at all.
+    /// </summary>
+    public static CodeGraph TypeWithExternalBaseOnly()
+    {
+        var graph = new CodeGraph();
+        const string dir = "C:/repo/Lib/";
+        var project = Node(NodeKind.Project, "Lib", dir + "Lib.csproj");
+        var ns = Node(NodeKind.Namespace, "Fixture.Lib");
+        var behaviour = Node(NodeKind.Class, "Fixture.Lib.Behaviour", dir + "Behaviour.cs", memberFlags: "external-base");
+
+        foreach (var node in new[] { project, ns, behaviour })
+        {
+            graph.AddNode(node);
+        }
+
+        Edge(graph, project, ns, RelationshipKind.Contains);
+        Edge(graph, ns, behaviour, RelationshipKind.Contains);
 
         return graph;
     }

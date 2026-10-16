@@ -53,7 +53,14 @@ public sealed partial class SlnmapQueries
             emitted += await AppendSubtreeAsync(builder, node.Id, EdgeDirection.Outgoing, 1, maxDepth, new HashSet<string>(StringComparer.Ordinal) { node.Id }, emitted, cancellationToken).ConfigureAwait(false);
             if (emitted == 0 && dir == "up")
             {
-                builder.AppendLine("  (no base types or interfaces)");
+                // member_flags="external-base" (set at analysis time, see SymbolFacts.MemberFlagsOf)
+                // means this type DOES derive from or implement something — just not a first-party
+                // type the graph has a node for (MediatR's IPipelineBehavior<T>, EF's DbContext,
+                // ASP.NET's ControllerBase, ...). An empty hierarchy must not read as "no base type
+                // at all" in that case.
+                builder.AppendLine(node.MemberFlags is "external-base"
+                    ? "  (no first-party base types or interfaces — this type derives from or implements at least one external/framework type not modeled in the graph; check the source)"
+                    : "  (no base types or interfaces)");
             }
         }
 

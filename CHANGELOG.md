@@ -2,6 +2,28 @@
 
 All notable changes to Slnmap are documented here. Versions follow [SemVer](https://semver.org).
 
+## 0.15.1
+
+Two correctness fixes found while evaluating slnmap against a real 64k-node solution. No schema
+change; the next `analyze` does a full rebuild once, because the version changed.
+
+### Fixed
+
+- **Schema-v2 node facts were dropped on most read paths.** `GetNodesByFqnAsync`,
+  `GetNodesByIdsAsync`, `GetNodesByKindAsync` and `FindNodesAsync` never selected the
+  `accessibility` and `member_flags` columns, so every node they returned had both `null` whatever
+  the database held. Only the startup load and the `find_unused_symbols` query read them. All node
+  queries now read both columns when the v2 schema is present; a v1 database still gets the old
+  7-column query.
+- **`get_type_hierarchy` "up" no longer claims a type has no base when its base is external.** A
+  type flagged `external-base` at analysis time (it derives from or implements something outside the
+  solution, such as MediatR's `IPipelineBehavior<T,R>` or `ControllerBase`) used to print
+  `(no base types or interfaces)`, the same line as a genuine root type. It now says the base is an
+  external or framework type the graph does not model, and points at the source.
+- **`find_symbol` with a `kind` filter capped at 20 like an unfiltered search.** A kind filter
+  narrows the search at the source, so it cannot explode the way a bare substring search can. It
+  now caps at 50; unfiltered searches keep the 20 cap and the same "refine your query" note.
+
 ## 0.15.0
 
 A CI gate, and two linking gaps found by tracing every orphan call on a real codebase. No schema

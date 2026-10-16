@@ -126,15 +126,18 @@ public sealed class SqliteGraphStore : IGraphStore
         ArgumentException.ThrowIfNullOrEmpty(fqn);
 
         await using var connection = await OpenAsync(_databasePath, cancellationToken).ConfigureAwait(false);
+        bool hasV2Columns = await HasColumnAsync(connection, "nodes", "member_flags", cancellationToken).ConfigureAwait(false);
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT id, kind, name, fqn, file, span_start, span_end FROM nodes WHERE fqn = $fqn;";
+        command.CommandText = hasV2Columns
+            ? "SELECT id, kind, name, fqn, file, span_start, span_end, accessibility, member_flags FROM nodes WHERE fqn = $fqn;"
+            : "SELECT id, kind, name, fqn, file, span_start, span_end FROM nodes WHERE fqn = $fqn;";
         command.Parameters.AddWithValue("$fqn", fqn);
 
         var results = new List<SymbolNode>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            results.Add(ReadNode(reader));
+            results.Add(ReadNode(reader, hasV2Columns));
         }
 
         return results;
@@ -152,8 +155,11 @@ public sealed class SqliteGraphStore : IGraphStore
 
         string placeholders = string.Join(",", distinct.Select((_, i) => $"$p{i}"));
         await using var connection = await OpenAsync(_databasePath, cancellationToken).ConfigureAwait(false);
+        bool hasV2Columns = await HasColumnAsync(connection, "nodes", "member_flags", cancellationToken).ConfigureAwait(false);
         await using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT id, kind, name, fqn, file, span_start, span_end FROM nodes WHERE id IN ({placeholders});";
+        command.CommandText = hasV2Columns
+            ? $"SELECT id, kind, name, fqn, file, span_start, span_end, accessibility, member_flags FROM nodes WHERE id IN ({placeholders});"
+            : $"SELECT id, kind, name, fqn, file, span_start, span_end FROM nodes WHERE id IN ({placeholders});";
         for (int i = 0; i < distinct.Count; i++)
         {
             command.Parameters.AddWithValue($"$p{i}", distinct[i]);
@@ -162,7 +168,7 @@ public sealed class SqliteGraphStore : IGraphStore
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            results.Add(ReadNode(reader));
+            results.Add(ReadNode(reader, hasV2Columns));
         }
 
         return results;
@@ -171,15 +177,18 @@ public sealed class SqliteGraphStore : IGraphStore
     public async Task<IReadOnlyList<SymbolNode>> GetNodesByKindAsync(NodeKind kind, CancellationToken cancellationToken = default)
     {
         await using var connection = await OpenAsync(_databasePath, cancellationToken).ConfigureAwait(false);
+        bool hasV2Columns = await HasColumnAsync(connection, "nodes", "member_flags", cancellationToken).ConfigureAwait(false);
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT id, kind, name, fqn, file, span_start, span_end FROM nodes WHERE kind = $kind;";
+        command.CommandText = hasV2Columns
+            ? "SELECT id, kind, name, fqn, file, span_start, span_end, accessibility, member_flags FROM nodes WHERE kind = $kind;"
+            : "SELECT id, kind, name, fqn, file, span_start, span_end FROM nodes WHERE kind = $kind;";
         command.Parameters.AddWithValue("$kind", kind.ToString());
 
         var results = new List<SymbolNode>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            results.Add(ReadNode(reader));
+            results.Add(ReadNode(reader, hasV2Columns));
         }
 
         return results;
@@ -194,14 +203,23 @@ public sealed class SqliteGraphStore : IGraphStore
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(limit);
 
         await using var connection = await OpenAsync(_databasePath, cancellationToken).ConfigureAwait(false);
+        bool hasV2Columns = await HasColumnAsync(connection, "nodes", "member_flags", cancellationToken).ConfigureAwait(false);
         await using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT id, kind, name, fqn, file, span_start, span_end
-            FROM nodes
-            WHERE name LIKE $pattern OR fqn LIKE $pattern
-            ORDER BY length(fqn), fqn
-            LIMIT $limit;
-            """;
+        command.CommandText = hasV2Columns
+            ? """
+              SELECT id, kind, name, fqn, file, span_start, span_end, accessibility, member_flags
+              FROM nodes
+              WHERE name LIKE $pattern OR fqn LIKE $pattern
+              ORDER BY length(fqn), fqn
+              LIMIT $limit;
+              """
+            : """
+              SELECT id, kind, name, fqn, file, span_start, span_end
+              FROM nodes
+              WHERE name LIKE $pattern OR fqn LIKE $pattern
+              ORDER BY length(fqn), fqn
+              LIMIT $limit;
+              """;
         command.Parameters.AddWithValue("$pattern", pattern);
         command.Parameters.AddWithValue("$limit", limit);
 
@@ -209,7 +227,7 @@ public sealed class SqliteGraphStore : IGraphStore
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            results.Add(ReadNode(reader));
+            results.Add(ReadNode(reader, hasV2Columns));
         }
 
         return results;
@@ -1039,19 +1057,30 @@ public sealed class SqliteGraphStore : IGraphStore
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private static SymbolNode ReadNode(SqliteDataReader reader)
+    /// <summary>
+    /// Reads the first 7 positional columns every node query selects (id, kind, name, fqn, file,
+    /// span_start, span_end). Pass <paramref name="hasV2Columns"/> = true when the query also
+    /// selected accessibility (index 7) and member_flags (index 8) — e.g. GetNodesByFqnAsync,
+    /// GetNodesByKindAsync — so schema-v2 facts survive the read instead of silently coming back
+    /// null on every path except the few that patch them in after the fact with a `with` expression.
+    /// </summary>
+    private static SymbolNode ReadNode(SqliteDataReader reader, bool hasV2Columns = false)
     {
         string? file = reader.IsDBNull(4) ? null : reader.GetString(4);
         SourceSpan? span = reader.IsDBNull(5) || reader.IsDBNull(6)
             ? null
             : new SourceSpan(reader.GetInt32(5), reader.GetInt32(6));
+        string? accessibility = hasV2Columns && !reader.IsDBNull(7) ? reader.GetString(7) : null;
+        string? memberFlags = hasV2Columns && !reader.IsDBNull(8) ? reader.GetString(8) : null;
         return new SymbolNode(
             reader.GetString(0),
             ParseEnum<NodeKind>(reader.GetString(1)),
             reader.GetString(2),
             reader.GetString(3),
             file,
-            span);
+            span,
+            accessibility,
+            memberFlags);
     }
 
     /// <summary>
