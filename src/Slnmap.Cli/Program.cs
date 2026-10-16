@@ -1067,11 +1067,25 @@ checkCommand.SetAction(async (parseResult, cancellationToken) =>
 
     if (updateBaseline)
     {
-        Slnmap.Cli.CheckGate.Save(baselinePath, findings);
+        // The existing file's ignore list survives the rewrite; the orphans it covers are not written.
+        Slnmap.Cli.CheckGate.Baseline? existing;
+        try
+        {
+            existing = Slnmap.Cli.CheckGate.Load(baselinePath);
+        }
+        catch (Slnmap.Cli.CheckGate.BaselineException e)
+        {
+            Console.Error.WriteLine(Palette.Err.Error(e.Message));
+            return 2;
+        }
+
+        int ignoredCount = Slnmap.Cli.CheckGate.Compare(findings, existing).IgnoredOrphans;
+        Slnmap.Cli.CheckGate.Save(baselinePath, findings, existing?.IgnorePatterns);
+        string ignoredNote = ignoredCount > 0 ? $", {ignoredCount.ToString(CultureInfo.InvariantCulture)} left out by the ignore list" : string.Empty;
         Console.WriteLine(
             pal.Label("Baseline:      ") + pal.Label($"written to {baselinePath} — ")
-            + pal.Number(orphanCount.ToString(CultureInfo.InvariantCulture)) + pal.Label(" orphan call(s), ")
-            + pal.Number(findings.Cycles.Count.ToString(CultureInfo.InvariantCulture)) + pal.Label(" project cycle(s) accepted as known"));
+            + pal.Number((orphanCount - ignoredCount).ToString(CultureInfo.InvariantCulture)) + pal.Label(" orphan call(s), ")
+            + pal.Number(findings.Cycles.Count.ToString(CultureInfo.InvariantCulture)) + pal.Label(" project cycle(s) accepted as known" + ignoredNote));
         if (findings.Orphans is null)
         {
             Console.WriteLine(pal.Label("               the graph has no frontend data; run 'slnmap analyze-ts <frontend-root>' before the baseline can cover orphan calls"));
@@ -1112,9 +1126,13 @@ checkCommand.SetAction(async (parseResult, cancellationToken) =>
     }
     else
     {
+        string ignoredPart = comparison.IgnoredOrphans > 0
+            ? pal.Number(comparison.IgnoredOrphans.ToString(CultureInfo.InvariantCulture)) + pal.Label(" ignored, ")
+            : string.Empty;
         Console.WriteLine(
             pal.Label("Orphan calls:  ") + pal.Number(orphanCount.ToString(CultureInfo.InvariantCulture)) + pal.Label(" found, ")
-            + pal.Number((orphanCount - comparison.NewOrphans.Count).ToString(CultureInfo.InvariantCulture)) + pal.Label(" in baseline, ")
+            + ignoredPart
+            + pal.Number((orphanCount - comparison.IgnoredOrphans - comparison.NewOrphans.Count).ToString(CultureInfo.InvariantCulture)) + pal.Label(" in baseline, ")
             + NewCount(comparison.NewOrphans.Count, Slnmap.Cli.CheckGate.OrphansCategory));
         foreach (var orphan in comparison.NewOrphans)
         {
@@ -1158,7 +1176,10 @@ checkCommand.SetAction(async (parseResult, cancellationToken) =>
         string resolvedNote = resolved > 0
             ? $"; {resolved.ToString(CultureInfo.InvariantCulture)} entr{(resolved == 1 ? "y" : "ies")} no longer found — --update-baseline prunes them"
             : string.Empty;
-        Console.WriteLine(pal.Label("Baseline:      ") + pal.Label($"{baselinePath} ({baseline.Orphans.Count.ToString(CultureInfo.InvariantCulture)} orphan call(s), {baseline.Cycles.Count.ToString(CultureInfo.InvariantCulture)} cycle(s)){resolvedNote}"));
+        string ignoreNote = baseline.IgnorePatterns.Count > 0
+            ? $", {baseline.IgnorePatterns.Count.ToString(CultureInfo.InvariantCulture)} ignore pattern(s)"
+            : string.Empty;
+        Console.WriteLine(pal.Label("Baseline:      ") + pal.Label($"{baselinePath} ({baseline.Orphans.Count.ToString(CultureInfo.InvariantCulture)} orphan call(s), {baseline.Cycles.Count.ToString(CultureInfo.InvariantCulture)} cycle(s){ignoreNote}){resolvedNote}"));
     }
 
     if (fails)

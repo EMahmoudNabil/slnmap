@@ -55,7 +55,8 @@ public sealed class McpStdioErrorShapeTests : IClassFixture<AnalyzedFixtureGraph
 
         // Rules 3/4: the offending parameter, the valid list, and a corrective sentence.
         Assert.Equal("symbol", payload.GetProperty("invalid_parameter").GetString());
-        Assert.Equal("fqn", Assert.Single(payload.GetProperty("valid_parameters").EnumerateArray()).GetString());
+        // v0.16.0 added the optional includeImplementations; fqn is still the only required one.
+        Assert.Equal(["fqn", "includeImplementations"], payload.GetProperty("valid_parameters").EnumerateArray().Select(static p => p.GetString()!).ToArray());
         Assert.Contains("unknown parameter 'symbol'", payload.GetProperty("message").GetString(), StringComparison.Ordinal);
         Assert.Contains("fqn (required", payload.GetProperty("message").GetString(), StringComparison.Ordinal);
     }

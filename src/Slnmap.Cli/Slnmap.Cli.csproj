@@ -8,7 +8,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>slnmap</ToolCommandName>
     <PackageId>Slnmap</PackageId>
-    <Version>0.15.1</Version>
+    <Version>0.16.0</Version>
     <RollForward>Major</RollForward>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>
@@ -16,11 +16,12 @@
     <Copyright>Copyright (c) 2026 the Slnmap authors. All rights reserved.</Copyright>
     <PackageProjectUrl>https://slnmap.dev</PackageProjectUrl>
     <PackageTags>dotnet;roslyn;mcp;ai;code-analysis;claude-code;knowledge-graph</PackageTags>
-    <PackageReleaseNotes>Fixed: four storage read paths (lookup by FQN, by id, by kind, and the find_symbol
-substring search) never read the schema-v2 columns accessibility and member_flags, so every node
-they returned had both null. get_type_hierarchy "up" on a type whose only base is external (e.g.
-`: IPipelineBehavior&lt;T,R&gt;`) now says so instead of "(no base types or interfaces)".
-find_symbol with a kind filter caps at 50 matches instead of 20; unfiltered searches keep 20.
+    <PackageReleaseNotes>New: the check verb's baseline file takes an "ignore" list of route patterns ("/api/auth/*",
+"POST /api/vendor-portal/*") for calls the backend never answers by design, so they stay out of the
+baseline and the counts. get_dependencies pages 50 at a time through an offset parameter instead of
+truncating; the output names the next offset. find_usages takes includeImplementations to also count
+usages of the types that implement or derive from a symbol, or of the matching member on each, and
+says which implementation each such usage came through.
 
 No schema change; the next analyze rebuilds once because the version changed.
 

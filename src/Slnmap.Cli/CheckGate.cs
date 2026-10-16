@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Slnmap.Core.Graph;
@@ -34,10 +35,65 @@ internal static class CheckGate
     /// <summary><paramref name="Orphans"/> is null when the graph has no frontend data at all — nothing to check, not zero orphans.</summary>
     public sealed record Findings(IReadOnlyList<Orphan>? Orphans, IReadOnlyList<string> Cycles, int ProjectsNotRestored);
 
-    public sealed record Baseline(IReadOnlySet<string> Orphans, IReadOnlySet<string> Cycles);
+    /// <summary>
+    /// <paramref name="IgnorePatterns"/> (v0.16.0) are the baseline file's "ignore" list: route
+    /// patterns for calls the backend graph will never answer by design — a BFF route the frontend
+    /// framework serves itself, a static file — so they stay out of the baseline and out of the
+    /// counts instead of sitting there as "known orphans". See <see cref="ParseIgnoreRule"/>.
+    /// </summary>
+    public sealed record Baseline(IReadOnlySet<string> Orphans, IReadOnlySet<string> Cycles, IReadOnlyList<string> IgnorePatterns);
 
-    /// <summary>Resolved counts are baseline entries the graph no longer has — informational, never a failure.</summary>
-    public sealed record Comparison(IReadOnlyList<Orphan> NewOrphans, IReadOnlyList<string> NewCycles, int ResolvedOrphans, int ResolvedCycles);
+    /// <summary>
+    /// Resolved counts are baseline entries the graph no longer has — informational, never a
+    /// failure. <paramref name="IgnoredOrphans"/> is how many current orphans an ignore pattern
+    /// removed before the comparison.
+    /// </summary>
+    public sealed record Comparison(IReadOnlyList<Orphan> NewOrphans, IReadOnlyList<string> NewCycles, int ResolvedOrphans, int ResolvedCycles, int IgnoredOrphans);
+
+    /// <summary>
+    /// One compiled "ignore" entry. <paramref name="Verb"/> is null for any verb; <paramref name="Template"/>
+    /// is the route pattern with <c>*</c> matching any run of characters (so <c>/api/auth/*</c>
+    /// covers <c>/api/auth/login</c> and <c>/api/auth/sessions/{*}</c> alike).
+    /// </summary>
+    public sealed record IgnoreRule(string Pattern, string? Verb, Regex Template)
+    {
+        public bool Matches(Orphan orphan) =>
+            (Verb is null || string.Equals(Verb, orphan.Verb, StringComparison.OrdinalIgnoreCase))
+            && Template.IsMatch(orphan.Template);
+    }
+
+    /// <summary>
+    /// "GET /api/auth/*" ignores one verb; "/api/auth/*" (or "* /api/auth/*") ignores every verb.
+    /// The verb is whatever precedes the first space, since a route template never contains one.
+    /// Throws <see cref="BaselineException"/> for an entry that cannot mean anything.
+    /// </summary>
+    public static IgnoreRule ParseIgnoreRule(string pattern)
+    {
+        string trimmed = (pattern ?? string.Empty).Trim();
+        if (trimmed.Length == 0)
+        {
+            throw new BaselineException("The baseline's ignore list has an empty entry. Each entry is a route pattern, e.g. \"/api/auth/*\" or \"POST /api/auth/*\".");
+        }
+
+        string? verb = null;
+        string template = trimmed;
+        int space = trimmed.IndexOf(' ', StringComparison.Ordinal);
+        if (space > 0)
+        {
+            verb = trimmed[..space];
+            template = trimmed[(space + 1)..].Trim();
+            if (verb == "*")
+            {
+                verb = null;
+            }
+        }
+
+        string regex = "^" + Regex.Escape(template).Replace(@"\*", ".*", StringComparison.Ordinal) + "$";
+        return new IgnoreRule(trimmed, verb, new Regex(regex, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant));
+    }
+
+    public static IReadOnlyList<IgnoreRule> CompileIgnore(IEnumerable<string> patterns) =>
+        (patterns ?? []).Select(ParseIgnoreRule).ToList();
 
     /// <summary>Thrown for a baseline file that exists but cannot be used; the message is the user-facing text.</summary>
     public sealed class BaselineException(string message) : Exception(message);
@@ -128,16 +184,19 @@ internal static class CheckGate
 
         var knownOrphans = baseline?.Orphans ?? new HashSet<string>(StringComparer.Ordinal);
         var knownCycles = baseline?.Cycles ?? new HashSet<string>(StringComparer.Ordinal);
-        var orphans = findings.Orphans ?? [];
+        var ignore = CompileIgnore(baseline?.IgnorePatterns ?? []);
+        var allOrphans = findings.Orphans ?? [];
+        var orphans = allOrphans.Where(o => !ignore.Any(rule => rule.Matches(o))).ToList();
 
         var newOrphans = orphans.Where(o => !knownOrphans.Contains(o.Key)).ToList();
         var newCycles = findings.Cycles.Where(c => !knownCycles.Contains(c)).ToList();
         // A baseline orphan is "resolved" only when frontend data is present and no longer has
-        // it; with no frontend data at all, nothing can be said about it.
+        // it; with no frontend data at all, nothing can be said about it. A baseline entry an
+        // ignore pattern now covers counts as resolved too, so --update-baseline prunes it.
         var currentOrphanKeys = orphans.Select(static o => o.Key).ToHashSet(StringComparer.Ordinal);
         int resolvedOrphans = findings.Orphans is null ? 0 : knownOrphans.Count(k => !currentOrphanKeys.Contains(k));
         int resolvedCycles = knownCycles.Count(k => !findings.Cycles.Contains(k, StringComparer.Ordinal));
-        return new Comparison(newOrphans, newCycles, resolvedOrphans, resolvedCycles);
+        return new Comparison(newOrphans, newCycles, resolvedOrphans, resolvedCycles, allOrphans.Count - orphans.Count);
     }
 
     /// <summary>Parses `--fail-on`; returns null and sets <paramref name="error"/> for an unknown category.</summary>
@@ -200,20 +259,33 @@ internal static class CheckGate
                 $"The baseline file {path} has schemaVersion {document.SchemaVersion}; this slnmap reads {BaselineSchemaVersion}. Re-create it with --update-baseline.");
         }
 
+        var ignorePatterns = (document.Ignore ?? []).Select(static p => (p ?? string.Empty).Trim()).ToList();
+        CompileIgnore(ignorePatterns); // validates: an empty entry is a mistake, not a no-op
+
         return new Baseline(
             (document.Orphans ?? []).ToHashSet(StringComparer.Ordinal),
-            (document.Cycles ?? []).ToHashSet(StringComparer.Ordinal));
+            (document.Cycles ?? []).ToHashSet(StringComparer.Ordinal),
+            ignorePatterns);
     }
 
-    public static void Save(string path, Findings findings)
+    /// <summary>
+    /// Writes the current findings as the new baseline. <paramref name="ignorePatterns"/> (the
+    /// existing file's "ignore" list, which --update-baseline carries over) are kept, and the
+    /// orphans they cover are left out of the written list.
+    /// </summary>
+    public static void Save(string path, Findings findings, IReadOnlyList<string>? ignorePatterns = null)
     {
         ArgumentNullException.ThrowIfNull(findings);
 
+        var ignore = CompileIgnore(ignorePatterns ?? []);
         var document = new BaselineDocument
         {
             SchemaVersion = BaselineSchemaVersion,
-            Orphans = (findings.Orphans ?? []).Select(static o => o.Key).Distinct(StringComparer.Ordinal).OrderBy(static k => k, StringComparer.Ordinal).ToList(),
+            Orphans = (findings.Orphans ?? [])
+                .Where(o => !ignore.Any(rule => rule.Matches(o)))
+                .Select(static o => o.Key).Distinct(StringComparer.Ordinal).OrderBy(static k => k, StringComparer.Ordinal).ToList(),
             Cycles = findings.Cycles.OrderBy(static c => c, StringComparer.Ordinal).ToList(),
+            Ignore = ignorePatterns is { Count: > 0 } ? ignorePatterns.ToList() : null,
         };
         File.WriteAllText(path, JsonSerializer.Serialize(document, JsonOptions) + Environment.NewLine);
     }
@@ -271,6 +343,10 @@ internal static class CheckGate
 
         [JsonPropertyName("cycles")]
         public List<string>? Cycles { get; set; }
+
+        [JsonPropertyName("ignore")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public List<string>? Ignore { get; set; }
     }
 
     // Workflow-command escaping, per GitHub's documented rules.
