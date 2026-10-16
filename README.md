@@ -283,6 +283,23 @@ no line number, so moving code never creates a new finding; entries that no long
 listed, never failed, and `--update-baseline` prunes them. Exit 2 means the graph could not be
 checked at all (no database, older schema), so a job can tell "new problem" from "the gate did not
 run". Under GitHub Actions, each new finding is also emitted as an annotation on the changed file.
+Some calls are orphans by design: a BFF route the frontend framework serves itself (`/api/auth/*`
+in a Next.js app), a static file. Rather than carrying those in the baseline as "known orphans",
+list them under `"ignore"` in `slnmap-baseline.json`; `*` matches any run of characters and an
+optional leading verb narrows the entry to one method:
+
+```json
+{
+  "schemaVersion": 1,
+  "orphans": ["PATCH src/features/roles/services/roles.ts /roles/{*}/users/{*}/status"],
+  "cycles": [],
+  "ignore": ["/api/auth/*", "POST /api/vendor-portal/*", "GET /file/*"]
+}
+```
+
+Ignored calls are counted (`24 found, 13 ignored, 11 in baseline, 0 new`) but never new, and
+`--update-baseline` keeps the list and leaves the calls it covers out of `orphans`.
+
 Orphans are computed live from the current graph, so `check` does not need `slnmap link` first.
 
 ## Visualizing the graph

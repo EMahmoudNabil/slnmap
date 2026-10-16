@@ -104,7 +104,7 @@ public sealed class McpToolBudgetTests : IDisposable
         string impact = await queries.ImpactAnalysisAsync("Big.Hub.Process()");
         Assert.Contains("more", impact, StringComparison.Ordinal);          // > 100 dependents → truncated list
         string dependencies = await queries.GetDependenciesAsync("Big.Hub.Process()", "incoming", 1);
-        Assert.Contains("truncated", dependencies, StringComparison.Ordinal); // > 50 direct edges → truncated
+        Assert.Contains("more; pass offset=50", dependencies, StringComparison.Ordinal); // > 50 direct edges → paged (v0.16.0)
         string find = await queries.FindSymbolAsync("M", null);
         Assert.Contains("20+ matches", find, StringComparison.Ordinal);       // cap engaged, disclosed honestly
         Assert.Contains("showing first 20", find, StringComparison.Ordinal);

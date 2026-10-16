@@ -2,6 +2,33 @@
 
 All notable changes to Slnmap are documented here. Versions follow [SemVer](https://semver.org).
 
+## 0.16.0
+
+Three requests from using the tools on a large real codebase. No schema change; the next `analyze`
+does a full rebuild once, because the version changed.
+
+### Added
+
+- **`check`: an `ignore` list in the baseline file.** Some orphan calls are orphans by design: a BFF
+  route the frontend framework serves itself, a static file. Listing them under `"ignore"` in
+  `slnmap-baseline.json` (`"/api/auth/*"`, `"POST /api/vendor-portal/*"`; `*` matches any run of
+  characters, an optional leading verb narrows the entry) keeps them out of the baseline and out of
+  the counts, which now read `24 found, 13 ignored, 11 in baseline, 0 new`. `--update-baseline`
+  keeps the list and leaves the calls it covers out of `orphans`. An empty entry is an error (exit 2).
+- **`get_dependencies` pages instead of truncating.** A new `offset` parameter (default 0) walks a
+  large result 50 items at a time; the header says `showing 51-100 of 230` and the footer names the
+  offset of the next page. Items within a group are ordered by name so pages are stable.
+- **`find_usages` can include implementations.** `includeImplementations` (default false) also
+  counts usages of the types that implement or derive from the symbol, or of the matching member on
+  each of them; a usage found only that way says `via <implementation>`. The default answer is
+  unchanged.
+
+### Changed
+
+- CI and release workflows run on `ubuntu-24.04` explicitly (the `ubuntu-latest` label moves to
+  Ubuntu 26.04 in November 2026), on Node 22, with `actions/checkout@v7`, `setup-dotnet@v6`,
+  `setup-node@v7` and `upload-artifact@v7`.
+
 ## 0.15.1
 
 Two correctness fixes found while evaluating slnmap against a real 64k-node solution. No schema

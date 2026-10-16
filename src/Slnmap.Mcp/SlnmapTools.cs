@@ -37,15 +37,17 @@ public static class SlnmapTools
         "List a symbol's dependencies grouped by relationship kind (Calls, Implements, Inherits, " +
         "References), with optional transitive depth. Pass the symbol's fully qualified name. " +
         "direction 'outgoing' = what this symbol depends on; 'incoming' = what depends on this symbol. " +
-        "depth is 1-3. Results are capped at 50 with a truncation note. " +
+        "depth is 1-3. Results come 50 per call; when more exist the output says which offset " +
+        "fetches the next page. " +
         "Example: {\"fqn\": \"Fixture.Lib.Circle.Area()\", \"direction\": \"incoming\", \"depth\": 1}")]
     public static Task<string> GetDependencies(
         IGraphStore store,
         [Description("Fully qualified name of the symbol.")] string fqn,
         [Description("'outgoing' (what it depends on) or 'incoming' (what depends on it).")] string direction = "outgoing",
         [Description("Transitive depth, 1-3.")] int depth = 1,
+        [Description("Zero-based position to start listing from; the previous page's output names it. Default 0.")] int offset = 0,
         CancellationToken cancellationToken = default)
-        => new SlnmapQueries(store).GetDependenciesAsync(fqn, direction, depth, cancellationToken);
+        => new SlnmapQueries(store).GetDependenciesAsync(fqn, direction, depth, offset, cancellationToken);
 
     [McpServerTool(Name = "impact_analysis")]
     [Description(
@@ -78,12 +80,16 @@ public static class SlnmapTools
         "Find where a symbol is used (called or referenced). Returns the containing member, file and " +
         "line for each usage, up to 50. Pass a fully qualified name. An FQN does not reveal " +
         "explicit-interface-ness; if several symbols share the FQN, usages of all are reported. " +
-        "Example: {\"fqn\": \"Fixture.Lib.IShape.Area()\"}")]
+        "By default only direct usages count; set includeImplementations to also count usages of " +
+        "the types that implement/derive from the symbol, or of the matching member on each of them " +
+        "(each such usage says which implementation it came through). " +
+        "Example: {\"fqn\": \"Fixture.Lib.IShape.Area()\", \"includeImplementations\": true}")]
     public static Task<string> FindUsages(
         IGraphStore store,
         [Description("Fully qualified name of the symbol.")] string fqn,
+        [Description("Also count usages of the symbol's implementations/overrides. Default false.")] bool includeImplementations = false,
         CancellationToken cancellationToken = default)
-        => new SlnmapQueries(store).FindUsagesAsync(fqn, cancellationToken);
+        => new SlnmapQueries(store).FindUsagesAsync(fqn, includeImplementations, cancellationToken);
 
     [McpServerTool(Name = "find_implementations")]
     [Description(

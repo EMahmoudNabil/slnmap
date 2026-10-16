@@ -283,6 +283,73 @@ public sealed class CheckCommandTests : IDisposable
         Assert.Equal(0, RunCli("check", "--db", DbPath, "--baseline", BaselinePath, "--base-path", "/gateway").ExitCode);
     }
 
+    // v0.16.0: the baseline's "ignore" list.
+
+    [Fact]
+    public async Task IgnorePattern_RemovesMatchingOrphansFromTheCounts_AndPasses()
+    {
+        await SaveAsync(OneOrphanGraph());
+        File.WriteAllText(BaselinePath, """{ "schemaVersion": 1, "orphans": [], "cycles": [], "ignore": ["DELETE /vendors"] }""");
+
+        var (exit, stdout, stderr) = RunCli("check", "--db", DbPath, "--baseline", BaselinePath);
+
+        Assert.Equal(0, exit);
+        Assert.Contains("Orphan calls:  1 found, 1 ignored, 0 in baseline, 0 new", stdout, StringComparison.Ordinal);
+        Assert.Contains("0 cycle(s), 1 ignore pattern(s))", stdout, StringComparison.Ordinal);
+        Assert.Contains("Result:        PASS", stdout, StringComparison.Ordinal);
+        AssertNoStackTrace(stdout, stderr);
+    }
+
+    [Fact]
+    public async Task IgnorePattern_WithoutAVerb_CoversEveryVerbUnderThePrefix_OthersStayNew()
+    {
+        var graph = new CodeGraph();
+        graph.AddNode(Endpoint("GET", "/api/vendors"));
+        graph.AddNode(CallSite("POST", "/api/auth/login", "src/bff.ts:1:1"));
+        graph.AddNode(CallSite("GET", "/api/auth/sessions/{*}", "src/bff.ts:2:1"));
+        graph.AddNode(CallSite("POST", "/orders", "src/orders.ts:5:1"));
+        await SaveAsync(graph);
+        File.WriteAllText(BaselinePath, """{ "schemaVersion": 1, "orphans": [], "cycles": [], "ignore": ["/api/auth/*"] }""");
+
+        var (exit, stdout, _) = RunCli("check", "--db", DbPath, "--baseline", BaselinePath);
+
+        Assert.Equal(1, exit);
+        Assert.Contains("Orphan calls:  3 found, 2 ignored, 0 in baseline, 1 new", stdout, StringComparison.Ordinal);
+        Assert.Contains("NEW  POST src/orders.ts:5 (/orders)", stdout, StringComparison.Ordinal);
+        Assert.DoesNotContain("/api/auth", stdout, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task UpdateBaseline_KeepsTheIgnoreList_AndLeavesIgnoredCallsOut()
+    {
+        var graph = OneOrphanGraph();
+        graph.AddNode(CallSite("POST", "/orders", "src/orders.ts:5:1"));
+        await SaveAsync(graph);
+        File.WriteAllText(BaselinePath, """{ "schemaVersion": 1, "orphans": [], "cycles": [], "ignore": ["DELETE /vendors"] }""");
+
+        var update = RunCli("check", "--db", DbPath, "--baseline", BaselinePath, "--update-baseline");
+
+        Assert.Equal(0, update.ExitCode);
+        Assert.Contains("1 orphan call(s), 0 project cycle(s) accepted as known, 1 left out by the ignore list", update.Stdout, StringComparison.Ordinal);
+        using var document = JsonDocument.Parse(File.ReadAllText(BaselinePath));
+        Assert.Equal(["POST src/orders.ts /orders"], document.RootElement.GetProperty("orphans").EnumerateArray().Select(e => e.GetString()!).ToArray());
+        Assert.Equal(["DELETE /vendors"], document.RootElement.GetProperty("ignore").EnumerateArray().Select(e => e.GetString()!).ToArray());
+        Assert.Equal(0, RunCli("check", "--db", DbPath, "--baseline", BaselinePath).ExitCode);
+    }
+
+    [Fact]
+    public async Task EmptyIgnoreEntry_Exit2_NamesIt()
+    {
+        await SaveAsync(OneOrphanGraph());
+        File.WriteAllText(BaselinePath, """{ "schemaVersion": 1, "orphans": [], "cycles": [], "ignore": ["/api/auth/*", "  "] }""");
+
+        var (exit, stdout, stderr) = RunCli("check", "--db", DbPath, "--baseline", BaselinePath);
+
+        Assert.Equal(2, exit);
+        Assert.Contains("ignore list has an empty entry", stderr, StringComparison.Ordinal);
+        AssertNoStackTrace(stdout, stderr);
+    }
+
     private static void AssertNoStackTrace(string stdout, string stderr)
     {
         string combined = $"{stdout}\n{stderr}";

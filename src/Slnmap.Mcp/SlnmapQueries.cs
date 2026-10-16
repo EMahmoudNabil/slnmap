@@ -109,7 +109,12 @@ public sealed partial class SlnmapQueries
         return builder.ToString().TrimEnd();
     }
 
-    public async Task<string> GetDependenciesAsync(string fqn, string direction, int depth, CancellationToken cancellationToken = default)
+    /// <param name="offset">
+    /// v0.16.0: where in the full list this page starts. The list is capped at <see cref="DependencyCap"/>
+    /// per call; the output names the offset of the next page, so a caller walks a large result
+    /// instead of reading "...truncated".
+    /// </param>
+    public async Task<string> GetDependenciesAsync(string fqn, string direction, int depth, int offset = 0, CancellationToken cancellationToken = default)
     {
         if (await NotAnalyzedAsync(cancellationToken).ConfigureAwait(false) is { } notReady)
         {
@@ -125,6 +130,7 @@ public sealed partial class SlnmapQueries
         }
 
         depth = Math.Clamp(depth, 1, 3);
+        offset = Math.Max(offset, 0);
         var (node, resolution) = await ResolveOneAsync(fqn, cancellationToken).ConfigureAwait(false);
         if (node is null)
         {
@@ -140,34 +146,51 @@ public sealed partial class SlnmapQueries
         var nodesById = (await _store.GetNodesByIdsAsync(neighborIds, cancellationToken).ConfigureAwait(false))
             .ToDictionary(n => n.Id, StringComparer.Ordinal);
 
-        string directionWord = edgeDirection == EdgeDirection.Outgoing ? "outgoing (depends on)" : "incoming (depended on by)";
-        var builder = new StringBuilder();
-        builder.AppendLine($"{resolution}Dependencies of {node.Kind} {node.Fqn} — {directionWord}, depth {depth}:");
-
-        int listed = 0;
-        bool truncated = false;
+        // Everything the tool could list, in display order — direct edges grouped by kind, then
+        // the transitive reach — so a page is a plain slice of it. Each item carries its group's
+        // header (with the group's full count), so a page that starts mid-group still says how
+        // big that group is. Within a group the order is by FQN: the store returns edges in no
+        // promised order, and pages are only meaningful over a stable one.
+        var items = new List<(string Group, string Line)>();
         foreach (var group in directEdges.GroupBy(e => e.Kind).OrderBy(g => g.Key.ToString(), StringComparer.Ordinal))
         {
-            builder.AppendLine($"  {group.Key} ({group.Count()}):");
-            foreach (var edge in group)
-            {
-                if (listed >= DependencyCap)
+            string header = $"  {group.Key} ({group.Count()}):";
+            var labels = group
+                .Select(edge =>
                 {
-                    truncated = true;
-                    break;
-                }
-
-                string id = edgeDirection == EdgeDirection.Outgoing ? edge.TargetId : edge.SourceId;
-                string label = nodesById.TryGetValue(id, out var n) ? $"[{n.Kind}] {n.Fqn}" : id;
-                builder.AppendLine($"    {label}");
-                listed++;
-            }
-
-            if (truncated)
+                    string id = edgeDirection == EdgeDirection.Outgoing ? edge.TargetId : edge.SourceId;
+                    return nodesById.TryGetValue(id, out var n) ? $"[{n.Kind}] {n.Fqn}" : id;
+                })
+                .OrderBy(static label => label, StringComparer.Ordinal);
+            foreach (string label in labels)
             {
-                break;
+                items.Add((header, $"    {label}"));
             }
         }
+
+        if (depth > 1)
+        {
+            var transitive = (await _store.TraverseAsync(node.Id, edgeDirection, depth, 200, cancellationToken).ConfigureAwait(false))
+                .Where(r => r.Depth >= 2)
+                .OrderBy(static r => r.Depth)
+                .ThenBy(static r => r.Node.Fqn, StringComparer.Ordinal)
+                .ToList();
+            string header = $"  Transitive (depth 2-{depth}): {transitive.Count}";
+            foreach (var reached in transitive)
+            {
+                items.Add((header, $"    [{reached.Node.Kind}] {reached.Node.Fqn} @depth {reached.Depth}"));
+            }
+        }
+
+        var page = items.Skip(offset).Take(DependencyCap).ToList();
+        bool paged = offset > 0 || items.Count > DependencyCap;
+        string pageNote = paged && page.Count > 0
+            ? $" (showing {offset + 1}-{offset + page.Count} of {items.Count})"
+            : string.Empty;
+
+        string directionWord = edgeDirection == EdgeDirection.Outgoing ? "outgoing (depends on)" : "incoming (depended on by)";
+        var builder = new StringBuilder();
+        builder.AppendLine($"{resolution}Dependencies of {node.Kind} {node.Fqn} — {directionWord}, depth {depth}{pageNote}:");
 
         if (directEdges.Count == 0)
         {
@@ -178,32 +201,28 @@ public sealed partial class SlnmapQueries
                 ? "  No dependencies within this solution. Calls into external packages aren't tracked."
                 : "  Nothing else in this solution depends on this symbol.");
         }
-
-        if (depth > 1)
+        else if (page.Count == 0)
         {
-            var transitive = (await _store.TraverseAsync(node.Id, edgeDirection, depth, 200, cancellationToken).ConfigureAwait(false))
-                .Where(r => r.Depth >= 2)
-                .ToList();
-            if (transitive.Count > 0)
-            {
-                builder.AppendLine($"  Transitive (depth 2-{depth}): {transitive.Count}");
-                foreach (var reached in transitive)
-                {
-                    if (listed >= DependencyCap)
-                    {
-                        truncated = true;
-                        break;
-                    }
-
-                    builder.AppendLine($"    [{reached.Node.Kind}] {reached.Node.Fqn} @depth {reached.Depth}");
-                    listed++;
-                }
-            }
+            int lastPageStart = (items.Count - 1) / DependencyCap * DependencyCap;
+            builder.AppendLine($"  offset {offset} is past the end: {items.Count} item(s) in total; the last page starts at offset {lastPageStart}.");
         }
 
-        if (truncated)
+        string? currentGroup = null;
+        foreach (var (group, line) in page)
         {
-            builder.AppendLine($"  ...truncated at {DependencyCap}.");
+            if (!string.Equals(group, currentGroup, StringComparison.Ordinal))
+            {
+                builder.AppendLine(group);
+                currentGroup = group;
+            }
+
+            builder.AppendLine(line);
+        }
+
+        int remaining = items.Count - offset - page.Count;
+        if (page.Count > 0 && remaining > 0)
+        {
+            builder.AppendLine($"  ...{remaining} more; pass offset={offset + page.Count} for the next page.");
         }
 
         return builder.ToString().TrimEnd();
@@ -423,7 +442,17 @@ public sealed partial class SlnmapQueries
         return builder.ToString().TrimEnd();
     }
 
-    public async Task<string> FindUsagesAsync(string fqn, CancellationToken cancellationToken = default)
+    public Task<string> FindUsagesAsync(string fqn, CancellationToken cancellationToken = default) =>
+        FindUsagesAsync(fqn, includeImplementations: false, cancellationToken);
+
+    /// <param name="includeImplementations">
+    /// v0.16.0, opt-in: also count usages of what implements or overrides the symbol — an
+    /// interface's (or base class's) implementing types, or the matching member on each of them.
+    /// "Who uses IShape" and "who uses IShape or anything that implements it" are different
+    /// questions, so the default stays the first; a usage found only through an implementation
+    /// says which one.
+    /// </param>
+    public async Task<string> FindUsagesAsync(string fqn, bool includeImplementations, CancellationToken cancellationToken = default)
     {
         if (await NotAnalyzedAsync(cancellationToken).ConfigureAwait(false) is { } notReady)
         {
@@ -436,21 +465,66 @@ public sealed partial class SlnmapQueries
             return await NotFoundAsync(fqn, cancellationToken).ConfigureAwait(false);
         }
 
-        var userIds = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var target in matches)
+        var implementations = new List<SymbolNode>();
+        if (includeImplementations)
         {
+            var seen = matches.Select(static m => m.Id).ToHashSet(StringComparer.Ordinal);
+            foreach (var target in matches)
+            {
+                foreach (var implementation in await ImplementationsOfAsync(target, cancellationToken).ConfigureAwait(false))
+                {
+                    if (seen.Add(implementation.Id))
+                    {
+                        implementations.Add(implementation);
+                    }
+                }
+            }
+        }
+
+        var userIds = new HashSet<string>(StringComparer.Ordinal);
+        var directUsers = new HashSet<string>(StringComparer.Ordinal);
+        var viaImplementation = new Dictionary<string, SortedSet<string>>(StringComparer.Ordinal);
+        foreach (var target in matches.Concat(implementations))
+        {
+            bool isImplementation = !matches.Contains(target);
             foreach (var kind in UsageKinds)
             {
                 foreach (var edge in await _store.GetEdgesAsync(target.Id, EdgeDirection.Incoming, kind, cancellationToken).ConfigureAwait(false))
                 {
                     userIds.Add(edge.SourceId);
+                    if (!isImplementation)
+                    {
+                        directUsers.Add(edge.SourceId);
+                    }
+                    else
+                    {
+                        if (!viaImplementation.TryGetValue(edge.SourceId, out var via))
+                        {
+                            via = new SortedSet<string>(StringComparer.Ordinal);
+                            viaImplementation[edge.SourceId] = via;
+                        }
+
+                        via.Add(target.Fqn);
+                    }
                 }
             }
         }
 
+        // An implementation is not a user of what it implements.
+        foreach (var implementation in implementations)
+        {
+            userIds.Remove(implementation.Id);
+        }
+
+        string implementationsNote = includeImplementations
+            ? implementations.Count > 0
+                ? $"; including {implementations.Count} implementation(s): {string.Join(", ", implementations.Select(static i => i.Fqn).Take(5))}{(implementations.Count > 5 ? ", ..." : string.Empty)}"
+                : "; no implementations found"
+            : string.Empty;
+
         if (userIds.Count == 0)
         {
-            return $"No usages found for {matches[0].Fqn}.";
+            return $"No usages found for {matches[0].Fqn}{implementationsNote}.";
         }
 
         var users = await _store.GetNodesByIdsAsync(userIds, cancellationToken).ConfigureAwait(false);
@@ -461,13 +535,16 @@ public sealed partial class SlnmapQueries
 
         var lineResolver = new LineResolver();
         var builder = new StringBuilder();
-        builder.AppendLine($"{ordered.Count} usage(s) of {matches[0].Fqn} (by containing member, up to {UsageCap}):");
+        builder.AppendLine($"{ordered.Count} usage(s) of {matches[0].Fqn} (by containing member, up to {UsageCap}{implementationsNote}):");
         foreach (var user in ordered.Take(UsageCap))
         {
             string location = user.FilePath is { } file
                 ? $"{file}:{lineResolver.LineOf(file, user.Span?.Start ?? 0)}"
                 : "(no source location)";
-            builder.AppendLine($"  [{user.Kind}] {user.Fqn} — {location}");
+            string via = !directUsers.Contains(user.Id) && viaImplementation.TryGetValue(user.Id, out var through)
+                ? $" via {string.Join(", ", through)}"
+                : string.Empty;
+            builder.AppendLine($"  [{user.Kind}] {user.Fqn} — {location}{via}");
         }
 
         if (ordered.Count > UsageCap)
@@ -476,6 +553,42 @@ public sealed partial class SlnmapQueries
         }
 
         return builder.ToString().TrimEnd();
+    }
+
+    /// <summary>
+    /// What implements or overrides <paramref name="target"/>: for an interface or class, the types
+    /// that implement or derive from it (transitively); for a member of one, the matching member on
+    /// each of those types. Empty for anything else.
+    /// </summary>
+    private async Task<IReadOnlyList<SymbolNode>> ImplementationsOfAsync(SymbolNode target, CancellationToken cancellationToken)
+    {
+        if (target.Kind is NodeKind.Interface or NodeKind.Class)
+        {
+            return await ClosureAsync(target.Id, [RelationshipKind.Implements, RelationshipKind.Inherits], cancellationToken).ConfigureAwait(false);
+        }
+
+        if (target.Kind is not (NodeKind.Method or NodeKind.Property or NodeKind.Event or NodeKind.Field))
+        {
+            return [];
+        }
+
+        var containerEdges = await _store.GetEdgesAsync(target.Id, EdgeDirection.Incoming, RelationshipKind.Contains, cancellationToken).ConfigureAwait(false);
+        var containers = await _store.GetNodesByIdsAsync(containerEdges.Select(static e => e.SourceId), cancellationToken).ConfigureAwait(false);
+        var owner = containers.FirstOrDefault(static c => c.Kind is NodeKind.Interface or NodeKind.Class);
+        if (owner is null || !target.Fqn.StartsWith(owner.Fqn, StringComparison.Ordinal))
+        {
+            return [];
+        }
+
+        string memberSuffix = target.Fqn[owner.Fqn.Length..]; // e.g. ".Area()"
+        var result = new List<SymbolNode>();
+        foreach (var type in await ClosureAsync(owner.Id, [RelationshipKind.Implements, RelationshipKind.Inherits], cancellationToken).ConfigureAwait(false))
+        {
+            var candidates = await _store.GetNodesByFqnAsync(type.Fqn + memberSuffix, cancellationToken).ConfigureAwait(false);
+            result.AddRange(candidates.Where(m => m.Kind == target.Kind));
+        }
+
+        return result;
     }
 
     /// <summary>
