@@ -8,7 +8,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>slnmap</ToolCommandName>
     <PackageId>Slnmap</PackageId>
-    <Version>0.15.0</Version>
+    <Version>0.15.1</Version>
     <RollForward>Major</RollForward>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>
@@ -16,14 +16,11 @@
     <Copyright>Copyright (c) 2026 the Slnmap authors. All rights reserved.</Copyright>
     <PackageProjectUrl>https://slnmap.dev</PackageProjectUrl>
     <PackageTags>dotnet;roslyn;mcp;ai;code-analysis;claude-code;knowledge-graph</PackageTags>
-    <PackageReleaseNotes>New: `slnmap check`, a CI gate. Fails (exit 1) on NEW orphan frontend calls, project-level
-dependency cycles or unrestored projects compared with a committed baseline (slnmap-baseline.json);
---update-baseline accepts the current state; exit 2 when the graph could not be checked; GitHub
-Actions annotations for new findings.
-
-Fixed: an optional query string in a template literal (`/items${q ? '?' + q : ''}`) is no longer
-mistaken for a path segment (slnmap-ts 0.3.1). A call site whose base URL is computed at runtime
-(`${apiUrl}/api/vendors`) now links by the rest of its path, marked "via dynamic-base path".
+    <PackageReleaseNotes>Fixed: four storage read paths (lookup by FQN, by id, by kind, and the find_symbol
+substring search) never read the schema-v2 columns accessibility and member_flags, so every node
+they returned had both null. get_type_hierarchy "up" on a type whose only base is external (e.g.
+`: IPipelineBehavior&lt;T,R&gt;`) now says so instead of "(no base types or interfaces)".
+find_symbol with a kind filter caps at 50 matches instead of 20; unfiltered searches keep 20.
 
 No schema change; the next analyze rebuilds once because the version changed.
 

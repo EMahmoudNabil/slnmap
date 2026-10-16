@@ -12,6 +12,12 @@ namespace Slnmap.Mcp;
 public sealed partial class SlnmapQueries
 {
     private const int FindLimit = 20;
+    // A kind filter already narrows the result set at the source (see FindSymbolAsync) — unlike an
+    // unfiltered substring search, it can't blow up to thousands of matches, so it earns a higher
+    // cap before "refine your query" kicks in. Fixes the common "20+ matches, showing first 20" on
+    // e.g. find_symbol(query: "MyApp.Application.", kind: "Namespace") on a solution with more than
+    // 20 real namespaces under that prefix.
+    private const int FindLimitWithKind = 50;
     private const int DependencyCap = 50;
     private const int ImpactListCap = 100;
     private const int ImpactTraversalCap = 10_000;
@@ -62,10 +68,11 @@ public sealed partial class SlnmapQueries
 
         // Fetch one past the cap so we can distinguish an exact count from "more exist" and say so,
         // rather than reporting the cap as if it were the total.
+        int limit = kindFilter is null ? FindLimit : FindLimitWithKind;
         List<SymbolNode> matches;
         if (kindFilter is null)
         {
-            matches = (await _store.FindNodesAsync($"%{query}%", FindLimit + 1, cancellationToken).ConfigureAwait(false)).ToList();
+            matches = (await _store.FindNodesAsync($"%{query}%", limit + 1, cancellationToken).ConfigureAwait(false)).ToList();
         }
         else
         {
@@ -77,7 +84,7 @@ public sealed partial class SlnmapQueries
                     || n.Fqn.Contains(query, StringComparison.OrdinalIgnoreCase))
                 .OrderBy(n => n.Fqn.Length)
                 .ThenBy(n => n.Fqn, StringComparer.Ordinal)
-                .Take(FindLimit + 1)
+                .Take(limit + 1)
                 .ToList();
         }
 
@@ -87,12 +94,12 @@ public sealed partial class SlnmapQueries
             return $"No symbols match '{query}'{kindNote}. Try a shorter substring (matching is case-insensitive over names and FQNs){(kindFilter is null ? "" : ", or drop the kind filter")}.";
         }
 
-        bool capped = matches.Count > FindLimit;
-        var shown = capped ? matches.Take(FindLimit).ToList() : matches;
+        bool capped = matches.Count > limit;
+        var shown = capped ? matches.Take(limit).ToList() : matches;
 
         var builder = new StringBuilder();
         builder.AppendLine(capped
-            ? $"{FindLimit}+ matches for '{query}' (showing first {FindLimit} — refine your query):"
+            ? $"{limit}+ matches for '{query}' (showing first {limit} — refine your query):"
             : $"{shown.Count} match(es) for '{query}':");
         foreach (var node in shown)
         {
