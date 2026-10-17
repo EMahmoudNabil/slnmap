@@ -76,7 +76,7 @@ public sealed class McpErrorBehaviorTests : IClassFixture<AnalyzedFixtureGraphSt
             await _queries.ImpactAnalysisAsync("Fixture.Lib.IShape.Area()"),
             await _queries.GetArchitectureOverviewAsync(),
             await _queries.ListEndpointsAsync(null, null),
-            await _queries.FindEndpointAsync("/api/vendors/42", null),
+            await _queries.FindEndpointAsync("/api/sellers/42", null),
         })
         {
             Assert.False(ToolFailure.IsFailurePayload(result), $"success came back failure-shaped: {result}");

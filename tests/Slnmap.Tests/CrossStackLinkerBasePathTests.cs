@@ -64,16 +64,16 @@ public sealed class CrossStackLinkerBasePathTests
         Assert.Equal([endpoint], result.Endpoints);
     }
 
-    // ---- (b) the OSSUS shape: bare call-site paths + prefix must keep working -----------------
+    // ---- (b) the production shape: bare call-site paths + prefix must keep working -----------------
 
     [Fact]
-    public void OssusShape_BareCallSitePath_StillResolvesViaThePrefix_NoRegression()
+    public void ProductionShape_BareCallSitePath_StillResolvesViaThePrefix_NoRegression()
     {
-        // OSSUS's own convention (axios baseURL absorbs "/api" at runtime, invisible to the
-        // extractor): call site Name never carries the prefix. This is the shape the 716/743
-        // field-trial numbers depend on — must be completely unaffected by the fix.
-        var endpoint = Endpoint("GET", "/api/Vendors");
-        var callSite = CallSite("GET", "/Vendors");
+        // The common convention (axios baseURL absorbs "/api" at runtime, invisible to the
+        // extractor): call site Name never carries the prefix. This is the shape real
+        // frontends depend on — must be completely unaffected by the fix.
+        var endpoint = Endpoint("GET", "/api/Sellers");
+        var callSite = CallSite("GET", "/Sellers");
 
         var result = LinkSingle(callSite, [endpoint]);
 
@@ -83,14 +83,14 @@ public sealed class CrossStackLinkerBasePathTests
     }
 
     [Fact]
-    public void OssusShape_BareCallSitePath_FanOutAndPrecedenceStillWorkUnchanged()
+    public void ProductionShape_BareCallSitePath_FanOutAndPrecedenceStillWorkUnchanged()
     {
         // Mirrors CrossStackLinkerTests' existing precedence coverage, re-asserted here
         // specifically under the two-candidate code path to prove it degrades to the exact same
         // single-skeleton behavior when only the prefixed candidate ever matches.
-        var literalEndpoint = Endpoint("GET", "/api/UserProfiles/current");
-        var paramEndpoint = Endpoint("GET", "/api/UserProfiles/{id}");
-        var callSite = CallSite("GET", "/UserProfiles/current");
+        var literalEndpoint = Endpoint("GET", "/api/AccountProfiles/current");
+        var paramEndpoint = Endpoint("GET", "/api/AccountProfiles/{id}");
+        var callSite = CallSite("GET", "/AccountProfiles/current");
 
         var result = LinkSingle(callSite, [literalEndpoint, paramEndpoint]);
 
@@ -125,9 +125,9 @@ public sealed class CrossStackLinkerBasePathTests
     {
         // Genuine fan-out (both candidates resolve from the SAME skeleton, e.g. real runtime
         // fan-out on the prefixed path alone) must NOT be mislabeled as prefix-ambiguous.
-        var endpointA = Endpoint("GET", "/api/RiskRegisters/my-risks");
-        var endpointB = Endpoint("GET", "/api/RiskRegisters/{id}");
-        var callSite = CallSite("GET", "/RiskRegisters/{*}");
+        var endpointA = Endpoint("GET", "/api/CartSnapshots/my-carts");
+        var endpointB = Endpoint("GET", "/api/CartSnapshots/{id}");
+        var callSite = CallSite("GET", "/CartSnapshots/{*}");
 
         var result = LinkSingle(callSite, [endpointA, endpointB]);
 
@@ -155,9 +155,9 @@ public sealed class CrossStackLinkerBasePathTests
     {
         // With basePath = "", raw and prefixed skeletons are IDENTICAL by construction — this
         // must collapse to the single-candidate path, never double-count as "both matched".
-        var endpointA = Endpoint("GET", "/RiskRegisters/my-risks");
-        var endpointB = Endpoint("GET", "/RiskRegisters/{id}");
-        var callSite = CallSite("GET", "/RiskRegisters/{*}");
+        var endpointA = Endpoint("GET", "/CartSnapshots/my-carts");
+        var endpointB = Endpoint("GET", "/CartSnapshots/{id}");
+        var callSite = CallSite("GET", "/CartSnapshots/{*}");
 
         var result = LinkSingle(callSite, [endpointA, endpointB], basePath: "");
 

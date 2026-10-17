@@ -11,7 +11,7 @@ namespace Slnmap.Tests;
 /// templates, PROVIDED the frontend side composes its stored template with the same literal
 /// base-path prefix the backend already bakes in (EndpointFacts.ComposeTemplate's convention).
 ///
-/// These tests exercise the EXISTING, unmodified RouteTemplate against the 5 real OSSUS-shaped
+/// These tests exercise the EXISTING, unmodified RouteTemplate against the 5 production-shaped
 /// pairs from frontend-feasibility-spike.md §2, using the exact template strings
 /// EndpointFacts.ComposeTemplate would produce on the backend side and this investigation's
 /// fixture (tests/fixtures-ts/frontend-fixture/) on the frontend side. All PASS today — this is
@@ -32,13 +32,13 @@ public sealed class RouteTemplateCrossStackSpecTests
     [Fact]
     public void Pair1_CaseA_PlainLiteral_MatchesExactly()
     {
-        // FE: tests/fixtures-ts/frontend-fixture/src/hooks/useUserTaskCenter.ts:17
-        string frontend = FrontendSkeleton("/UserTasks/assigned-tasks-with-summary");
-        // BE: EndpointFacts.ComposeTemplate("UserTasks", "assigned-tasks-with-summary") under
+        // FE: tests/fixtures-ts/frontend-fixture/src/hooks/useUserOrderQueue.ts:17
+        string frontend = FrontendSkeleton("/PickerTasks/assigned-picks-with-summary");
+        // BE: EndpointFacts.ComposeTemplate("PickerTasks", "assigned-picks-with-summary") under
         // the project's top-level MapGroup("/api").
-        string backend = RouteTemplate.Normalize("/api/UserTasks/assigned-tasks-with-summary");
+        string backend = RouteTemplate.Normalize("/api/PickerTasks/assigned-picks-with-summary");
 
-        Assert.Equal("api/usertasks/assigned-tasks-with-summary", frontend);
+        Assert.Equal("api/pickertasks/assigned-picks-with-summary", frontend);
         Assert.Equal(frontend, backend);
         Assert.True(RouteTemplate.Matches(backend, frontend));
     }
@@ -46,12 +46,12 @@ public sealed class RouteTemplateCrossStackSpecTests
     [Fact]
     public void Pair2_CaseC_ConstThroughBarrelAndServiceObject_MatchesExactly()
     {
-        // FE: tests/fixtures-ts/frontend-fixture/src/services/boardMeetingsService.ts:9
-        // (three-hop: hook -> barrel -> service object -> const COMMITTEES -> apiClient.get)
-        string frontend = FrontendSkeleton("/Committees");
-        string backend = RouteTemplate.Normalize("/api/Committees");
+        // FE: tests/fixtures-ts/frontend-fixture/src/services/stockCountsService.ts:9
+        // (three-hop: hook -> barrel -> service object -> const WAREHOUSES -> apiClient.get)
+        string frontend = FrontendSkeleton("/Warehouses");
+        string backend = RouteTemplate.Normalize("/api/Warehouses");
 
-        Assert.Equal("api/committees", frontend);
+        Assert.Equal("api/warehouses", frontend);
         Assert.Equal(frontend, backend);
         Assert.True(RouteTemplate.Matches(backend, frontend));
     }
@@ -59,17 +59,17 @@ public sealed class RouteTemplateCrossStackSpecTests
     [Fact]
     public void Pair3_CaseB_FanOut_MatchesAllThreeCandidates_ViaExistingHoleRule()
     {
-        // FE: tests/fixtures-ts/frontend-fixture/src/hooks/useUserTaskCenter.ts:24 -- both
+        // FE: tests/fixtures-ts/frontend-fixture/src/hooks/useUserOrderQueue.ts:24 -- both
         // interpolation holes are genuinely runtime-chosen, stored as anonymous {*} tokens.
-        string frontend = FrontendSkeleton("/TaskCenter/{*}/{*}/reminder");
-        Assert.Equal("api/taskcenter/{x}/{x}/reminder", frontend);
+        string frontend = FrontendSkeleton("/OrderQueue/{*}/{*}/reminder");
+        Assert.Equal("api/orderqueue/{x}/{x}/reminder", frontend);
 
         // BE: three distinct Endpoint nodes (the true fan-out the spike measured).
         string[] backendCandidates =
         [
-            RouteTemplate.Normalize("/api/TaskCenter/compliances/{taskId}/reminder"),
-            RouteTemplate.Normalize("/api/TaskCenter/risks/{taskId}/reminder"),
-            RouteTemplate.Normalize("/api/TaskCenter/governances/{taskId}/reminder"),
+            RouteTemplate.Normalize("/api/OrderQueue/pickups/{taskId}/reminder"),
+            RouteTemplate.Normalize("/api/OrderQueue/carts/{taskId}/reminder"),
+            RouteTemplate.Normalize("/api/OrderQueue/refunds/{taskId}/reminder"),
         ];
 
         // RouteTemplate.Matches's existing hole-matches-concrete-segment rule (RouteTemplate.cs
@@ -80,13 +80,13 @@ public sealed class RouteTemplateCrossStackSpecTests
     [Fact]
     public void Pair4_ParamVsLiteralSiblings_MatchesBothCandidates_AmbiguityIsReal()
     {
-        // FE: tests/fixtures-ts/frontend-fixture/src/hooks/useUserProfile.ts:9 -- a plain
+        // FE: tests/fixtures-ts/frontend-fixture/src/hooks/useAccountProfile.ts:9 -- a plain
         // literal call site.
-        string frontend = FrontendSkeleton("/UserProfiles/current");
-        Assert.Equal("api/userprofiles/current", frontend);
+        string frontend = FrontendSkeleton("/AccountProfiles/current");
+        Assert.Equal("api/accountprofiles/current", frontend);
 
-        string literalCandidate = RouteTemplate.Normalize("/api/UserProfiles/current");
-        string paramCandidate = RouteTemplate.Normalize("/api/UserProfiles/{id}");
+        string literalCandidate = RouteTemplate.Normalize("/api/AccountProfiles/current");
+        string paramCandidate = RouteTemplate.Normalize("/api/AccountProfiles/{id}");
 
         // Both match at the skeleton level -- this is the one real, correctly-identified Phase 3
         // gap this audit found: RouteTemplate.Matches alone cannot disambiguate; a route
@@ -100,21 +100,21 @@ public sealed class RouteTemplateCrossStackSpecTests
     [Fact]
     public void Pair5_DanglingBug_CorrectlyNoMatch_AndCaseFoldIsProvenReal()
     {
-        // FE: tests/fixtures-ts/frontend-fixture/src/hooks/useOrganizationUsers.ts:10 -- the
-        // spike's real production bug, written in lowercase exactly as OSSUS_Frontend wrote it.
-        string frontend = FrontendSkeleton("/organizationusers");
-        Assert.Equal("api/organizationusers", frontend);
+        // FE: tests/fixtures-ts/frontend-fixture/src/hooks/useCustomers.ts:10 -- the
+        // spike's real production bug, written in lowercase exactly as the production frontend wrote it.
+        string frontend = FrontendSkeleton("/customers");
+        Assert.Equal("api/customers", frontend);
 
-        // No POST /api/OrganizationUsers registration exists on the backend for this case. Prove
+        // No POST /api/Customers registration exists on the backend for this case. Prove
         // the miss is real (no registration), not an artifact of casing drift, by first showing
         // the case-fold works: differently-cased inputs still produce the same skeleton.
-        string sameRouteDifferentCase = RouteTemplate.Normalize("/api/OrganizationUsers");
+        string sameRouteDifferentCase = RouteTemplate.Normalize("/api/Customers");
         Assert.Equal(frontend, sameRouteDifferentCase);
         Assert.True(RouteTemplate.Matches(sameRouteDifferentCase, frontend));
 
         // But the actual backend route table for this group has no matching template at all --
         // simulated here by an unrelated sibling endpoint on the same resource group.
-        string unrelatedSibling = RouteTemplate.Normalize("/api/OrganizationUsers/{id}");
+        string unrelatedSibling = RouteTemplate.Normalize("/api/Customers/{id}");
         Assert.False(RouteTemplate.Matches(unrelatedSibling, frontend));
     }
 }

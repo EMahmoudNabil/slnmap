@@ -34,7 +34,7 @@ public sealed class ControllerEndpointTests : IClassFixture<AnalyzedFixtureSolut
     [Fact]
     public void DuplicateRoute_AcrossExtractors_CollapsesToOneNodeWithBothHandlers()
     {
-        // Program.cs registers app.MapGet("/api/Status", VendorEndpoints.Ping) — the same
+        // Program.cs registers app.MapGet("/api/Status", SellerEndpoints.Ping) — the same
         // verb+template as StatusController's bare [HttpGet]. Identity is "VERB template", so
         // both extractors converge on ONE node whose HandledBy edges point at BOTH handlers
         // (they would collide at runtime too; the superposition is the honest answer).
@@ -44,7 +44,7 @@ public sealed class ControllerEndpointTests : IClassFixture<AnalyzedFixtureSolut
             .OrderBy(f => f, StringComparer.Ordinal)
             .ToList();
         Assert.Equal(
-            ["Fixture.Web.StatusController.GetStatus()", "Fixture.Web.VendorEndpoints.Ping()"],
+            ["Fixture.Web.SellerEndpoints.Ping()", "Fixture.Web.StatusController.GetStatus()"],
             handlers);
     }
 
@@ -52,7 +52,7 @@ public sealed class ControllerEndpointTests : IClassFixture<AnalyzedFixtureSolut
     public void MinimalApiCounts_AreUntouchedByTheControllerExtractor()
     {
         // The two extractors are additive: every v0.7.0 fixture endpoint still exists.
-        GraphAssert.Node(Graph, NodeKind.Endpoint, "GET /api/vendors");
+        GraphAssert.Node(Graph, NodeKind.Endpoint, "GET /api/sellers");
         GraphAssert.Node(Graph, NodeKind.Endpoint, "GET /api/Reminders");
         GraphAssert.Node(Graph, NodeKind.Endpoint, "GET /health");
     }

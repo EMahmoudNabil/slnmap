@@ -131,8 +131,8 @@ public sealed partial class SlnmapQueries
         // Longest namespace whose FQN is a prefix (on a dot boundary) of the node's FQN wins.
         // Such a prefix is either the whole FQN or ends right before one of its dots, so checking
         // those candidates longest-first against a set gives the same answer as scanning every
-        // namespace, in time proportional to the FQN, not the namespace count (v0.14.1: 21.7 s on
-        // a 33k-node graph, where each of 125k edges scanned every namespace). Memoized per node.
+        // namespace, in time proportional to the FQN, not the namespace count (v0.14.1: on a large
+        // graph, every edge used to scan every namespace). Memoized per node.
         var namespaces = graph.Nodes
             .Where(n => n.Kind == NodeKind.Namespace)
             .Select(n => n.Fqn)

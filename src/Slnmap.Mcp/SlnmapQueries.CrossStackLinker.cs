@@ -63,7 +63,7 @@ public sealed partial class SlnmapQueries
     /// how they were made, so this recomputes the links live (the same computation
     /// list_frontend_callsites shows) and keys the marker by call-site node id. Only
     /// <paramref name="callSites"/> are linked (v0.14.2: linking all of them on every
-    /// impact_analysis/find_endpoint call cost ~0.8 s on OSSUS).
+    /// impact_analysis/find_endpoint call was slow on large graphs).
     /// </summary>
     private async Task<IReadOnlyDictionary<string, string>> InferredLinkMarkersAsync(
         IReadOnlyCollection<SymbolNode> callSites,

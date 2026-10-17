@@ -34,24 +34,24 @@ public sealed class LinkedCrossStackGraphStore : IAsyncLifetime
             Stats: new TsArtifactStats(6, 0, 100.0, new Dictionary<string, int>()),
             CallSites:
             [
-                new TsArtifactCallSite(Kind: "FrontendCallSite", Verb: "GET", Template: "/vendors",
+                new TsArtifactCallSite(Kind: "FrontendCallSite", Verb: "GET", Template: "/sellers",
                     ResolutionTier: "literal", Category: null, Reason: null,
-                    File: "src/services/vendorsService.ts", Line: 10, Column: 15, SpanStart: 0, SpanEnd: 1),
-                new TsArtifactCallSite(Kind: "FrontendCallSite", Verb: "POST", Template: "/vendors/42",
+                    File: "src/services/sellersService.ts", Line: 10, Column: 15, SpanStart: 0, SpanEnd: 1),
+                new TsArtifactCallSite(Kind: "FrontendCallSite", Verb: "POST", Template: "/sellers/42",
                     ResolutionTier: "literal", Category: null, Reason: null,
-                    File: "src/services/vendorsService.ts", Line: 20, Column: 30, SpanStart: 2, SpanEnd: 3),
-                new TsArtifactCallSite(Kind: "FrontendCallSite", Verb: "GET", Template: "/vendors/current",
+                    File: "src/services/sellersService.ts", Line: 20, Column: 30, SpanStart: 2, SpanEnd: 3),
+                new TsArtifactCallSite(Kind: "FrontendCallSite", Verb: "GET", Template: "/sellers/current",
                     ResolutionTier: "literal", Category: null, Reason: null,
-                    File: "src/services/vendorsService.ts", Line: 27, Column: 18, SpanStart: 4, SpanEnd: 5),
-                new TsArtifactCallSite(Kind: "FrontendCallSite", Verb: "POST", Template: "/vendors/notify/{*}",
+                    File: "src/services/sellersService.ts", Line: 27, Column: 18, SpanStart: 4, SpanEnd: 5),
+                new TsArtifactCallSite(Kind: "FrontendCallSite", Verb: "POST", Template: "/sellers/notify/{*}",
                     ResolutionTier: "template-param-holes", Category: null, Reason: null,
-                    File: "src/services/vendorsService.ts", Line: 33, Column: 50, SpanStart: 6, SpanEnd: 7),
-                new TsArtifactCallSite(Kind: "FrontendCallSite", Verb: "POST", Template: "/vendors/reports/export/csv",
+                    File: "src/services/sellersService.ts", Line: 33, Column: 50, SpanStart: 6, SpanEnd: 7),
+                new TsArtifactCallSite(Kind: "FrontendCallSite", Verb: "POST", Template: "/sellers/reports/export/csv",
                     ResolutionTier: "literal", Category: null, Reason: null,
-                    File: "src/services/vendorsService.ts", Line: 37, Column: 37, SpanStart: 8, SpanEnd: 9),
-                new TsArtifactCallSite(Kind: "FrontendCallSite", Verb: "DELETE", Template: "/vendors",
+                    File: "src/services/sellersService.ts", Line: 37, Column: 37, SpanStart: 8, SpanEnd: 9),
+                new TsArtifactCallSite(Kind: "FrontendCallSite", Verb: "DELETE", Template: "/sellers",
                     ResolutionTier: "literal", Category: null, Reason: null,
-                    File: "src/services/vendorsService.ts", Line: 42, Column: 20, SpanStart: 10, SpanEnd: 11),
+                    File: "src/services/sellersService.ts", Line: 42, Column: 20, SpanStart: 10, SpanEnd: 11),
             ]);
 
         var frontendNodes = TsArtifactFacts.BuildNodes(frontendArtifact, frontendRoot);
@@ -99,7 +99,7 @@ public sealed class CrossStackLinkerMcpToolTests : IClassFixture<LinkedCrossStac
 
         Assert.Contains("no-match (1):", result, StringComparison.Ordinal);
         Assert.Contains("verb-mismatch (1):", result, StringComparison.Ordinal);
-        Assert.Contains("/vendors/reports/export/csv", result, StringComparison.Ordinal);
+        Assert.Contains("/sellers/reports/export/csv", result, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -107,7 +107,7 @@ public sealed class CrossStackLinkerMcpToolTests : IClassFixture<LinkedCrossStac
     {
         string result = await _queries.FindOrphanCallsAsync("verb-mismatch");
 
-        Assert.Contains("no DELETE registered; GET /api/vendors exists", result, StringComparison.Ordinal);
+        Assert.Contains("no DELETE registered; GET /api/sellers exists", result, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -124,7 +124,7 @@ public sealed class CrossStackLinkerMcpToolTests : IClassFixture<LinkedCrossStac
     {
         string result = await _queries.ListFrontendCallSitesAsync(null, null);
 
-        Assert.Contains("-> GET /api/vendors", result, StringComparison.Ordinal);
+        Assert.Contains("-> GET /api/sellers", result, StringComparison.Ordinal);
         Assert.Contains("-> 3 endpoints:", result, StringComparison.Ordinal); // the notify() fan-out
         Assert.Contains("[NoSkeletonMatch]", result, StringComparison.Ordinal);
         Assert.Contains("[VerbMismatch]", result, StringComparison.Ordinal);
@@ -142,17 +142,17 @@ public sealed class CrossStackLinkerMcpToolTests : IClassFixture<LinkedCrossStac
     [Fact]
     public async Task FindEndpoint_MatchedEndpointWithCallers_ListsThemByFqn()
     {
-        string result = await _queries.FindEndpointAsync("/api/vendors/current", "GET");
+        string result = await _queries.FindEndpointAsync("/api/sellers/current", "GET");
 
         Assert.Contains("Called from the frontend by:", result, StringComparison.Ordinal);
-        Assert.Contains("GET src/services/vendorsService.ts:27:18", result, StringComparison.Ordinal);
+        Assert.Contains("GET src/services/sellersService.ts:27:18", result, StringComparison.Ordinal);
     }
 
     [Fact]
     public async Task FindEndpoint_MatchedEndpointWithNoCallers_OmitsTheCallerLine()
     {
         // The pre-existing archive endpoints have no frontend callers in this fixture.
-        string result = await _queries.FindEndpointAsync("/api/vendors/archive", "GET");
+        string result = await _queries.FindEndpointAsync("/api/sellers/archive", "GET");
 
         Assert.DoesNotContain("Called from the frontend by:", result, StringComparison.Ordinal);
     }
@@ -160,17 +160,17 @@ public sealed class CrossStackLinkerMcpToolTests : IClassFixture<LinkedCrossStac
     [Fact]
     public async Task ImpactAnalysis_OnHandler_ReachesItsFrontendCaller_WithNoToolChange()
     {
-        string result = await _queries.ImpactAnalysisAsync("Fixture.Web.VendorEndpoints.GetVendorContext()");
+        string result = await _queries.ImpactAnalysisAsync("Fixture.Web.SellerEndpoints.GetSellerContext()");
 
-        Assert.Contains("GET /api/vendors/current", result, StringComparison.Ordinal);
-        Assert.Contains("GET src/services/vendorsService.ts:27:18", result, StringComparison.Ordinal);
+        Assert.Contains("GET /api/sellers/current", result, StringComparison.Ordinal);
+        Assert.Contains("GET src/services/sellersService.ts:27:18", result, StringComparison.Ordinal);
     }
 
     [Fact]
     public async Task FindUsages_OnEndpoint_SurfacesItsFrontendCaller()
     {
-        string result = await _queries.FindUsagesAsync("GET /api/vendors/current");
+        string result = await _queries.FindUsagesAsync("GET /api/sellers/current");
 
-        Assert.Contains("GET src/services/vendorsService.ts:27:18", result, StringComparison.Ordinal);
+        Assert.Contains("GET src/services/sellersService.ts:27:18", result, StringComparison.Ordinal);
     }
 }

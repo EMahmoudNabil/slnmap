@@ -43,6 +43,6 @@ public static class StatusCompat
 {
     public static void Map(WebApplication app)
     {
-        app.MapGet("/api/Status", VendorEndpoints.Ping);
+        app.MapGet("/api/Status", SellerEndpoints.Ping);
     }
 }

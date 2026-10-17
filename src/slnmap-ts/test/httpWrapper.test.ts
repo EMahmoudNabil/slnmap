@@ -27,7 +27,7 @@ function project(files: Record<string, string>): string {
 
 const AXIOS_CLIENT = `
 import axios from 'axios';
-const apiClient = axios.create({ baseURL: '/api/ogw' });
+const apiClient = axios.create({ baseURL: '/api/proxy' });
 export default apiClient;
 `;
 
@@ -80,15 +80,15 @@ test('a wrapper forwarding into a plain axios.create() instance (not superagent)
       const requests = {
         get: (url: string) => apiClient.get(url),
       };
-      export function fetchVendors() {
-        return requests.get('/Vendors');
+      export function fetchSellers() {
+        return requests.get('/Sellers');
       }
     `,
   });
   const artifact = extract({ projectRoot: root });
   const site = artifact.callSites[0]!;
   assert.equal(site.kind, 'FrontendCallSite');
-  assert.equal((site as { template: string }).template, '/Vendors');
+  assert.equal((site as { template: string }).template, '/Sellers');
 });
 
 test('a standalone (non-object-literal) wrapper function also resolves', () => {

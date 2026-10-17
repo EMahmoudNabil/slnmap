@@ -17,7 +17,7 @@
     <PackageProjectUrl>https://slnmap.dev</PackageProjectUrl>
     <PackageTags>dotnet;roslyn;mcp;ai;code-analysis;claude-code;knowledge-graph</PackageTags>
     <PackageReleaseNotes>New: the check verb's baseline file takes an "ignore" list of route patterns ("/api/auth/*",
-"POST /api/vendor-portal/*") for calls the backend never answers by design, so they stay out of the
+"POST /api/seller-portal/*") for calls the backend never answers by design, so they stay out of the
 baseline and the counts. get_dependencies pages 50 at a time through an offset parameter instead of
 truncating; the output names the next offset. find_usages takes includeImplementations to also count
 usages of the types that implement or derive from a symbol, or of the matching member on each, and

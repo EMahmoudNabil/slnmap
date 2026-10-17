@@ -50,7 +50,7 @@ The server exposes fifteen read-only tools — `find_symbol`, `get_dependencies`
 For an interface, `impact_analysis` follows both the interface's callers **and** its concrete
 implementations/overrides — across projects, in files nobody has open. HTTP endpoints are
 first-class graph nodes — from ASP.NET Core Minimal APIs (v0.7.0) and attribute-routed controllers
-(v0.8.0): ask "which endpoint serves `/api/vendors/42`?" or "what breaks if I change this handler?"
+(v0.8.0): ask "which endpoint serves `/api/sellers/42`?" or "what breaks if I change this handler?"
 and get the actual route back.
 
 There's also `slnmap viz`: exports the graph as a single self-contained, interactive HTML file —

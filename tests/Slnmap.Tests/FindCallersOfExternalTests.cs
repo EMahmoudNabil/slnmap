@@ -105,23 +105,23 @@ public sealed class FindCallersOfExternalTests : IDisposable
         {
             var caller = SymbolNode.Create(NodeKind.Method, $"M{i}", $"Big.Callers.M{i}()", file, new SourceSpan(i, i + 1), "Public");
             graph.AddNode(caller);
-            graph.AddExternalCall(new ExternalCall(caller.Id, "Vendor.Sdk.Client.Send(string)", "Vendor.Sdk", "Vendor.Sdk", file, i, CallCount: 3));
+            graph.AddExternalCall(new ExternalCall(caller.Id, "Seller.Sdk.Client.Send(string)", "Seller.Sdk", "Seller.Sdk", file, i, CallCount: 3));
         }
 
         // A generated file's calls are counted in the header, never listed.
         string designer = Path.Combine(_root, "Big", "Migrations", "20260101_Init.Designer.cs");
         var generatedCaller = SymbolNode.Create(NodeKind.Method, "BuildTargetModel", "Big.Init.BuildTargetModel()", designer, new SourceSpan(0, 1), "Protected");
         graph.AddNode(generatedCaller);
-        graph.AddExternalCall(new ExternalCall(generatedCaller.Id, "Vendor.Sdk.Client.Send(string)", "Vendor.Sdk", "Vendor.Sdk", designer, 0, CallCount: 5000));
+        graph.AddExternalCall(new ExternalCall(generatedCaller.Id, "Seller.Sdk.Client.Send(string)", "Seller.Sdk", "Seller.Sdk", designer, 0, CallCount: 5000));
 
         await using var store = await SeedAsync(graph);
         var queries = new SlnmapQueries(store);
 
         Assert.Contains("Provide a namespace prefix", await queries.FindCallersOfExternalAsync(" ", null), StringComparison.Ordinal);
-        Assert.Contains("Unknown project 'Nope'", await queries.FindCallersOfExternalAsync("Vendor", "Nope"), StringComparison.Ordinal);
+        Assert.Contains("Unknown project 'Nope'", await queries.FindCallersOfExternalAsync("Seller", "Nope"), StringComparison.Ordinal);
 
-        string capped = await queries.FindCallersOfExternalAsync("Vendor", "all");
-        Assert.Contains("300 call site(s) into 'Vendor' from 100 member(s) across 1 project(s)", capped, StringComparison.Ordinal);
+        string capped = await queries.FindCallersOfExternalAsync("Seller", "all");
+        Assert.Contains("300 call site(s) into 'Seller' from 100 member(s) across 1 project(s)", capped, StringComparison.Ordinal);
         Assert.Contains("Callers (showing first 30 of 100", capped, StringComparison.Ordinal);
         Assert.Contains("(+ 5000 more call site(s) in 1 generated file(s)", capped, StringComparison.Ordinal);
         Assert.DoesNotContain("BuildTargetModel", capped, StringComparison.Ordinal);
@@ -136,7 +136,7 @@ public sealed class FindCallersOfExternalTests : IDisposable
             await command.ExecuteNonQueryAsync();
         }
 
-        Assert.Contains("re-run 'slnmap analyze'", await queries.FindCallersOfExternalAsync("Vendor", null), StringComparison.Ordinal);
+        Assert.Contains("re-run 'slnmap analyze'", await queries.FindCallersOfExternalAsync("Seller", null), StringComparison.Ordinal);
     }
 
     [Fact]

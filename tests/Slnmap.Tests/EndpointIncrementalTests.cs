@@ -70,7 +70,7 @@ public sealed class EndpointIncrementalTests : IDisposable
     [Fact]
     public async Task TouchingTheHandlerFile_HandledByEdgeSurvivesTheEvictionBoundary()
     {
-        // GET /health is registered in Program.cs; its handler lives in VendorEndpoints.cs.
+        // GET /health is registered in Program.cs; its handler lives in SellerEndpoints.cs.
         // Editing the handler's file evicts the handler node — the planner must re-walk the
         // registration file (the HandledBy edge targets the affected handler), and the edge must
         // come back. This is the v0.6.0 Event-extension shape, for the first new edge kind.
@@ -78,7 +78,7 @@ public sealed class EndpointIncrementalTests : IDisposable
         var cold = await analyzer.AnalyzeAsync(solutionPath);
         AssertHealthHandledByPing(cold.Graph);
 
-        File.AppendAllText(Path.Combine(_root, "FixtureWeb", "VendorEndpoints.cs"), "\n");
+        File.AppendAllText(Path.Combine(_root, "FixtureWeb", "SellerEndpoints.cs"), "\n");
         var incremental = await analyzer.AnalyzeAsync(solutionPath, cold);
 
         Assert.True(
@@ -137,7 +137,7 @@ public sealed class EndpointIncrementalTests : IDisposable
         GraphAssert.Edge(
             graph,
             GraphAssert.Node(graph, NodeKind.Endpoint, "GET /health"),
-            GraphAssert.Node(graph, NodeKind.Method, "Fixture.Web.VendorEndpoints.Ping()"),
+            GraphAssert.Node(graph, NodeKind.Method, "Fixture.Web.SellerEndpoints.Ping()"),
             RelationshipKind.HandledBy);
     }
 

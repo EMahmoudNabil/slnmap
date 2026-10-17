@@ -825,8 +825,8 @@ internal sealed class DocumentWalker
     /// in "Controller" first, then an [ApiController]/[Route]/[Controller] attribute on the class,
     /// then an [Http*] attribute on any member (the weakest signal alone, but real: a class could
     /// be attribute-routed without an ASP.NET-recognizable name/attribute combo on the class
-    /// itself). Verified zero false positives on OSSUS_BE.sln (0 matches across all three signals
-    /// — reports/v0131-poco-controller-investigation.md) and against every existing fixture.
+    /// itself). Verified zero false positives on a large Minimal-API-only production solution
+    /// and against every existing fixture.
     /// </summary>
     private static string? LooksControllerish(ClassDeclarationSyntax classDecl)
     {

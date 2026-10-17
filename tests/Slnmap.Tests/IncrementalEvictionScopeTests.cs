@@ -129,9 +129,9 @@ public sealed class IncrementalEvictionScopeTests : IDisposable
     public async Task TouchingConstDeclaringFile_FieldUsageEdgesSurviveTheEvictionBoundary()
     {
         // v0.6.1 spot-check: the new field-usage References edges must survive the #6
-        // eviction-and-rewalk cycle like every other edge kind. VendorActivity.cs declares
-        // VendorActivityTypes.Deactivated; its usage edges arrive from DeactivateVendorCommand.cs
-        // (same project) AND VendorAudit.cs (FixtureApp) — the latter crosses the eviction
+        // eviction-and-rewalk cycle like every other edge kind. SellerActivity.cs declares
+        // SellerActivityTypes.Deactivated; its usage edges arrive from DeactivateSellerCommand.cs
+        // (same project) AND SellerAudit.cs (FixtureApp) — the latter crosses the eviction
         // boundary. #6's fix is edge-kind-agnostic by design; this verifies rather than assumes.
         CopyDirectory(TestPaths.FixtureSolutionDirectory, _root);
         DotNet.Run("restore FixtureSolution.sln", _root);
@@ -142,7 +142,7 @@ public sealed class IncrementalEvictionScopeTests : IDisposable
         AssertCrossProjectConstUsageEdgePresent(cold.Graph);
 
         // Whitespace-only touch, zero semantic change — same shape as the #6 repro above.
-        File.AppendAllText(Path.Combine(_root, "FixtureLib", "VendorActivity.cs"), "\n");
+        File.AppendAllText(Path.Combine(_root, "FixtureLib", "SellerActivity.cs"), "\n");
 
         var incremental = await analyzer.AnalyzeAsync(solutionPath, cold);
 
@@ -163,9 +163,9 @@ public sealed class IncrementalEvictionScopeTests : IDisposable
 
     private static void AssertCrossProjectConstUsageEdgePresent(CodeGraph graph)
     {
-        var audit = GraphAssert.Node(graph, NodeKind.Method, "Fixture.App.VendorAudit.IsDeactivation(string)");
-        var command = GraphAssert.Node(graph, NodeKind.Property, "Fixture.Lib.DeactivateVendorCommand.ActivityType");
-        var deactivated = GraphAssert.Node(graph, NodeKind.Field, "Fixture.Lib.VendorActivityTypes.Deactivated");
+        var audit = GraphAssert.Node(graph, NodeKind.Method, "Fixture.App.SellerAudit.IsDeactivation(string)");
+        var command = GraphAssert.Node(graph, NodeKind.Property, "Fixture.Lib.DeactivateSellerCommand.ActivityType");
+        var deactivated = GraphAssert.Node(graph, NodeKind.Field, "Fixture.Lib.SellerActivityTypes.Deactivated");
         GraphAssert.Edge(graph, audit, deactivated, RelationshipKind.References);
         GraphAssert.Edge(graph, command, deactivated, RelationshipKind.References);
     }

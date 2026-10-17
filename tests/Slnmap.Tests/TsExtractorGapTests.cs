@@ -141,8 +141,8 @@ public sealed class TsExtractorGapTests
                 await using var command = connection.CreateCommand();
                 command.CommandText = """
                     INSERT INTO nodes (id, kind, name, fqn, file, span_start, span_end)
-                    VALUES ($id1, 'FrontendCallSite', '/UserTasks/assigned-tasks-with-summary',
-                            'GET src/hooks/useUserTaskCenter.ts:17:12', 'src/hooks/useUserTaskCenter.ts', 0, 10),
+                    VALUES ($id1, 'FrontendCallSite', '/PickerTasks/assigned-picks-with-summary',
+                            'GET src/hooks/useUserOrderQueue.ts:17:12', 'src/hooks/useUserOrderQueue.ts', 0, 10),
                            ($id2, 'UnresolvedCallSite', 'dynamic-base-url: URL is built from an env value',
                             'UNRESOLVED dynamic-base-url src/services/dynamicService.ts:10:10',
                             'src/services/dynamicService.ts', 0, 10);

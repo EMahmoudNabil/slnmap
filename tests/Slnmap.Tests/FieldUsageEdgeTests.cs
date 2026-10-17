@@ -9,8 +9,8 @@ namespace Slnmap.Tests;
 /// that read/write them. v0.5.0 (Gap 2) gave fields nodes and v0.6.0 (Q3) gave them OUTGOING
 /// edges, but HandleNameReference's target filter still rejected IFieldSymbol — so find_usages
 /// answered "No usages found" for every field/const in the graph, a repo-wide false "safe to
-/// change" on const-based codebases (the OSSUS VendorActivityType.Deactivated case). Fixture
-/// cases: VendorActivity.cs, DeactivateVendorCommand.cs (FixtureLib), VendorAudit.cs (FixtureApp).
+/// change" on const-based codebases (a production SellerActivityType.Deactivated case). Fixture
+/// cases: SellerActivity.cs, DeactivateSellerCommand.cs (FixtureLib), SellerAudit.cs (FixtureApp).
 /// </summary>
 public sealed class FieldUsageEdgeTests : IClassFixture<AnalyzedFixtureSolution>
 {
@@ -29,13 +29,13 @@ public sealed class FieldUsageEdgeTests : IClassFixture<AnalyzedFixtureSolution>
     [Fact]
     public void ConstUsedInThreeFiles_HasExactlyThreeUsages_WithCorrectEnclosingMembers()
     {
-        var target = GraphAssert.Node(Graph, NodeKind.Field, "Fixture.Lib.VendorActivityTypes.Deactivated");
+        var target = GraphAssert.Node(Graph, NodeKind.Field, "Fixture.Lib.SellerActivityTypes.Deactivated");
         var users = ReferencingMembers(target);
 
         Assert.Equal(3, users.Count);
         Assert.Contains(users, u => u.Fqn == "Fixture.Lib.FieldUsageHolder.IsDeactivation(string)");
-        Assert.Contains(users, u => u.Fqn == "Fixture.Lib.DeactivateVendorCommand.ActivityType");
-        Assert.Contains(users, u => u.Fqn == "Fixture.App.VendorAudit.IsDeactivation(string)");
+        Assert.Contains(users, u => u.Fqn == "Fixture.Lib.DeactivateSellerCommand.ActivityType");
+        Assert.Contains(users, u => u.Fqn == "Fixture.App.SellerAudit.IsDeactivation(string)");
         Assert.Equal(3, users.Select(u => u.FilePath).Distinct(StringComparer.OrdinalIgnoreCase).Count());
     }
 
@@ -63,7 +63,7 @@ public sealed class FieldUsageEdgeTests : IClassFixture<AnalyzedFixtureSolution>
     [Fact]
     public void UnreferencedConst_HasNoUsages()
     {
-        var target = GraphAssert.Node(Graph, NodeKind.Field, "Fixture.Lib.VendorActivityTypes.Unused");
+        var target = GraphAssert.Node(Graph, NodeKind.Field, "Fixture.Lib.SellerActivityTypes.Unused");
         Assert.Empty(Graph.IncomingEdges(target.Id, RelationshipKind.References));
     }
 
@@ -93,7 +93,7 @@ public sealed class FieldUsageEdgeTests : IClassFixture<AnalyzedFixtureSolution>
         // Gap-2's GetEnclosingMemberNode behavior, now with a FIELD target: the initializer's
         // read of the const attributes to the initialized field itself.
         var source = GraphAssert.Node(Graph, NodeKind.Field, "Fixture.Lib.FieldUsageHolder._label");
-        var target = GraphAssert.Node(Graph, NodeKind.Field, "Fixture.Lib.VendorActivityTypes.Activated");
+        var target = GraphAssert.Node(Graph, NodeKind.Field, "Fixture.Lib.SellerActivityTypes.Activated");
         GraphAssert.Edge(Graph, source, target, RelationshipKind.References);
     }
 
@@ -113,13 +113,13 @@ public sealed class FieldUsageEdgeTests : IClassFixture<AnalyzedFixtureSolution>
     {
         // Decision REVERSED in v0.9.0 (#13): the v0.6.1 census-consistency objection is resolved
         // by the EnumMemberDeclarationSyntax declaration walk, so members are first-class
-        // EnumMember nodes now. The enum-TYPE edge (via the "VendorState" segment) is unchanged —
+        // EnumMember nodes now. The enum-TYPE edge (via the "SellerState" segment) is unchanged —
         // member granularity is additive, exactly like the const fix this file pins.
-        var source = GraphAssert.Node(Graph, NodeKind.Property, "Fixture.Lib.VendorStateReader.Current");
-        var member = GraphAssert.Node(Graph, NodeKind.EnumMember, "Fixture.Lib.VendorState.Deactivated");
+        var source = GraphAssert.Node(Graph, NodeKind.Property, "Fixture.Lib.SellerStateReader.Current");
+        var member = GraphAssert.Node(Graph, NodeKind.EnumMember, "Fixture.Lib.SellerState.Deactivated");
         GraphAssert.Edge(Graph, source, member, RelationshipKind.References);
 
-        var enumType = GraphAssert.Node(Graph, NodeKind.Enum, "Fixture.Lib.VendorState");
+        var enumType = GraphAssert.Node(Graph, NodeKind.Enum, "Fixture.Lib.SellerState");
         GraphAssert.Edge(Graph, source, enumType, RelationshipKind.References);
     }
 
@@ -147,12 +147,12 @@ public sealed class FieldUsageQueryTests : IClassFixture<AnalyzedFixtureGraphSto
     [Fact]
     public async Task FindUsages_ConstUsedInThreeFiles_ListsAllThreeMembers()
     {
-        string result = await _queries.FindUsagesAsync("Fixture.Lib.VendorActivityTypes.Deactivated");
+        string result = await _queries.FindUsagesAsync("Fixture.Lib.SellerActivityTypes.Deactivated");
 
-        Assert.StartsWith("3 usage(s) of Fixture.Lib.VendorActivityTypes.Deactivated", result, StringComparison.Ordinal);
+        Assert.StartsWith("3 usage(s) of Fixture.Lib.SellerActivityTypes.Deactivated", result, StringComparison.Ordinal);
         Assert.Contains("Fixture.Lib.FieldUsageHolder.IsDeactivation(string)", result, StringComparison.Ordinal);
-        Assert.Contains("Fixture.Lib.DeactivateVendorCommand.ActivityType", result, StringComparison.Ordinal);
-        Assert.Contains("Fixture.App.VendorAudit.IsDeactivation(string)", result, StringComparison.Ordinal);
+        Assert.Contains("Fixture.Lib.DeactivateSellerCommand.ActivityType", result, StringComparison.Ordinal);
+        Assert.Contains("Fixture.App.SellerAudit.IsDeactivation(string)", result, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -167,18 +167,18 @@ public sealed class FieldUsageQueryTests : IClassFixture<AnalyzedFixtureGraphSto
     [Fact]
     public async Task FindUsages_UnreferencedConst_ReportsNone()
     {
-        string result = await _queries.FindUsagesAsync("Fixture.Lib.VendorActivityTypes.Unused");
-        Assert.Equal("No usages found for Fixture.Lib.VendorActivityTypes.Unused.", result);
+        string result = await _queries.FindUsagesAsync("Fixture.Lib.SellerActivityTypes.Unused");
+        Assert.Equal("No usages found for Fixture.Lib.SellerActivityTypes.Unused.", result);
     }
 
     [Fact]
     public async Task ImpactAnalysis_Const_ReportsDependents()
     {
         // The eval's false "safe to change", flipped: a const's dependents must be reported.
-        string result = await _queries.ImpactAnalysisAsync("Fixture.Lib.VendorActivityTypes.Deactivated");
+        string result = await _queries.ImpactAnalysisAsync("Fixture.Lib.SellerActivityTypes.Deactivated");
 
         Assert.DoesNotContain("nothing else in the graph depends on it", result, StringComparison.Ordinal);
         Assert.Contains("dependent symbol(s).", result, StringComparison.Ordinal);
-        Assert.Contains("Fixture.App.VendorAudit.IsDeactivation(string)", result, StringComparison.Ordinal);
+        Assert.Contains("Fixture.App.SellerAudit.IsDeactivation(string)", result, StringComparison.Ordinal);
     }
 }

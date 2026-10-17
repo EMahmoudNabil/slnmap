@@ -9,7 +9,7 @@ app.UseMiddleware<FixtureMiddleware>();
 
 // A registration in top-level statements: the walker already visits this invocation and
 // attributes it to FixtureWeb.<top-level-statements-entry-point> (the Gap-3 finding).
-app.MapGet("/health", VendorEndpoints.Ping);
+app.MapGet("/health", SellerEndpoints.Ping);
 
 // The cross-extractor duplicate registration lives in StatusController.cs (StatusCompat) — in
 // the SAME file as the controller, deliberately: a duplicate route split across files loses its
@@ -17,6 +17,6 @@ app.MapGet("/health", VendorEndpoints.Ping);
 // file — a known, documented limitation; ASP.NET itself rejects such duplicates at request time).
 StatusCompat.Map(app);
 
-VendorEndpoints.Map(app);
+SellerEndpoints.Map(app);
 
 app.Run();

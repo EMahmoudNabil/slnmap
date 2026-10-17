@@ -3,4 +3,4 @@
 // (frontend-feasibility-spike.md §1). Symbol resolution must follow this without regexing
 // every possible import spelling.
 export { default as apiClient } from './apiClient';
-export { boardMeetingsService } from './boardMeetingsService';
+export { stockCountsService } from './stockCountsService';

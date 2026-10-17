@@ -4,7 +4,7 @@ namespace Fixture.Web;
 
 /// <summary>
 /// The CleanArchitecture-template routing convention at minimum size (Tier-2 fixture for the
-/// endpoint-nodes implementation, mirroring OSSUS_Backend's Web/Infrastructure): an abstract group
+/// endpoint-nodes implementation, mirroring a production Web/Infrastructure): an abstract group
 /// base, a MapGroup forwarder whose prefix is computed from <c>GetType().Name</c>, and
 /// reversed-argument Map* extensions that forward to the framework order.
 /// </summary>

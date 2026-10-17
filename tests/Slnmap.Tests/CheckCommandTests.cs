@@ -44,9 +44,9 @@ public sealed class CheckCommandTests : IDisposable
     private static CodeGraph OneOrphanGraph()
     {
         var graph = new CodeGraph();
-        graph.AddNode(Endpoint("GET", "/api/vendors"));
-        graph.AddNode(CallSite("GET", "/vendors", "src/vendors.ts:10:3"));
-        graph.AddNode(CallSite("DELETE", "/vendors", "src/vendors.ts:20:3"));
+        graph.AddNode(Endpoint("GET", "/api/sellers"));
+        graph.AddNode(CallSite("GET", "/sellers", "src/sellers.ts:10:3"));
+        graph.AddNode(CallSite("DELETE", "/sellers", "src/sellers.ts:20:3"));
         return graph;
     }
 
@@ -88,8 +88,8 @@ public sealed class CheckCommandTests : IDisposable
         Assert.Equal(1, exit);
         Assert.Contains("Orphan calls:  1 found, 0 in baseline, 1 new", stdout, StringComparison.Ordinal);
         // Assertions stop short of the em dashes: a redirected console re-encodes them.
-        Assert.Contains("NEW  DELETE src/vendors.ts:20 (/vendors)", stdout, StringComparison.Ordinal);
-        Assert.Contains("verb-mismatch; no DELETE registered; GET /api/vendors exists", stdout, StringComparison.Ordinal);
+        Assert.Contains("NEW  DELETE src/sellers.ts:20 (/sellers)", stdout, StringComparison.Ordinal);
+        Assert.Contains("verb-mismatch; no DELETE registered; GET /api/sellers exists", stdout, StringComparison.Ordinal);
         Assert.Contains("Cycles:        0 project-level, 0 in baseline, 0 new", stdout, StringComparison.Ordinal);
         Assert.Contains("Baseline:      none at", stdout, StringComparison.Ordinal);
         Assert.Contains("--update-baseline", stdout, StringComparison.Ordinal);
@@ -109,7 +109,7 @@ public sealed class CheckCommandTests : IDisposable
 
         using var document = JsonDocument.Parse(File.ReadAllText(BaselinePath));
         Assert.Equal(1, document.RootElement.GetProperty("schemaVersion").GetInt32());
-        Assert.Equal(["DELETE src/vendors.ts /vendors"], document.RootElement.GetProperty("orphans").EnumerateArray().Select(e => e.GetString()!).ToArray());
+        Assert.Equal(["DELETE src/sellers.ts /sellers"], document.RootElement.GetProperty("orphans").EnumerateArray().Select(e => e.GetString()!).ToArray());
         Assert.Empty(document.RootElement.GetProperty("cycles").EnumerateArray());
 
         var check = RunCli("check", "--db", DbPath, "--baseline", BaselinePath);
@@ -125,9 +125,9 @@ public sealed class CheckCommandTests : IDisposable
         Assert.Equal(0, RunCli("check", "--db", DbPath, "--baseline", BaselinePath, "--update-baseline").ExitCode);
 
         var moved = new CodeGraph();
-        moved.AddNode(Endpoint("GET", "/api/vendors"));
-        moved.AddNode(CallSite("GET", "/vendors", "src/vendors.ts:30:3"));
-        moved.AddNode(CallSite("DELETE", "/vendors", "src/vendors.ts:99:3"));
+        moved.AddNode(Endpoint("GET", "/api/sellers"));
+        moved.AddNode(CallSite("GET", "/sellers", "src/sellers.ts:30:3"));
+        moved.AddNode(CallSite("DELETE", "/sellers", "src/sellers.ts:99:3"));
         await SaveAsync(moved);
 
         var check = RunCli("check", "--db", DbPath, "--baseline", BaselinePath);
@@ -160,10 +160,10 @@ public sealed class CheckCommandTests : IDisposable
         Assert.Equal(0, RunCli("check", "--db", DbPath, "--baseline", BaselinePath, "--update-baseline").ExitCode);
 
         var fixedGraph = new CodeGraph();
-        fixedGraph.AddNode(Endpoint("GET", "/api/vendors"));
-        fixedGraph.AddNode(Endpoint("DELETE", "/api/vendors"));
-        fixedGraph.AddNode(CallSite("GET", "/vendors", "src/vendors.ts:10:3"));
-        fixedGraph.AddNode(CallSite("DELETE", "/vendors", "src/vendors.ts:20:3"));
+        fixedGraph.AddNode(Endpoint("GET", "/api/sellers"));
+        fixedGraph.AddNode(Endpoint("DELETE", "/api/sellers"));
+        fixedGraph.AddNode(CallSite("GET", "/sellers", "src/sellers.ts:10:3"));
+        fixedGraph.AddNode(CallSite("DELETE", "/sellers", "src/sellers.ts:20:3"));
         await SaveAsync(fixedGraph);
 
         var check = RunCli("check", "--db", DbPath, "--baseline", BaselinePath);
@@ -177,7 +177,7 @@ public sealed class CheckCommandTests : IDisposable
     public async Task BackendOnlyGraph_SkipsOrphans_Passes()
     {
         var graph = new CodeGraph();
-        graph.AddNode(Endpoint("GET", "/api/vendors"));
+        graph.AddNode(Endpoint("GET", "/api/sellers"));
         await SaveAsync(graph);
 
         var (exit, stdout, _) = RunCli("check", "--db", DbPath, "--baseline", BaselinePath);
@@ -222,7 +222,7 @@ public sealed class CheckCommandTests : IDisposable
     public async Task UnrestoredProjects_Exit1_NotBaselinable()
     {
         var graph = new CodeGraph();
-        graph.AddNode(Endpoint("GET", "/api/vendors"));
+        graph.AddNode(Endpoint("GET", "/api/sellers"));
         await SaveAsync(graph, new Dictionary<string, string>(StringComparer.Ordinal)
         {
             [MetaKeys.LastAnalyzed] = "test",
@@ -258,7 +258,7 @@ public sealed class CheckCommandTests : IDisposable
         var (exit, stdout, _) = RunCli(new Dictionary<string, string> { ["GITHUB_ACTIONS"] = "true" }, "check", "--db", DbPath, "--baseline", BaselinePath);
 
         Assert.Equal(1, exit);
-        Assert.Contains("::error file=src/vendors.ts,line=20,title=slnmap check::New orphan frontend call: DELETE src/vendors.ts /vendors (verb-mismatch: no DELETE registered; GET /api/vendors exists)", stdout, StringComparison.Ordinal);
+        Assert.Contains("::error file=src/sellers.ts,line=20,title=slnmap check::New orphan frontend call: DELETE src/sellers.ts /sellers (verb-mismatch: no DELETE registered; GET /api/sellers exists)", stdout, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -275,8 +275,8 @@ public sealed class CheckCommandTests : IDisposable
     public async Task BasePathOverride_ChangesWhatLinks()
     {
         var graph = new CodeGraph();
-        graph.AddNode(Endpoint("GET", "/gateway/vendors"));
-        graph.AddNode(CallSite("GET", "/vendors", "src/vendors.ts:10:3"));
+        graph.AddNode(Endpoint("GET", "/gateway/sellers"));
+        graph.AddNode(CallSite("GET", "/sellers", "src/sellers.ts:10:3"));
         await SaveAsync(graph);
 
         Assert.Equal(1, RunCli("check", "--db", DbPath, "--baseline", BaselinePath).ExitCode);
@@ -289,7 +289,7 @@ public sealed class CheckCommandTests : IDisposable
     public async Task IgnorePattern_RemovesMatchingOrphansFromTheCounts_AndPasses()
     {
         await SaveAsync(OneOrphanGraph());
-        File.WriteAllText(BaselinePath, """{ "schemaVersion": 1, "orphans": [], "cycles": [], "ignore": ["DELETE /vendors"] }""");
+        File.WriteAllText(BaselinePath, """{ "schemaVersion": 1, "orphans": [], "cycles": [], "ignore": ["DELETE /sellers"] }""");
 
         var (exit, stdout, stderr) = RunCli("check", "--db", DbPath, "--baseline", BaselinePath);
 
@@ -304,7 +304,7 @@ public sealed class CheckCommandTests : IDisposable
     public async Task IgnorePattern_WithoutAVerb_CoversEveryVerbUnderThePrefix_OthersStayNew()
     {
         var graph = new CodeGraph();
-        graph.AddNode(Endpoint("GET", "/api/vendors"));
+        graph.AddNode(Endpoint("GET", "/api/sellers"));
         graph.AddNode(CallSite("POST", "/api/auth/login", "src/bff.ts:1:1"));
         graph.AddNode(CallSite("GET", "/api/auth/sessions/{*}", "src/bff.ts:2:1"));
         graph.AddNode(CallSite("POST", "/orders", "src/orders.ts:5:1"));
@@ -325,7 +325,7 @@ public sealed class CheckCommandTests : IDisposable
         var graph = OneOrphanGraph();
         graph.AddNode(CallSite("POST", "/orders", "src/orders.ts:5:1"));
         await SaveAsync(graph);
-        File.WriteAllText(BaselinePath, """{ "schemaVersion": 1, "orphans": [], "cycles": [], "ignore": ["DELETE /vendors"] }""");
+        File.WriteAllText(BaselinePath, """{ "schemaVersion": 1, "orphans": [], "cycles": [], "ignore": ["DELETE /sellers"] }""");
 
         var update = RunCli("check", "--db", DbPath, "--baseline", BaselinePath, "--update-baseline");
 
@@ -333,7 +333,7 @@ public sealed class CheckCommandTests : IDisposable
         Assert.Contains("1 orphan call(s), 0 project cycle(s) accepted as known, 1 left out by the ignore list", update.Stdout, StringComparison.Ordinal);
         using var document = JsonDocument.Parse(File.ReadAllText(BaselinePath));
         Assert.Equal(["POST src/orders.ts /orders"], document.RootElement.GetProperty("orphans").EnumerateArray().Select(e => e.GetString()!).ToArray());
-        Assert.Equal(["DELETE /vendors"], document.RootElement.GetProperty("ignore").EnumerateArray().Select(e => e.GetString()!).ToArray());
+        Assert.Equal(["DELETE /sellers"], document.RootElement.GetProperty("ignore").EnumerateArray().Select(e => e.GetString()!).ToArray());
         Assert.Equal(0, RunCli("check", "--db", DbPath, "--baseline", BaselinePath).ExitCode);
     }
 

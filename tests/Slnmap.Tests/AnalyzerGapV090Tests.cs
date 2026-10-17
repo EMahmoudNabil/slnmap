@@ -11,7 +11,7 @@ namespace Slnmap.Tests;
 /// #9 generic type arguments to EXTERNAL generic methods (the issue's own repro is flagged as
 /// reconstructed-and-unverified — its test doubles as the verification probe), and #11 typeof()
 /// inside assembly-level attributes attributed to the PROJECT node (the assembly IS the project).
-/// Fixtures: VendorActivity.cs (existing enum), EventSubscribers.cs, FixtureMiddleware.cs +
+/// Fixtures: SellerActivity.cs (existing enum), EventSubscribers.cs, FixtureMiddleware.cs +
 /// FixtureWeb/Program.cs, AssemblyMarker.cs.
 /// </summary>
 public sealed class AnalyzerGapV090Tests : IClassFixture<AnalyzedFixtureSolution>
@@ -29,23 +29,23 @@ public sealed class AnalyzerGapV090Tests : IClassFixture<AnalyzedFixtureSolution
     {
         // The v0.6.1 experiment's exact failure was census inconsistency: only REFERENCED members
         // materialized. Active is deliberately never referenced anywhere in the fixture.
-        EnumMemberNode("Fixture.Lib.VendorState.Active");
-        EnumMemberNode("Fixture.Lib.VendorState.Deactivated");
+        EnumMemberNode("Fixture.Lib.SellerState.Active");
+        EnumMemberNode("Fixture.Lib.SellerState.Deactivated");
     }
 
     [Fact]
     public void Gap13_EnumMemberUsage_ProducesAReferencesEdge_ToTheMemberItself()
     {
-        var source = GraphAssert.Node(Graph, NodeKind.Property, "Fixture.Lib.VendorStateReader.Current");
-        var member = EnumMemberNode("Fixture.Lib.VendorState.Deactivated");
+        var source = GraphAssert.Node(Graph, NodeKind.Property, "Fixture.Lib.SellerStateReader.Current");
+        var member = EnumMemberNode("Fixture.Lib.SellerState.Deactivated");
         GraphAssert.Edge(Graph, source, member, RelationshipKind.References);
     }
 
     [Fact]
     public void Gap13_EnumMembers_AreContainedByTheirEnumType()
     {
-        var enumType = GraphAssert.Node(Graph, NodeKind.Enum, "Fixture.Lib.VendorState");
-        var member = EnumMemberNode("Fixture.Lib.VendorState.Active");
+        var enumType = GraphAssert.Node(Graph, NodeKind.Enum, "Fixture.Lib.SellerState");
+        var member = EnumMemberNode("Fixture.Lib.SellerState.Active");
         GraphAssert.Edge(Graph, enumType, member, RelationshipKind.Contains);
     }
 
@@ -56,7 +56,7 @@ public sealed class AnalyzerGapV090Tests : IClassFixture<AnalyzedFixtureSolution
         // not mutable state; labeling them Field would pollute every Field census.
         Assert.DoesNotContain(
             Graph.Nodes,
-            n => n.Kind == NodeKind.Field && n.Fqn.StartsWith("Fixture.Lib.VendorState.", StringComparison.Ordinal));
+            n => n.Kind == NodeKind.Field && n.Fqn.StartsWith("Fixture.Lib.SellerState.", StringComparison.Ordinal));
     }
 
     // ---- #8: event usage edges --------------------------------------------------------------

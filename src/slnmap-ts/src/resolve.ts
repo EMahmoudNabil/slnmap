@@ -117,7 +117,7 @@ export function tracesThroughDynamicImportOrRequire(
     }
     if (ts.isBindingElement(decl)) {
       // `const { default: apiClient } = await import('./apiClient')` — a very common real-world
-      // shape (verified against OSSUS_Frontend's own AuthContext.tsx). The binding element
+      // shape (seen in production React code). The binding element
       // itself has no initializer; the relevant expression is the ENCLOSING variable
       // declaration's initializer, since that is what the whole destructuring pulls from.
       let ancestor: ts.Node = decl.parent;
@@ -327,8 +327,8 @@ export function resolveConstantExpression(
  * v0.15.0: whether every value `expr` can take is empty or starts with `?` — the shape of an
  * optional query string appended to a path: `${query ? \`?${query}\` : ''}`, `${qs && '?' + qs}`,
  * or a const holding one of those. Such a hole is not a path segment, and folding it to `{*}`
- * made `/Indicators/${id}/linked-risks${query ? ...}` the orphan `/Indicators/{*}/linked-risks{*}`
- * on OSSUS, while the endpoint `/Indicators/{id}/linked-risks` existed. Anything else — a bare
+ * made `/Promotions/${id}/linked-carts${query ? ...}` the orphan `/Promotions/{*}/linked-carts{*}`
+ * in a production frontend, while the endpoint `/Promotions/{id}/linked-carts` existed. Anything else — a bare
  * `${suffix}` whose values are unknown — stays an honest `{*}` hole.
  */
 function isQueryStringShaped(expr: ts.Expression, checker: ts.TypeChecker, depth = MAX_RESOLUTION_DEPTH): boolean {

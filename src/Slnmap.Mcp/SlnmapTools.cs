@@ -231,23 +231,23 @@ public static class SlnmapTools
         "template as authored ({param} names and :int constraints preserved). Optionally filter by " +
         "verb and/or route prefix. Registrations that could not be resolved statically are counted " +
         "in a trailing note, never guessed; conventionally-routed controllers (no route attributes) " +
-        "are disclosed but not modeled. Example: {\"verb\": \"GET\", \"prefix\": \"/api/vendors\"}")]
+        "are disclosed but not modeled. Example: {\"verb\": \"GET\", \"prefix\": \"/api/sellers\"}")]
     public static Task<string> ListEndpoints(
         IGraphStore store,
         [Description("Optional HTTP verb filter: GET, POST, PUT, DELETE, or PATCH.")] string? verb = null,
-        [Description("Optional route prefix filter, e.g. '/api/vendors' (case-insensitive, compared against the composed template).")] string? prefix = null,
+        [Description("Optional route prefix filter, e.g. '/api/sellers' (case-insensitive, compared against the composed template).")] string? prefix = null,
         CancellationToken cancellationToken = default)
         => new SlnmapQueries(store).ListEndpointsAsync(verb, prefix, cancellationToken);
 
     [McpServerTool(Name = "find_endpoint")]
     [Description(
-        "Find the endpoint(s) matching a route — an exact template (\"/api/vendors/{id}\") or a " +
-        "concrete path (\"/api/vendors/42\"), matched with the framework's own semantics: " +
+        "Find the endpoint(s) matching a route — an exact template (\"/api/sellers/{id}\") or a " +
+        "concrete path (\"/api/sellers/42\"), matched with the framework's own semantics: " +
         "case-insensitive, {param}/{param:constraint} holes bind concrete segments. Returns each " +
         "match with its handler method and registration file:line, plus (after `slnmap link` has " +
         "run) a \"Called from the frontend by:\" line naming its frontend callers; a miss suggests " +
         "near matches. Use impact_analysis on the handler to see an endpoint's blast radius, " +
-        "including its frontend callers. Example: {\"route\": \"/api/vendors/42\"}")]
+        "including its frontend callers. Example: {\"route\": \"/api/sellers/42\"}")]
     public static Task<string> FindEndpoint(
         IGraphStore store,
         [Description("The route to find: a template or a concrete request path.")] string route,
@@ -261,7 +261,7 @@ public static class SlnmapTools
         "computed live against the current graph, never stale. Grouped into three disclosed " +
         "reasons: 'no-match' (nothing on the backend resembles this path at any verb), " +
         "'verb-mismatch' (an endpoint shares this exact route under a different verb — named in " +
-        "the message, e.g. \"no POST registered; GET /api/OrganizationUsers exists\"), and " +
+        "the message, e.g. \"no POST registered; GET /api/Customers exists\"), and " +
         "'verb-unknown' (the extractor couldn't statically determine the HTTP verb). Never a " +
         "guess: a call site is only ever silent when it truly links. Optionally filter to one " +
         "category. Example: {\"category\": \"verb-mismatch\"}")]
@@ -277,7 +277,7 @@ public static class SlnmapTools
         "status: the endpoint(s) it hits, a set of endpoints for a truthful fan-out/ambiguity, or " +
         "its disclosed outcome (NoSkeletonMatch/VerbMismatch/UnknownVerb) when it doesn't link. " +
         "Optionally filter by verb and/or route prefix, same shape as list_endpoints. For just the " +
-        "unlinked ones use find_orphan_calls. Example: {\"verb\": \"POST\", \"prefix\": \"/vendors\"}")]
+        "unlinked ones use find_orphan_calls. Example: {\"verb\": \"POST\", \"prefix\": \"/sellers\"}")]
     public static Task<string> ListFrontendCallSites(
         IGraphStore store,
         [Description("Optional HTTP verb filter: GET, POST, PUT, DELETE, or PATCH.")] string? verb = null,
