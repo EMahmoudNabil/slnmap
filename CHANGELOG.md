@@ -756,7 +756,7 @@ automatically; endpoints appear in the graph after it.
   render structural FQNs (`<anonymous type: int Id, string Label>`), and FQN is node identity —
   so identical shapes declared in *different projects* merged into a single node pinned to
   whichever file was analyzed first, fabricating cross-project dependency rows in
-  `get_architecture_overview` (the eval saw 9 false rows make a clean-architecture solution look
+  `get_architecture_overview` (the eval saw false rows make a clean-architecture solution look
   layering-violating). Anonymous types (and their properties) now produce no nodes at all: they
   are unnameable and unqueryable, and their only observed graph effect was these false edges plus
   census inflation.
