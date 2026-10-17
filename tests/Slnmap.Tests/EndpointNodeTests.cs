@@ -4,7 +4,7 @@ using Xunit;
 namespace Slnmap.Tests;
 
 /// <summary>
-/// Tier-2 endpoint-extraction tests (the OSSUS-convention shapes the gap fixture deliberately left
+/// Tier-2 endpoint-extraction tests (the production-convention shapes the gap fixture deliberately left
 /// out — reports/endpoint-nodes-investigation.md §3.1): the guarded GetType().Name prefix fold, the
 /// reversed-argument in-source forwarder, omitted and string.Empty patterns, route constraints kept
 /// verbatim, multi-line chained registrations, nested groups — and the count-never-guess side:
@@ -152,10 +152,10 @@ public sealed class EndpointNodeTests : IClassFixture<AnalyzedFixtureSolution>
     [Fact]
     public void DuplicateRegistration_KeepsFirstSeenCallSite()
     {
-        // Two registrations of GET+POST /api/vendors/archive share one handler; identity is
+        // Two registrations of GET+POST /api/sellers/archive share one handler; identity is
         // "VERB template", so the two verbs stay distinct nodes (pinned by the gap tests) and
         // each node's span points at a real registration, inside the declaring file.
-        var get = GraphAssert.Node(Graph, NodeKind.Endpoint, "GET /api/vendors/archive");
-        Assert.EndsWith("VendorEndpoints.cs", get.FilePath!, StringComparison.Ordinal);
+        var get = GraphAssert.Node(Graph, NodeKind.Endpoint, "GET /api/sellers/archive");
+        Assert.EndsWith("SellerEndpoints.cs", get.FilePath!, StringComparison.Ordinal);
     }
 }

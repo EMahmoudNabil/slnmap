@@ -4,20 +4,20 @@ namespace Fixture.Web;
 /// Minimal-API fixture for the Endpoint-node investigation (see
 /// reports/endpoint-nodes-investigation.md): a route group with a literal prefix, a
 /// group-root route, a parameterized route, a pattern supplied via a constant, and one
-/// handler registered for two routes. Mirrors the dominant OSSUS_Backend shapes in the
+/// handler registered for two routes. Mirrors the dominant production backend shapes in the
 /// smallest form the v1 design must support.
 /// </summary>
-public static class VendorEndpoints
+public static class SellerEndpoints
 {
-    /// <summary>A route pattern supplied via a constant — the QuossusWebhook shape in OSSUS.</summary>
+    /// <summary>A route pattern supplied via a constant — a webhook-route shape seen in production.</summary>
     public const string ArchivePattern = "/archive";
 
     public static void Map(WebApplication app)
     {
-        var group = app.MapGroup("/api/vendors");
+        var group = app.MapGroup("/api/sellers");
 
-        group.MapGet("/", ListVendors);
-        group.MapPost("/{id}", UpdateVendor);
+        group.MapGet("/", ListSellers);
+        group.MapPost("/{id}", UpdateSeller);
 
         // One handler serving two routes (verb fan-in): the designed shape is two distinct
         // Endpoint nodes whose HandledBy edges converge on the same Method node.
@@ -25,14 +25,14 @@ public static class VendorEndpoints
         group.MapPost(ArchivePattern, ArchiveSnapshot);
 
         // cross-stack-linker-investigation.md §Q5: the literal-vs-param sibling shape that
-        // produces the real, currently-unresolved row-4 ambiguity (mirrors OSSUS_Backend's
-        // live UserProfiles group: GET "current" alongside GET "{id}" — confirmed a real,
-        // present-day ambiguous pair by this investigation's OSSUS survey, not a synthetic
+        // produces the real, currently-unresolved row-4 ambiguity (mirrors a production backend's
+        // live AccountProfiles group: GET "current" alongside GET "{id}" — confirmed a real,
+        // present-day ambiguous pair by this investigation's production survey, not a synthetic
         // worst case).
-        group.MapGet("/current", GetVendorContext);
-        group.MapGet("/{vendorId}", GetVendor);
+        group.MapGet("/current", GetSellerContext);
+        group.MapGet("/{sellerId}", GetSeller);
 
-        // A true fan-out target set (mirrors OSSUS_Backend's TaskCenter shape, §2 of the
+        // A true fan-out target set (mirrors a production backend's OrderQueue shape, §2 of the
         // feasibility spike): one frontend call site with a hole in the differing position
         // reaches all three of these, and only these, deterministically.
         group.MapPost("/notify/email", NotifyByEmail);
@@ -42,15 +42,15 @@ public static class VendorEndpoints
 
     public static string Ping() => "ok";
 
-    public static string ListVendors() => "vendors";
+    public static string ListSellers() => "sellers";
 
-    public static string UpdateVendor(string id) => $"updated {id}";
+    public static string UpdateSeller(string id) => $"updated {id}";
 
     public static string ArchiveSnapshot() => "archive";
 
-    public static string GetVendorContext() => "current-vendor-context";
+    public static string GetSellerContext() => "current-seller-context";
 
-    public static string GetVendor(string vendorId) => $"vendor {vendorId}";
+    public static string GetSeller(string sellerId) => $"seller {sellerId}";
 
     public static string NotifyByEmail() => "notified by email";
 

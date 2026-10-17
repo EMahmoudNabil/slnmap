@@ -45,22 +45,22 @@ public sealed class EndpointNodeGapTests : IClassFixture<AnalyzedFixtureSolution
         // Passes on current main. Proves MSBuildWorkspace handles the Microsoft.NET.Sdk.Web
         // fixture project and its symbols land in the graph; the Gap_* failures below are then
         // the missing Endpoint model, not fixture wiring.
-        GraphAssert.Node(Graph, NodeKind.Class, "Fixture.Web.VendorEndpoints");
-        GraphAssert.Node(Graph, NodeKind.Method, "Fixture.Web.VendorEndpoints.ListVendors()");
-        GraphAssert.Node(Graph, NodeKind.Method, "Fixture.Web.VendorEndpoints.UpdateVendor(string)");
-        GraphAssert.Node(Graph, NodeKind.Method, "Fixture.Web.VendorEndpoints.ArchiveSnapshot()");
+        GraphAssert.Node(Graph, NodeKind.Class, "Fixture.Web.SellerEndpoints");
+        GraphAssert.Node(Graph, NodeKind.Method, "Fixture.Web.SellerEndpoints.ListSellers()");
+        GraphAssert.Node(Graph, NodeKind.Method, "Fixture.Web.SellerEndpoints.UpdateSeller(string)");
+        GraphAssert.Node(Graph, NodeKind.Method, "Fixture.Web.SellerEndpoints.ArchiveSnapshot()");
         GraphAssert.Node(Graph, NodeKind.Method, "FixtureWeb.<top-level-statements-entry-point>");
     }
 
     [Fact]
     public void Gap_GroupRootRoute_ComposesPrefixAndTrimsTrailingSlash()
     {
-        // MapGroup("/api/vendors") + MapGet("/", ...): the effective template is the
-        // concatenation, normalized to "/api/vendors" (single trailing slash trimmed; a bare
+        // MapGroup("/api/sellers") + MapGet("/", ...): the effective template is the
+        // concatenation, normalized to "/api/sellers" (single trailing slash trimmed; a bare
         // root route "/" stays "/").
-        var endpoint = EndpointNode("GET /api/vendors");
-        Assert.Equal("/api/vendors", endpoint.Name);
-        AssertHandledBy(endpoint, GraphAssert.Node(Graph, NodeKind.Method, "Fixture.Web.VendorEndpoints.ListVendors()"));
+        var endpoint = EndpointNode("GET /api/sellers");
+        Assert.Equal("/api/sellers", endpoint.Name);
+        AssertHandledBy(endpoint, GraphAssert.Node(Graph, NodeKind.Method, "Fixture.Web.SellerEndpoints.ListSellers()"));
     }
 
     [Fact]
@@ -68,17 +68,17 @@ public sealed class EndpointNodeGapTests : IClassFixture<AnalyzedFixtureSolution
     {
         // Parameter placeholders are preserved as authored ({id}, {id:int}, ...) — matching
         // normalization ({*}-style skeletons) is a query-time concern, not node identity.
-        var endpoint = EndpointNode("POST /api/vendors/{id}");
-        AssertHandledBy(endpoint, GraphAssert.Node(Graph, NodeKind.Method, "Fixture.Web.VendorEndpoints.UpdateVendor(string)"));
+        var endpoint = EndpointNode("POST /api/sellers/{id}");
+        AssertHandledBy(endpoint, GraphAssert.Node(Graph, NodeKind.Method, "Fixture.Web.SellerEndpoints.UpdateSeller(string)"));
     }
 
     [Fact]
     public void Gap_ConstProvidedPattern_ResolvesToItsLiteralValue()
     {
         // group.MapGet(ArchivePattern, ...) with const string ArchivePattern = "/archive":
-        // the semantic model's constant value resolves the template (the QuossusWebhook shape
-        // in OSSUS — see the census in the report).
-        EndpointNode("GET /api/vendors/archive");
+        // the semantic model's constant value resolves the template (a webhook-route shape
+        // seen in production).
+        EndpointNode("GET /api/sellers/archive");
     }
 
     [Fact]
@@ -86,11 +86,11 @@ public sealed class EndpointNodeGapTests : IClassFixture<AnalyzedFixtureSolution
     {
         // The duplicate-handler shape: distinct verb+template = distinct Endpoint node (identity
         // is "VERB template", not the handler); both HandledBy edges target the same Method.
-        var get = EndpointNode("GET /api/vendors/archive");
-        var post = EndpointNode("POST /api/vendors/archive");
+        var get = EndpointNode("GET /api/sellers/archive");
+        var post = EndpointNode("POST /api/sellers/archive");
         Assert.NotEqual(get.Id, post.Id);
 
-        var handler = GraphAssert.Node(Graph, NodeKind.Method, "Fixture.Web.VendorEndpoints.ArchiveSnapshot()");
+        var handler = GraphAssert.Node(Graph, NodeKind.Method, "Fixture.Web.SellerEndpoints.ArchiveSnapshot()");
         AssertHandledBy(get, handler);
         AssertHandledBy(post, handler);
 
@@ -101,11 +101,11 @@ public sealed class EndpointNodeGapTests : IClassFixture<AnalyzedFixtureSolution
     [Fact]
     public void Gap_TopLevelStatementRegistration_ProducesEndpointNode()
     {
-        // app.MapGet("/health", VendorEndpoints.Ping) in Program.cs top-level statements: the
+        // app.MapGet("/health", SellerEndpoints.Ping) in Program.cs top-level statements: the
         // walker already visits this invocation (Gap-3 finding) — the endpoint must be modeled
         // there exactly as inside a method body.
         var endpoint = EndpointNode("GET /health");
-        AssertHandledBy(endpoint, GraphAssert.Node(Graph, NodeKind.Method, "Fixture.Web.VendorEndpoints.Ping()"));
+        AssertHandledBy(endpoint, GraphAssert.Node(Graph, NodeKind.Method, "Fixture.Web.SellerEndpoints.Ping()"));
     }
 
     [Fact]
@@ -113,8 +113,8 @@ public sealed class EndpointNodeGapTests : IClassFixture<AnalyzedFixtureSolution
     {
         // Containment gives viz a real parent (otherwise Endpoint nodes land in the synthetic
         // "(unattributed)" root) and anchors the node to a file for incremental eviction.
-        var endpoint = EndpointNode("GET /api/vendors");
-        var registrar = GraphAssert.Node(Graph, NodeKind.Class, "Fixture.Web.VendorEndpoints");
+        var endpoint = EndpointNode("GET /api/sellers");
+        var registrar = GraphAssert.Node(Graph, NodeKind.Class, "Fixture.Web.SellerEndpoints");
         GraphAssert.Edge(Graph, registrar, endpoint, RelationshipKind.Contains);
     }
 

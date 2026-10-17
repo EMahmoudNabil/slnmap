@@ -5,9 +5,9 @@ using Xunit;
 namespace Slnmap.Tests;
 
 /// <summary>
-/// v0.15.0: a call site whose template starts with an unresolved hole (<c>{*}/api/VendorPortal</c>,
-/// from <c>`${apiUrl}/api/VendorPortal`</c> with a runtime-computed <c>apiUrl</c>) links by its
-/// remainder, marked as inferred. Found on OSSUS, where it was an orphan.
+/// v0.15.0: a call site whose template starts with an unresolved hole (<c>{*}/api/SellerPortal</c>,
+/// from <c>`${apiUrl}/api/SellerPortal`</c> with a runtime-computed <c>apiUrl</c>) links by its
+/// remainder, marked as inferred. Found on a production frontend, where it was an orphan.
 /// </summary>
 public sealed class DynamicBaseLinkTests
 {
@@ -30,8 +30,8 @@ public sealed class DynamicBaseLinkTests
     }
 
     [Theory]
-    [InlineData("{*}/api/VendorPortal", true, "/api/VendorPortal")]
-    [InlineData("{*}/VendorPortal/{*}", true, "/VendorPortal/{*}")]
+    [InlineData("{*}/api/SellerPortal", true, "/api/SellerPortal")]
+    [InlineData("{*}/SellerPortal/{*}", true, "/SellerPortal/{*}")]
     // Holes only: the remainder would match every parameterized endpoint.
     [InlineData("{*}/{*}", false, "{*}/{*}")]
     [InlineData("{*}", false, "{*}")]
@@ -48,8 +48,8 @@ public sealed class DynamicBaseLinkTests
     [Fact]
     public void LeadingHole_RemainderMatchesAsAuthored_LinksAndIsMarked()
     {
-        // The OSSUS shape: the backend route carries /api, the remainder does too.
-        var result = LinkSingle(CallSite("GET", "{*}/api/VendorPortal"), Endpoint("GET", "/api/VendorPortal"));
+        // The production shape: the backend route carries /api, the remainder does too.
+        var result = LinkSingle(CallSite("GET", "{*}/api/SellerPortal"), Endpoint("GET", "/api/SellerPortal"));
 
         Assert.Equal(CallSiteLinkOutcome.Unique, result.Outcome);
         Assert.True(result.ViaDynamicBase);
@@ -61,7 +61,7 @@ public sealed class DynamicBaseLinkTests
     public void LeadingHole_RemainderMatchesWithTheBasePath_LinksAndIsMarked()
     {
         // The hole was the host and the base path is absorbed elsewhere: the ordinary relative flow.
-        var result = LinkSingle(CallSite("GET", "{*}/VendorPortal"), Endpoint("GET", "/api/VendorPortal"));
+        var result = LinkSingle(CallSite("GET", "{*}/SellerPortal"), Endpoint("GET", "/api/SellerPortal"));
 
         Assert.Equal(CallSiteLinkOutcome.Unique, result.Outcome);
         Assert.True(result.ViaDynamicBase);
@@ -70,7 +70,7 @@ public sealed class DynamicBaseLinkTests
     [Fact]
     public void LeadingHole_NoMatch_StaysAnHonestOrphan_Unmarked()
     {
-        var result = LinkSingle(CallSite("GET", "{*}/api/Nothing"), Endpoint("GET", "/api/VendorPortal"));
+        var result = LinkSingle(CallSite("GET", "{*}/api/Nothing"), Endpoint("GET", "/api/SellerPortal"));
 
         Assert.Equal(CallSiteLinkOutcome.NoSkeletonMatch, result.Outcome);
         Assert.False(result.ViaDynamicBase);
@@ -80,11 +80,11 @@ public sealed class DynamicBaseLinkTests
     [Fact]
     public void LeadingHole_VerbMismatch_NamesTheConflictingEndpoint()
     {
-        var result = LinkSingle(CallSite("POST", "{*}/api/VendorPortal"), Endpoint("GET", "/api/VendorPortal"));
+        var result = LinkSingle(CallSite("POST", "{*}/api/SellerPortal"), Endpoint("GET", "/api/SellerPortal"));
 
         Assert.Equal(CallSiteLinkOutcome.VerbMismatch, result.Outcome);
         Assert.False(result.ViaDynamicBase);
-        Assert.Equal("GET /api/VendorPortal", Assert.Single(result.ConflictingVerbEndpoints).Fqn);
+        Assert.Equal("GET /api/SellerPortal", Assert.Single(result.ConflictingVerbEndpoints).Fqn);
     }
 
     [Fact]
@@ -93,7 +93,7 @@ public sealed class DynamicBaseLinkTests
         // `{*}/{*}` links exactly as it did before (a hole-only skeleton fans out to every
         // two-segment endpoint, a pre-existing rule of RouteTemplate.Matches); what must not
         // happen is the leading hole being dropped, which would turn it into a one-segment query.
-        var result = LinkSingle(CallSite("GET", "{*}/{*}"), Endpoint("GET", "/api/{id}"), Endpoint("GET", "/api/VendorPortal"), Endpoint("GET", "/api"));
+        var result = LinkSingle(CallSite("GET", "{*}/{*}"), Endpoint("GET", "/api/{id}"), Endpoint("GET", "/api/SellerPortal"), Endpoint("GET", "/api"));
 
         Assert.False(result.ViaDynamicBase);
         Assert.DoesNotContain(result.Endpoints, e => e.Fqn == "GET /api");
@@ -102,7 +102,7 @@ public sealed class DynamicBaseLinkTests
     [Fact]
     public void ALiteralRelativeCallSite_IsNeverMarked()
     {
-        var result = LinkSingle(CallSite("GET", "/VendorPortal"), Endpoint("GET", "/api/VendorPortal"));
+        var result = LinkSingle(CallSite("GET", "/SellerPortal"), Endpoint("GET", "/api/SellerPortal"));
 
         Assert.Equal(CallSiteLinkOutcome.Unique, result.Outcome);
         Assert.False(result.ViaDynamicBase);

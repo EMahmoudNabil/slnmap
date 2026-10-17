@@ -180,9 +180,9 @@ public sealed class McpToolTests : IClassFixture<AnalyzedFixtureGraphStore>
     public async Task ListEndpoints_ListsRoutesWithHandlersAndLocations()
     {
         string result = await _queries.ListEndpointsAsync(null, null);
-        Assert.Contains("GET /api/vendors", result, StringComparison.Ordinal);
-        Assert.Contains("Fixture.Web.VendorEndpoints.ListVendors()", result, StringComparison.Ordinal);
-        Assert.Contains("VendorEndpoints.cs:", result, StringComparison.Ordinal);
+        Assert.Contains("GET /api/sellers", result, StringComparison.Ordinal);
+        Assert.Contains("Fixture.Web.SellerEndpoints.ListSellers()", result, StringComparison.Ordinal);
+        Assert.Contains("SellerEndpoints.cs:", result, StringComparison.Ordinal);
         // Grouped by project, like the other relationship tools.
         Assert.Contains("FixtureWeb:", result, StringComparison.Ordinal);
     }
@@ -226,7 +226,7 @@ public sealed class McpToolTests : IClassFixture<AnalyzedFixtureGraphStore>
     public async Task ListEndpoints_VerbFilter_RestrictsResults()
     {
         string result = await _queries.ListEndpointsAsync("post", null);
-        Assert.Contains("POST /api/vendors/{id}", result, StringComparison.Ordinal);
+        Assert.Contains("POST /api/sellers/{id}", result, StringComparison.Ordinal);
         Assert.DoesNotContain("GET /", result, StringComparison.Ordinal);
     }
 
@@ -235,7 +235,7 @@ public sealed class McpToolTests : IClassFixture<AnalyzedFixtureGraphStore>
     {
         string result = await _queries.ListEndpointsAsync(null, "/api/reminders");
         Assert.Contains("/api/Reminders", result, StringComparison.Ordinal);
-        Assert.DoesNotContain("/api/vendors", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("/api/sellers", result, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -250,33 +250,33 @@ public sealed class McpToolTests : IClassFixture<AnalyzedFixtureGraphStore>
     [Fact]
     public async Task FindEndpoint_ExactTemplate_ReturnsEndpointAndHandler()
     {
-        string result = await _queries.FindEndpointAsync("/api/vendors/{id}", null);
-        Assert.Contains("POST /api/vendors/{id}", result, StringComparison.Ordinal);
-        Assert.Contains("Fixture.Web.VendorEndpoints.UpdateVendor(string)", result, StringComparison.Ordinal);
+        string result = await _queries.FindEndpointAsync("/api/sellers/{id}", null);
+        Assert.Contains("POST /api/sellers/{id}", result, StringComparison.Ordinal);
+        Assert.Contains("Fixture.Web.SellerEndpoints.UpdateSeller(string)", result, StringComparison.Ordinal);
     }
 
     [Fact]
     public async Task FindEndpoint_ConcretePath_BindsTheParameterHole()
     {
         // A real request path matches its template: {id} binds "42".
-        string result = await _queries.FindEndpointAsync("/api/vendors/42", null);
-        Assert.Contains("POST /api/vendors/{id}", result, StringComparison.Ordinal);
+        string result = await _queries.FindEndpointAsync("/api/sellers/42", null);
+        Assert.Contains("POST /api/sellers/{id}", result, StringComparison.Ordinal);
     }
 
     [Fact]
     public async Task FindEndpoint_MatchesCaseInsensitively()
     {
-        string result = await _queries.FindEndpointAsync("/API/VENDORS", "get");
-        Assert.Contains("GET /api/vendors", result, StringComparison.Ordinal);
+        string result = await _queries.FindEndpointAsync("/API/SELLERS", "get");
+        Assert.Contains("GET /api/sellers", result, StringComparison.Ordinal);
     }
 
     [Fact]
     public async Task FindEndpoint_Miss_SuggestsNearRoutes()
     {
-        string result = await _queries.FindEndpointAsync("/vendors/archive", null);
+        string result = await _queries.FindEndpointAsync("/sellers/archive", null);
         Assert.Contains("No endpoint matches", result, StringComparison.Ordinal);
         Assert.Contains("Did you mean", result, StringComparison.Ordinal);
-        Assert.Contains("/api/vendors/archive", result, StringComparison.Ordinal);
+        Assert.Contains("/api/sellers/archive", result, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -291,8 +291,8 @@ public sealed class McpToolTests : IClassFixture<AnalyzedFixtureGraphStore>
     {
         // The one-line allow-list change: HandledBy is a usage kind, so a handler's endpoints
         // appear in find_usages with no traversal special-casing.
-        string result = await _queries.FindUsagesAsync("Fixture.Web.VendorEndpoints.ListVendors()");
-        Assert.Contains("[Endpoint] GET /api/vendors", result, StringComparison.Ordinal);
+        string result = await _queries.FindUsagesAsync("Fixture.Web.SellerEndpoints.ListSellers()");
+        Assert.Contains("[Endpoint] GET /api/sellers", result, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -300,17 +300,17 @@ public sealed class McpToolTests : IClassFixture<AnalyzedFixtureGraphStore>
     {
         // Edge orientation Endpoint —HandledBy→ Method: the endpoint is what breaks when the
         // handler changes, and the incoming walk finds it with zero special-casing.
-        string result = await _queries.ImpactAnalysisAsync("Fixture.Web.VendorEndpoints.ArchiveSnapshot()");
-        Assert.Contains("GET /api/vendors/archive", result, StringComparison.Ordinal);
-        Assert.Contains("POST /api/vendors/archive", result, StringComparison.Ordinal);
+        string result = await _queries.ImpactAnalysisAsync("Fixture.Web.SellerEndpoints.ArchiveSnapshot()");
+        Assert.Contains("GET /api/sellers/archive", result, StringComparison.Ordinal);
+        Assert.Contains("POST /api/sellers/archive", result, StringComparison.Ordinal);
     }
 
     [Fact]
     public async Task FindSymbol_EndpointKindFilter_Works()
     {
         // kind:Endpoint works the moment the enum member exists (TryParse ignoreCase).
-        string result = await _queries.FindSymbolAsync("vendors", "Endpoint");
-        Assert.Contains("[Endpoint] GET /api/vendors", result, StringComparison.Ordinal);
+        string result = await _queries.FindSymbolAsync("sellers", "Endpoint");
+        Assert.Contains("[Endpoint] GET /api/sellers", result, StringComparison.Ordinal);
         Assert.DoesNotContain("[Class]", result, StringComparison.Ordinal);
     }
 

@@ -72,7 +72,7 @@ public sealed class LinkCommandTests
         try
         {
             var graph = new CodeGraph();
-            graph.AddNode(SymbolNode.Create(NodeKind.Endpoint, "/api/vendors", "GET /api/vendors", "Endpoints.cs", new SourceSpan(0, 1)));
+            graph.AddNode(SymbolNode.Create(NodeKind.Endpoint, "/api/sellers", "GET /api/sellers", "Endpoints.cs", new SourceSpan(0, 1)));
             await using (var store = new SqliteGraphStore(db))
             {
                 await store.SaveAsync(graph, [], new Dictionary<string, string>(StringComparer.Ordinal));
@@ -111,7 +111,7 @@ public sealed class LinkCommandTests
             Assert.Contains("Linked:", link.Stdout, StringComparison.Ordinal);
             Assert.Contains("Disclosed:", link.Stdout, StringComparison.Ordinal);
             // The verb-mismatch entry's disclosure names the conflicting endpoint by fqn.
-            Assert.Contains("no DELETE registered; GET /api/vendors exists", link.Stdout, StringComparison.Ordinal);
+            Assert.Contains("no DELETE registered; GET /api/sellers exists", link.Stdout, StringComparison.Ordinal);
 
             await using var store = new SqliteGraphStore(db);
             var graph = await store.LoadGraphAsync();

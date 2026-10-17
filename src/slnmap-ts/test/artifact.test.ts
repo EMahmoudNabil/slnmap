@@ -39,11 +39,11 @@ test('the 5 resolved templates match RouteTemplateCrossStackSpecTests.cs\'s orac
   }>;
   const byTemplate = new Set(resolved.map((c) => `${c.verb} ${c.template}`));
 
-  assert.ok(byTemplate.has('GET /UserTasks/assigned-tasks-with-summary'), 'Pair 1 (Case A)');
-  assert.ok(byTemplate.has('GET /Committees'), 'Pair 2 (Case C)');
-  assert.ok(byTemplate.has('POST /TaskCenter/{*}/{*}/reminder'), 'Pair 3 (Case B fan-out)');
-  assert.ok(byTemplate.has('GET /UserProfiles/current'), 'Pair 4 (param-vs-literal siblings)');
-  assert.ok(byTemplate.has('POST /organizationusers'), 'Pair 5 (the dangling bug)');
+  assert.ok(byTemplate.has('GET /PickerTasks/assigned-picks-with-summary'), 'Pair 1 (Case A)');
+  assert.ok(byTemplate.has('GET /Warehouses'), 'Pair 2 (Case C)');
+  assert.ok(byTemplate.has('POST /OrderQueue/{*}/{*}/reminder'), 'Pair 3 (Case B fan-out)');
+  assert.ok(byTemplate.has('GET /AccountProfiles/current'), 'Pair 4 (param-vs-literal siblings)');
+  assert.ok(byTemplate.has('POST /customers'), 'Pair 5 (the dangling bug)');
   // 2026-08-28: +3 resolved via resolveHttpWrapper (detection.ts) — src/services/httpAgent.ts's
   // `requests.<verb>` wrapper, modeled on the real gothinkster/react-redux-realworld-example-app
   // `agent.js` shape that made every one of that repo's 22 frontend call sites unresolvable

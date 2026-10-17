@@ -85,7 +85,7 @@ public sealed partial class SlnmapQueries
         }
 
         // Generated files (EF migration designers, *.g.cs, obj/) are counted, never listed: on a
-        // real solution they can hold 98% of all EF call sites and drown out the code people wrote.
+        // real solution they can hold nearly all EF call sites and drown out the code people wrote.
         var generated = calls.Where(c => IsGeneratedFile(c.FilePath)).ToList();
         calls = calls.Where(c => !IsGeneratedFile(c.FilePath)).ToList();
 

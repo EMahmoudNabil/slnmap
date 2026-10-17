@@ -96,12 +96,12 @@ public sealed class PocoControllerTests
     }
 
     [Fact]
-    public async Task PlainServiceClass_NoControllerishSignalOfAnyKind_OssusShape_UnaffectedAndUncounted()
+    public async Task PlainServiceClass_NoControllerishSignalOfAnyKind_ProductionShape_UnaffectedAndUncounted()
     {
         // PlainServiceHelper: no base list, no "Controller" suffix, no [ApiController]/[Route],
-        // no [Http*] anywhere -- the OSSUS_BE.sln shape (measured: 0 controller-ish classes of
-        // any kind across the entire real solution, reports/v0131-poco-controller-investigation.md
-        // §2). Must stay completely untouched: no endpoint, no disclosure, no semantic cost paid.
+        // no [Http*] anywhere -- the shape of a Minimal-API-only
+        // production solution, which has no controller-ish classes of any kind
+        // at all. Must stay completely untouched: no endpoint, no disclosure, no semantic cost paid.
         var (snapshot, warnings) = await AnalyzeWithWarningsAsync();
 
         Assert.DoesNotContain(

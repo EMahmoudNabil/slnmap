@@ -11,9 +11,9 @@ does a full rebuild once, because the version changed.
 
 - **`check`: an `ignore` list in the baseline file.** Some orphan calls are orphans by design: a BFF
   route the frontend framework serves itself, a static file. Listing them under `"ignore"` in
-  `slnmap-baseline.json` (`"/api/auth/*"`, `"POST /api/vendor-portal/*"`; `*` matches any run of
+  `slnmap-baseline.json` (`"/api/auth/*"`, `"POST /api/seller-portal/*"`; `*` matches any run of
   characters, an optional leading verb narrows the entry) keeps them out of the baseline and out of
-  the counts, which now read `24 found, 13 ignored, 11 in baseline, 0 new`. `--update-baseline`
+  the counts, which now read like `1 found, 1 ignored, 0 in baseline, 0 new`. `--update-baseline`
   keeps the list and leaves the calls it covers out of `orphans`. An empty entry is an error (exit 2).
 - **`get_dependencies` pages instead of truncating.** A new `offset` parameter (default 0) walks a
   large result 50 items at a time; the header says `showing 51-100 of 230` and the footer names the
@@ -31,7 +31,7 @@ does a full rebuild once, because the version changed.
 
 ## 0.15.1
 
-Two correctness fixes found while evaluating slnmap against a real 64k-node solution. No schema
+Two correctness fixes found while evaluating slnmap against a large production solution. No schema
 change; the next `analyze` does a full rebuild once, because the version changed.
 
 ### Fixed
@@ -73,8 +73,8 @@ change; the next `analyze` does a full rebuild once, because the version changed
 - **An optional query string was folded into the path** (slnmap-ts 0.3.1). A template hole whose
   every value is empty or starts with `?` — `` `/items${q ? `?${q}` : ''}` `` and the like — became
   `/items{*}`, which matched nothing. It now folds to `/items?{*}` and links by its path.
-- **A call site with a runtime-computed base URL never linked.** `` `${apiUrl}/api/vendors` ``
-  arrives as `{*}/api/vendors`; the rest of the path is now linked like a relative call site and
+- **A call site with a runtime-computed base URL never linked.** `` `${apiUrl}/api/sellers` ``
+  arrives as `{*}/api/sellers`; the rest of the path is now linked like a relative call site and
   the link is marked `via dynamic-base path` wherever links are listed (`list_frontend_callsites`,
   `find_endpoint`, `impact_analysis`, `slnmap link --verbose`). A no-match stays an unmarked
   orphan; a holes-only template (`{*}/{*}`, a catch-all proxy) is still never linked.
@@ -86,10 +86,10 @@ rebuild once, because the version changed.
 
 ### Fixed
 
-- **`find_endpoint` and `impact_analysis` were up to ~8× slower in 0.14.1** when the answer listed a
+- **`find_endpoint` and `impact_analysis` were much slower in 0.14.1** when the answer listed a
   frontend caller. To mark inferred links (`via prefix-stripped path` / `via
-  token-transformer-tolerant match`), every call site in the graph was relinked on each call: about
-  0.8 s on a solution with 651 call sites, against 0.1 s in 0.14.0. Only the call sites shown are
+  token-transformer-tolerant match`), every call site in the graph was relinked on each call, a cost
+  that grew with the number of call sites. Only the call sites shown are
   linked now, and nothing is linked when no inferred link is possible (no absolute-URL call site
   and no token transformer registered). Answers are byte-identical to 0.14.1.
 
@@ -137,8 +137,8 @@ rebuild once, because the version changed.
 
 ### Changed
 
-- **`find_circular_dependencies(scope: namespace)` is about 10× faster** on large graphs (~14 s →
-  ~1.4 s on a 33k-node solution), with identical output.
+- **`find_circular_dependencies(scope: namespace)` is much faster** on large graphs, with
+  identical output.
 - Equal counts in `impact_analysis` and `get_architecture_overview` are now listed in a fixed
   order.
 
@@ -208,8 +208,7 @@ the next `slnmap analyze` rebuilds an existing graph automatically. No other act
   `analyze` first. `serve` still answers from a v1 graph, but the four new tools ask for a rebuild
   rather than answer from missing data.
 - **Graph size and analysis time.** The new facts make the database larger: +41% on eShopOnWeb
-  (1.55 -> 2.18 MB) and +27% on a ~33k-node production solution. Cold analyze is +6.5% and +9%
-  respectively. Incremental re-analysis is unchanged. See [BENCHMARKS.md](BENCHMARKS.md).
+  (1.55 -> 2.18 MB), and cold analyze on eShopOnWeb is +6.5%. Incremental re-analysis is unchanged. See [BENCHMARKS.md](BENCHMARKS.md).
 - **A constructor that calls only external code is now a graph node.** Before, a constructor became a
   node only by calling something in the solution. Recording its external calls needs a caller, so
   such constructors now appear (one extra node and edge on the RealWorld sample, for example).
@@ -259,7 +258,7 @@ the next `slnmap analyze` rebuilds an existing graph automatically. No other act
   class, or an `[Http*]` attribute on any member); if any apply, the existing semantic
   `ControllerEndpointFacts.IsController` check now also recognizes ASP.NET's real POCO-controller
   convention (public, concrete, non-generic, name/attribute-based, respects `[NonController]`).
-  Measured against a real ~4000-class production solution to confirm zero added false-positive
+  Checked against a large production solution to confirm zero added false-positive
   risk. A class that looks controller-ish syntactically but still fails the semantic check (e.g.
   it isn't `public`) is now disclosed — a new counted `ControllerLikeClassesUnrecognized`
   category, surfaced in `slnmap analyze`'s summary and in MCP query results — never silently
@@ -385,7 +384,7 @@ the next `slnmap analyze` rebuilds an existing graph automatically. No other act
 
 - **Two real cross-stack-linker/TS-extractor bugs, caught by the same pre-launch discipline that
   found v0.12.1's linker bug** — a foreign-pattern trial deliberately outside the tool's usual
-  React+.NET test corpus. Neither reaches OSSUS_Frontend or the published RealWorld sample;
+  React+.NET test corpus. Neither reaches the published RealWorld sample or a production frontend;
   both are confirmed exact-match (reported == persisted) on both before and after this fix.
   - A fluent method chain (two HTTP-verb-named calls on one statement, e.g. an Express
     `app.use(...).get(A).get(B)` route-registration idiom) reported byte-identical position data
@@ -421,9 +420,9 @@ the next `slnmap analyze` rebuilds an existing graph automatically. No other act
   skeleton-match when a call site's hole absorbed one endpoint's literal at one position while
   that same endpoint's hole absorbed a different call-site literal at another position. Absorption
   is now required to run in one direction per comparison; genuine fan-out and route-precedence
-  shapes are unaffected. Re-measured on the reference field-trial pair: 24 → 11 false set-edges
-  resolve to their one correct endpoint; linked/disclosed totals are unchanged (407/434 either
-  way) — this corrects **how** call sites resolve, not whether they do.
+  shapes are unaffected. Re-measured on the field-trial pair: the false set-edges
+  resolve to their one correct endpoint; linked/disclosed totals are unchanged either
+  way — this corrects **how** call sites resolve, not whether they do.
 
 ## 0.12.0
 
@@ -445,7 +444,7 @@ the next `slnmap analyze` rebuilds an existing graph automatically. No other act
 - **`find_orphan_calls`** and **`list_frontend_callsites`** — two new MCP tools (13 → 15).
   `find_orphan_calls` groups unlinked call sites by exact reason: no endpoint resembles this path
   at any verb, an endpoint shares the exact route under a different verb (named in the message,
-  e.g. `"no POST registered; GET /api/OrganizationUsers exists"`), or the extractor genuinely
+  e.g. `"no POST registered; GET /api/Customers exists"`), or the extractor genuinely
   couldn't determine the verb. Both tools compute live against the current graph, so they're
   never stale even between `slnmap link` runs.
 - **A staleness note on `analyze`/`analyze-ts`** when stored `CallsEndpoint` edges may now be
@@ -453,19 +452,13 @@ the next `slnmap analyze` rebuilds an existing graph automatically. No other act
 
 ### Field-trial results
 
-Run against a real, live production codebase (433 `Endpoint` nodes[^658], 0 unresolved
-registrations; 434 frontend call sites extracted): **407 of 434 real call sites (93.8%) link
-deterministically or via the precedence rule.** Every one of the remaining 27 is individually
-disclosed by exact reason (23 no match, 4 verb mismatch) — including the specific production bug
-that motivated this entire project: a frontend `POST` to `/organizationusers` with no matching
-registration, surfacing exactly as designed under `verb-mismatch`, naming the
-`GET /api/OrganizationUsers` registration it happens to share a route shape with. Two additional
-real verb mismatches this project's own investigation phase hadn't previously named turned up in
-the same run.
+Re-measured on public code with Slnmap 0.16.0, so anyone can reproduce them:
 
-[^658]: an earlier field-trial report measured 658 endpoints on a separate, larger snapshot of
-the same application; this release's own field-trial checkout measured 433 — a real difference
-between two distinct snapshots, not an inconsistency in this run.
+- **RealWorld** (gothinkster's ASP.NET Core backend and React/Redux frontend): 22 of 22 frontend
+  call sites link; none is disclosed.
+- **OrderTracker** (slnmap's demo app): 6 of 7 call sites link. The seventh is disclosed under
+  `verb-mismatch`: `ReportsDialog.tsx` sends `POST /api/reports`, and the backend registers only
+  `GET /api/reports`. The message names that `GET` registration, so the fix is obvious.
 
 ### Notes
 
@@ -704,7 +697,7 @@ automatically; controller endpoints appear in the graph after it.
 
 - **HTTP endpoints are first-class graph nodes.** Every ASP.NET Core Minimal-API registration
   (`MapGet`/`MapPost`/`MapPut`/`MapDelete`/`MapPatch`) becomes an `Endpoint` node whose identity
-  is the composed route template as authored (`GET /api/vendors/{id:int}` — parameter names and
+  is the composed route template as authored (`GET /api/sellers/{id:int}` — parameter names and
   constraints preserved), located at the registration call site and linked to its handler method
   by a new `HandledBy` edge. `impact_analysis` and `find_usages` on a handler now surface the
   actual HTTP routes that break — the chain `command → handler → endpoint` resolves end to end.
@@ -712,7 +705,7 @@ automatically; controller endpoints appear in the graph after it.
   - `list_endpoints(verb?, prefix?)` — all endpoints grouped by project as
     `VERB /route → handler — file:line`, optionally filtered by HTTP verb and/or route prefix.
   - `find_endpoint(route, verb?)` — matches an exact template *or* a concrete request path
-    (`/api/vendors/42` finds `GET /api/vendors/{id}`), with the framework's own semantics:
+    (`/api/sellers/42` finds `GET /api/sellers/{id}`), with the framework's own semantics:
     case-insensitive, `{param}`/`{param:constraint}` holes bind concrete segments. A miss
     suggests near matches.
 - **Route templates resolve statically through real-world registration shapes**, decided by
@@ -720,8 +713,7 @@ automatically; controller endpoints appear in the graph after it.
   `string.Empty`; omitted patterns (overload defaults); literal and nested `MapGroup` prefixes;
   single-hop in-source forwarders (custom reversed-argument `Map*(handler, pattern)` extensions);
   and the CleanArchitecture-template convention (`MapGroup(this)` → `$"/api/{GetType().Name}"`),
-  guarded by the receiver type having no in-solution subtypes. Field verification on a 26k-node
-  production solution: **658 of 658 registrations resolved, zero unresolved**.
+  guarded by the receiver type having no in-solution subtypes.
 - **Deterministic-or-declared:** every registration that cannot be resolved statically is counted
   and reported with a reason (analyze summary line, warnings, and a disclosure note in
   `list_endpoints`) — never guessed. Lambda/local-function handlers yield an endpoint node
@@ -758,8 +750,8 @@ automatically; endpoints appear in the graph after it.
   enums, that was a repo-wide false "safe to change". Reads, writes, compound assignments,
   argument/interpolation positions, `nameof(...)` sites, and reads from other fields'
   initializers all now produce `References` edges attributed to the correct enclosing member.
-  Field evidence that drove the fix: a reference-solution eval found a const with 5 real usages
-  in 3 files reported as unused.
+  Field evidence that drove the fix: a production evaluation found a const with real usages in
+  several files reported as unused.
 - **Structurally identical anonymous types no longer collapse into one node.** Anonymous types
   render structural FQNs (`<anonymous type: int Id, string Label>`), and FQN is node identity —
   so identical shapes declared in *different projects* merged into a single node pinned to
@@ -862,7 +854,7 @@ and-reanalyze needs no extra flag or manual `slnmap.db` deletion.
 
 - **Type references reachable only through a generic type argument, `typeof()`, or an attribute
   constructor argument were invisible to `find_usages` and `impact_analysis`.** Found by
-  dogfooding Slnmap against a real 26k-node, 5-project ASP.NET solution: a middleware class
+  dogfooding Slnmap against a real production ASP.NET solution: a middleware class
   registered only via `app.UseMiddleware<T>()`, a Hangfire job type passed only as
   `RecurringJob.AddOrUpdate<T>(...)`, or a class named only in `typeof(X)` inside a lookup table
   all reported **zero usages and zero impact** — even though each was genuinely load-bearing.

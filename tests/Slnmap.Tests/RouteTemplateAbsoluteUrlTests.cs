@@ -20,13 +20,13 @@ namespace Slnmap.Tests;
 public sealed class RouteTemplateAbsoluteUrlTests
 {
     [Theory]
-    [InlineData("https://api.example.com/vendors", "vendors")]
-    [InlineData("https://api.example.com/api/Vendors/{id}", "api/vendors/{x}")]
-    [InlineData("http://localhost:3000/api/vendors", "api/vendors")]
+    [InlineData("https://api.example.com/sellers", "sellers")]
+    [InlineData("https://api.example.com/api/Sellers/{id}", "api/sellers/{x}")]
+    [InlineData("http://localhost:3000/api/sellers", "api/sellers")]
     [InlineData("https://api.example.com", "")]
     [InlineData("https://api.example.com/", "")]
     [InlineData("https://api.example.com?tab=details", "")]
-    [InlineData("https://api.example.com/vendors?tab=details#section", "vendors")]
+    [InlineData("https://api.example.com/sellers?tab=details#section", "sellers")]
     public void Normalize_AbsoluteUrl_StripsSchemeAndHostBeforeNormalizing(string input, string expected) =>
         Assert.Equal(expected, RouteTemplate.Normalize(input));
 
@@ -47,35 +47,35 @@ public sealed class RouteTemplateAbsoluteUrlTests
     [Fact]
     public void TrySplitAbsoluteUrl_OrdinaryRelativePath_IsNotAbsolute()
     {
-        var outcome = RouteTemplate.TrySplitAbsoluteUrl("/api/vendors", out string? host, out string pathAndRest);
+        var outcome = RouteTemplate.TrySplitAbsoluteUrl("/api/sellers", out string? host, out string pathAndRest);
 
         Assert.Equal(RouteTemplate.AbsoluteUrlSplitResult.NotAbsolute, outcome);
         Assert.Null(host);
-        Assert.Equal("/api/vendors", pathAndRest);
+        Assert.Equal("/api/sellers", pathAndRest);
     }
 
     [Fact]
     public void TrySplitAbsoluteUrl_CleanAbsoluteUrl_SplitsHostFromPath()
     {
-        var outcome = RouteTemplate.TrySplitAbsoluteUrl("https://api.example.com/vendors/42", out string? host, out string pathAndRest);
+        var outcome = RouteTemplate.TrySplitAbsoluteUrl("https://api.example.com/sellers/42", out string? host, out string pathAndRest);
 
         Assert.Equal(RouteTemplate.AbsoluteUrlSplitResult.Clean, outcome);
         Assert.Equal("api.example.com", host);
-        Assert.Equal("/vendors/42", pathAndRest);
+        Assert.Equal("/sellers/42", pathAndRest);
     }
 
     [Fact]
     public void TrySplitAbsoluteUrl_HostWithPort_IsCarriedWhole()
     {
-        var outcome = RouteTemplate.TrySplitAbsoluteUrl("http://localhost:3000/vendors", out string? host, out string pathAndRest);
+        var outcome = RouteTemplate.TrySplitAbsoluteUrl("http://localhost:3000/sellers", out string? host, out string pathAndRest);
 
         Assert.Equal(RouteTemplate.AbsoluteUrlSplitResult.Clean, outcome);
         Assert.Equal("localhost:3000", host);
-        Assert.Equal("/vendors", pathAndRest);
+        Assert.Equal("/sellers", pathAndRest);
     }
 
     [Theory]
-    [InlineData("https:///vendors")] // empty host
+    [InlineData("https:///sellers")] // empty host
     [InlineData("https://")] // empty host, no path at all
     public void TrySplitAbsoluteUrl_EmptyHost_IsAmbiguous_NeverGuessed(string input)
     {

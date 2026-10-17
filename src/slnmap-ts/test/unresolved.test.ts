@@ -21,7 +21,7 @@ function project(files: Record<string, string>): string {
 
 const AXIOS_CLIENT = `
 import axios from 'axios';
-const apiClient = axios.create({ baseURL: '/api/ogw' });
+const apiClient = axios.create({ baseURL: '/api/proxy' });
 export default apiClient;
 `;
 
@@ -148,9 +148,9 @@ test('non-constant-identifier: let-declared binding, even when every assignment 
     'src/apiClient.ts': AXIOS_CLIENT,
     'src/call.ts': `
       import apiClient from './apiClient';
-      let currentEndpoint = '/Vendors';
+      let currentEndpoint = '/Sellers';
       export function call() {
-        currentEndpoint = '/Vendors/v2';
+        currentEndpoint = '/Sellers/v2';
         return apiClient.get(currentEndpoint);
       }
     `,

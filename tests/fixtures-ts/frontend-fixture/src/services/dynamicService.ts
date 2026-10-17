@@ -23,9 +23,9 @@ export function fetchYearlyReport() {
 // Category: non-constant-identifier -- `let`, reassigned before use. The checker will not
 // treat a mutable binding's value as a compile-time constant even though every assignment
 // happens to be a literal.
-let currentEndpoint = '/Vendors';
-export function fetchVendors() {
-  currentEndpoint = '/Vendors/v2';
+let currentEndpoint = '/Sellers';
+export function fetchSellers() {
+  currentEndpoint = '/Sellers/v2';
   return apiClient.get(currentEndpoint);
 }
 

@@ -33,9 +33,9 @@ public sealed class CrossStackLinkerTests
     [Fact]
     public void Precedence_LiteralCallSite_LiteralVsParamSiblings_ResolvesToTheLiteral()
     {
-        var literalEndpoint = Endpoint("GET", "/api/UserProfiles/current");
-        var paramEndpoint = Endpoint("GET", "/api/UserProfiles/{id}");
-        var callSite = CallSite("GET", "/UserProfiles/current");
+        var literalEndpoint = Endpoint("GET", "/api/AccountProfiles/current");
+        var paramEndpoint = Endpoint("GET", "/api/AccountProfiles/{id}");
+        var callSite = CallSite("GET", "/AccountProfiles/current");
 
         var result = LinkSingle(callSite, literalEndpoint, paramEndpoint);
 
@@ -46,12 +46,12 @@ public sealed class CrossStackLinkerTests
     [Fact]
     public void Precedence_LiteralCallSite_ConstrainedParamSibling_LiteralStillWins()
     {
-        // Mirrors real OSSUS data: /RecurrentControls/stats/summary (literal) vs
-        // /RecurrentControls/{month:int}/{year:int} (2 constrained holes) -- constraints don't
+        // Mirrors real production data: /RecurringOrders/stats/summary (literal) vs
+        // /RecurringOrders/{month:int}/{year:int} (2 constrained holes) -- constraints don't
         // change the outcome; a hole is a hole for this scoped rule.
-        var literalEndpoint = Endpoint("GET", "/api/RecurrentControls/stats/summary");
-        var constrainedParamEndpoint = Endpoint("GET", "/api/RecurrentControls/{month:int}/{year:int}");
-        var callSite = CallSite("GET", "/RecurrentControls/stats/summary");
+        var literalEndpoint = Endpoint("GET", "/api/RecurringOrders/stats/summary");
+        var constrainedParamEndpoint = Endpoint("GET", "/api/RecurringOrders/{month:int}/{year:int}");
+        var callSite = CallSite("GET", "/RecurringOrders/stats/summary");
 
         var result = LinkSingle(callSite, literalEndpoint, constrainedParamEndpoint);
 
@@ -64,9 +64,9 @@ public sealed class CrossStackLinkerTests
     {
         // The call site itself has NO known runtime value at the differing position -- the same
         // shape as real fan-out, and the linker deliberately does not distinguish the two.
-        var literalEndpoint = Endpoint("GET", "/api/RiskRegisters/my-risks");
-        var paramEndpoint = Endpoint("GET", "/api/RiskRegisters/{id}");
-        var callSite = CallSite("GET", "/RiskRegisters/{*}");
+        var literalEndpoint = Endpoint("GET", "/api/CartSnapshots/my-carts");
+        var paramEndpoint = Endpoint("GET", "/api/CartSnapshots/{id}");
+        var callSite = CallSite("GET", "/CartSnapshots/{*}");
 
         var result = LinkSingle(callSite, literalEndpoint, paramEndpoint);
 
@@ -79,7 +79,7 @@ public sealed class CrossStackLinkerTests
     [Fact]
     public void Precedence_TwoParamEndpointsWithDifferentNames_AreIndistinguishable_BecomesSetEdge()
     {
-        // {id} and {vendorId} both normalize to the identical "{x}" skeleton segment -- there is
+        // {id} and {sellerId} both normalize to the identical "{x}" skeleton segment -- there is
         // no differing NORMALIZED position between them at all, so precedence has nothing to
         // compare (this is not the same code path as "call site has a hole"; here even a
         // literal call site can't disambiguate two candidates the normalizer can't tell apart).
@@ -96,19 +96,19 @@ public sealed class CrossStackLinkerTests
     [Fact]
     public void FanOut_ThreeLiteralSiblings_CallSiteHole_LinksToAllThreeAndOnlyThose()
     {
-        // The real TaskCenter shape: exactly 3 registered endpoints, one call site with a hole.
-        var compliances = Endpoint("POST", "/api/TaskCenter/compliances/{taskId}/reminder");
-        var risks = Endpoint("POST", "/api/TaskCenter/risks/{taskId}/reminder");
-        var governances = Endpoint("POST", "/api/TaskCenter/governances/{taskId}/reminder");
-        var callSite = CallSite("POST", "/TaskCenter/{*}/{*}/reminder");
+        // The real OrderQueue shape: exactly 3 registered endpoints, one call site with a hole.
+        var pickups = Endpoint("POST", "/api/OrderQueue/pickups/{taskId}/reminder");
+        var risks = Endpoint("POST", "/api/OrderQueue/carts/{taskId}/reminder");
+        var refunds = Endpoint("POST", "/api/OrderQueue/refunds/{taskId}/reminder");
+        var callSite = CallSite("POST", "/OrderQueue/{*}/{*}/reminder");
 
-        var result = LinkSingle(callSite, compliances, risks, governances);
+        var result = LinkSingle(callSite, pickups, risks, refunds);
 
         Assert.Equal(CallSiteLinkOutcome.SetEdge, result.Outcome);
         Assert.Equal(3, result.Endpoints.Count);
-        Assert.Contains(compliances, result.Endpoints);
+        Assert.Contains(pickups, result.Endpoints);
         Assert.Contains(risks, result.Endpoints);
-        Assert.Contains(governances, result.Endpoints);
+        Assert.Contains(refunds, result.Endpoints);
     }
 
     [Fact]
@@ -116,8 +116,8 @@ public sealed class CrossStackLinkerTests
     {
         // A bare fetch(url, { method: computeMethod() }) -- the verb is genuinely unknown, never
         // guessed, even when exactly one endpoint would otherwise skeleton-match uniquely.
-        var endpoint = Endpoint("GET", "/api/Vendors");
-        var callSite = CallSite("UNKNOWN", "/Vendors");
+        var endpoint = Endpoint("GET", "/api/Sellers");
+        var callSite = CallSite("UNKNOWN", "/Sellers");
 
         var result = LinkSingle(callSite, endpoint);
 
@@ -128,8 +128,8 @@ public sealed class CrossStackLinkerTests
     [Fact]
     public void VerbGate_ExactCaseSensitiveEquality_DifferentVerbNeverLinks()
     {
-        var getEndpoint = Endpoint("GET", "/api/Vendors");
-        var deleteCallSite = CallSite("DELETE", "/Vendors");
+        var getEndpoint = Endpoint("GET", "/api/Sellers");
+        var deleteCallSite = CallSite("DELETE", "/Sellers");
 
         var result = LinkSingle(deleteCallSite, getEndpoint);
 
@@ -140,8 +140,8 @@ public sealed class CrossStackLinkerTests
     [Fact]
     public void NoSkeletonMatch_DifferentSegmentCount_IsOrphanNotVerbMismatch()
     {
-        var endpoint = Endpoint("GET", "/api/Vendors");
-        var callSite = CallSite("GET", "/Vendors/Reports/Export");
+        var endpoint = Endpoint("GET", "/api/Sellers");
+        var callSite = CallSite("GET", "/Sellers/Reports/Export");
 
         var result = LinkSingle(callSite, endpoint);
 
@@ -206,8 +206,8 @@ public sealed class CrossStackLinkerTests
     [Fact]
     public void AbsoluteUrl_AmbiguousHost_EmptyHost_NeverGuessed_NotLinkedToAnything()
     {
-        var endpoint = Endpoint("GET", "/api/vendors");
-        var callSite = CallSite("GET", "https:///api/vendors"); // empty host
+        var endpoint = Endpoint("GET", "/api/sellers");
+        var callSite = CallSite("GET", "https:///api/sellers"); // empty host
 
         var result = LinkSingle(callSite, endpoint);
 
@@ -220,8 +220,8 @@ public sealed class CrossStackLinkerTests
     [Fact]
     public void AbsoluteUrl_OrdinaryRelativeCallSite_HasNoHost_UnaffectedByThisFeature()
     {
-        var endpoint = Endpoint("GET", "/api/vendors");
-        var callSite = CallSite("GET", "/vendors");
+        var endpoint = Endpoint("GET", "/api/sellers");
+        var callSite = CallSite("GET", "/sellers");
 
         var result = LinkSingle(callSite, endpoint);
 
@@ -332,9 +332,9 @@ public sealed class CrossStackLinkerTests
     [Fact]
     public void Link_IsIdempotent_SameGraphTwiceProducesIdenticalResults()
     {
-        var literalEndpoint = Endpoint("GET", "/api/UserProfiles/current");
-        var paramEndpoint = Endpoint("GET", "/api/UserProfiles/{id}");
-        var callSite = CallSite("GET", "/UserProfiles/current");
+        var literalEndpoint = Endpoint("GET", "/api/AccountProfiles/current");
+        var paramEndpoint = Endpoint("GET", "/api/AccountProfiles/{id}");
+        var callSite = CallSite("GET", "/AccountProfiles/current");
         var graph = new CodeGraph();
         graph.AddNode(callSite);
         graph.AddNode(literalEndpoint);

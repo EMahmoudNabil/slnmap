@@ -140,7 +140,7 @@ call.
 | `impact_analysis` | `fqn` *(required)* | Every symbol that transitively depends on the given one (depth 5) — counts first, then nearest-first. |
 | `find_tests_for_symbol` | `fqn` *(required)* | Test members that transitively exercise a symbol, grouped by project with file:line. |
 | `find_circular_dependencies` | `scope` *(optional: `project`/`namespace`, default `project`)* | Dependency cycles reported as path chains, worst offenders first. |
-| `list_endpoints` | `verb` *(optional: `GET`/`POST`/`PUT`/`DELETE`/`PATCH`)*, `prefix` *(optional route prefix, e.g. `/api/vendors`)* | HTTP endpoints (Minimal APIs + attribute-routed controllers) grouped by project: `VERB /route → handler — file:line`; unresolved registrations and conventionally-routed controllers disclosed in trailing notes. |
+| `list_endpoints` | `verb` *(optional: `GET`/`POST`/`PUT`/`DELETE`/`PATCH`)*, `prefix` *(optional route prefix, e.g. `/api/sellers`)* | HTTP endpoints (Minimal APIs + attribute-routed controllers) grouped by project: `VERB /route → handler — file:line`; unresolved registrations and conventionally-routed controllers disclosed in trailing notes. |
 | `find_endpoint` | `route` *(required: a template or a concrete path)*, `verb` *(optional)* | Endpoints matching a route — case-insensitive, `{param}` holes bind concrete segments; a miss suggests near matches. After `slnmap link`, also lists its frontend callers. |
 | `find_orphan_calls` | `category` *(optional: `no-match`/`verb-mismatch`/`verb-unknown`)* | Frontend call sites with no matching endpoint, grouped by exact reason — computed live, always current even if `slnmap link` hasn't run since the last change. |
 | `list_frontend_callsites` | `verb` *(optional)*, `prefix` *(optional)* | Every frontend HTTP call site with its live linking status — the endpoint(s) it hits, or why it doesn't. |
@@ -236,8 +236,8 @@ can resolve statically) gets a truthful edge to every one of them, never a guess
 Everything that doesn't link is individually disclosed by exact reason — nothing is silently
 dropped.
 
-A call site whose base is computed at runtime (`` `${apiUrl}/api/vendors` ``, arriving as
-`{*}/api/vendors`) is linked by the rest of its path and marked `via dynamic-base path` wherever
+A call site whose base is computed at runtime (`` `${apiUrl}/api/sellers` ``, arriving as
+`{*}/api/sellers`) is linked by the rest of its path and marked `via dynamic-base path` wherever
 links are listed — an inferred link, never shown like a literal one. A template that is holes
 only (a Next.js catch-all forwarder's `{*}/{*}`) is not linked: it is a proxy forwarding whatever
 it is given, not a call site, and stays a disclosed no-match.
@@ -268,10 +268,10 @@ slnmap check                       # from now on: exit 1 only for a NEW finding
 ```
 
 ```
-Orphan calls:  24 found, 24 in baseline, 0 new
+Orphan calls:  1 found, 1 in baseline, 0 new
 Cycles:        0 project-level, 0 in baseline, 0 new
 Not restored:  0 project(s)
-Baseline:      slnmap-baseline.json (24 orphan call(s), 0 cycle(s))
+Baseline:      slnmap-baseline.json (1 orphan call(s), 0 cycle(s))
 Result:        PASS
 ```
 
@@ -291,13 +291,13 @@ optional leading verb narrows the entry to one method:
 ```json
 {
   "schemaVersion": 1,
-  "orphans": ["PATCH src/features/roles/services/roles.ts /roles/{*}/users/{*}/status"],
+  "orphans": ["POST src/components/ReportsDialog.tsx /api/reports"],
   "cycles": [],
-  "ignore": ["/api/auth/*", "POST /api/vendor-portal/*", "GET /file/*"]
+  "ignore": ["/api/auth/*", "POST /api/seller-portal/*", "GET /file/*"]
 }
 ```
 
-Ignored calls are counted (`24 found, 13 ignored, 11 in baseline, 0 new`) but never new, and
+Ignored calls are counted (`1 found, 1 ignored, 0 in baseline, 0 new`) but never new, and
 `--update-baseline` keeps the list and leaves the calls it covers out of `orphans`.
 
 Orphans are computed live from the current graph, so `check` does not need `slnmap link` first.

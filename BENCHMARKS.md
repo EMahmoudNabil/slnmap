@@ -56,26 +56,22 @@ are not directly comparable to the pinned-methodology rows below. The graph on e
 | eShopOnWeb cold analyze (3 runs) | 17.8 / 18.6 / 17.3 s | **19.4 / 18.8 / 19.0 s** | +6.5% |
 | eShopOnWeb one-file incremental (6 docs re-walked, 3 runs) | 18.0 / 15.3 / 15.8 s | **16.3 / 16.4 / 15.7 s** | flat |
 | eShopOnWeb `slnmap.db` | 1.55 MB | **2.18 MB** | +41% (+0.6 MB) |
-| ~33k-node production solution, cold analyze (2 runs) | 339.4 / 319.3 s | **364.3 / 353.2 s** | +9.0% |
-| ~33k-node production solution, `slnmap.db` | 52.8 MB | **67.1 MB** | +27% |
 
 The growth is the new per-file facts: external calls (stored one row per caller/target pair with a
 call count), DI registrations, attribute usages and disclosures, plus symbol accessibility and
-member flags. External calls are the largest share. Without the pair dedup they made the
-production solution's database 35 times larger, almost entirely from EF Core migration designer
+member flags. External calls are the largest share. Without the pair dedup they made a
+production database many times larger, almost entirely from EF Core migration designer
 files.
 
 *v0.8.0 (controller endpoint nodes) was measured against eShopOnWeb directly during field
 verification: 26 endpoints extracted (25 attribute-routed controller actions + 1
 Ardalis.ApiEndpoints), cold analyze 26.8 s on the current dev machine — not directly comparable
 to the pinned-methodology rows below. On solutions without controllers (the Slnmap development
-solution and a 26k-node production Minimal-API solution) the graph was byte-identical to v0.7.0
+solution and a production Minimal-API solution) the graph was byte-identical to v0.7.0
 with no measurable time delta.*
 
 *v0.7.0 (Minimal-API endpoint nodes) was not re-benchmarked on eShopOnWeb; on the Slnmap
-development solution (no Minimal APIs) the graph was byte-identical with flat analyze time, and on
-a 26k-node production Minimal-API solution it added +2.1% nodes / +1.3% edges (658 endpoints) at
-+0.4% analyze time — endpoint extraction is name-prefiltered and does not touch non-`Map*` code.*
+development solution (no Minimal APIs) the graph was byte-identical with flat analyze time — endpoint extraction is name-prefiltered and does not touch non-`Map*` code.*
 
 *v0.6.1 (field/const usage edges) was not re-benchmarked on eShopOnWeb; on the Slnmap development
 solution it added +8.6% edges / +1.0% nodes with flat analyze time (1.086x edge growth, well under

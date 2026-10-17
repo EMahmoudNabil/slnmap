@@ -57,7 +57,7 @@ public enum CallSiteLinkOutcome
 /// <paramref name="ConflictingVerbEndpoints"/> is populated only for
 /// <see cref="CallSiteLinkOutcome.VerbMismatch"/> — the endpoint(s) that share this exact
 /// skeleton under a different verb, so a disclosure message can name them ("no POST registered;
-/// GET /api/OrganizationUsers exists") instead of just saying "no match" — empty otherwise.
+/// GET /api/Customers exists") instead of just saying "no match" — empty otherwise.
 /// <paramref name="AmbiguityReason"/> is populated only for the base-path double-match case of
 /// <see cref="CallSiteLinkOutcome.SetEdge"/> (v0.12.3) — distinguishes "this call site's raw
 /// path AND its base-path-prefixed path both independently matched a real endpoint" from
@@ -78,7 +78,7 @@ public enum CallSiteLinkOutcome
 /// by the last-resort token-transformer-tolerant fallback (<see cref="RouteTemplate.MatchesWithTokenTolerance"/>)
 /// — an inferred link, never rendered like a literal one.
 /// <paramref name="ViaDynamicBase"/> is true (v0.15.0) only when the call site's template starts
-/// with an unresolved hole (<c>{*}/api/VendorPortal</c>, from <c>`${apiUrl}/api/VendorPortal`</c>
+/// with an unresolved hole (<c>{*}/api/SellerPortal</c>, from <c>`${apiUrl}/api/SellerPortal`</c>
 /// where <c>apiUrl</c> is computed at runtime) and the remainder linked as if it were the whole
 /// path — the base may have been a host, a base path, or both, so this is an inferred link.
 /// </summary>
@@ -161,7 +161,7 @@ public static class CrossStackLinker
         }
 
         // v0.14.2: each endpoint's verb and normalized template are computed once here, not once
-        // per call site per candidate skeleton (a regex Normalize ~1.5M times on OSSUS's 651 x 658).
+        // per call site per candidate skeleton (a regex Normalize for every call-site/endpoint pair).
         var endpoints = graph.Nodes
             .Where(n => n.Kind == NodeKind.Endpoint)
             .Select(n => new PreparedEndpoint(n, VerbOf(n.Fqn), RouteTemplate.Normalize(n.Name)))
@@ -217,7 +217,7 @@ public static class CrossStackLinker
     /// never skeleton-match the real `/api/orders` endpoint — <see cref="RouteTemplate.Matches"/>
     /// rejects on segment count before any string comparison. Fixed by trying BOTH the raw path
     /// and the prefixed path as independent candidate skeletons: if exactly one yields same-verb
-    /// matches, resolve normally against that one (this is what makes OSSUS's own convention —
+    /// matches, resolve normally against that one (this is what makes the common convention —
     /// axios `baseURL` absorbs the prefix, call sites never carry it literally — keep working
     /// unchanged); if BOTH independently match, that is a genuine new ambiguity (not the same
     /// shape as ordinary fan-out, so disclosed with its own <see cref="CallSiteLinkResult.AmbiguityReason"/>
@@ -258,10 +258,10 @@ public static class CrossStackLinker
             return LinkAbsoluteUrl(callSite, verb, host!, pathOnly, endpoints, basePathPrefix, tokenTolerance);
         }
 
-        // v0.15.0: `${apiUrl}/api/VendorPortal` with a runtime-computed apiUrl arrives as
-        // `{*}/api/VendorPortal`. The hole is the base (a host, a base path, or both — unknown),
+        // v0.15.0: `${apiUrl}/api/SellerPortal` with a runtime-computed apiUrl arrives as
+        // `{*}/api/SellerPortal`. The hole is the base (a host, a base path, or both — unknown),
         // so the remainder is linked exactly like a relative call site and any link made this way
-        // is marked inferred. Found on OSSUS (vendorPortalService.ts), where it was an orphan.
+        // is marked inferred. Found on a production frontend, where it was an orphan.
         if (TrySplitDynamicBase(callSite.Name, out string remainder))
         {
             var viaBase = LinkRelative(callSite, verb, remainder, endpoints, basePathPrefix, tokenTolerance);
@@ -603,6 +603,6 @@ public static class CrossStackLinker
         return winners.Count == 1 ? winners[0].Node : null;
     }
 
-    /// <summary>The verb is the FQN's first token — "GET /api/vendors" -> "GET" (matches SlnmapQueries.Endpoints.cs's own convention).</summary>
+    /// <summary>The verb is the FQN's first token — "GET /api/sellers" -> "GET" (matches SlnmapQueries.Endpoints.cs's own convention).</summary>
     private static string VerbOf(string fqn) => fqn[..fqn.IndexOf(' ', StringComparison.Ordinal)];
 }

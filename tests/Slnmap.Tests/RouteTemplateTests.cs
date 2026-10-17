@@ -15,36 +15,36 @@ public sealed class RouteTemplateTests
 {
     // ── Group 1: basic cases ─────────────────────────────────────────────────
     [Theory]
-    [InlineData("/vendors", "vendors")]
-    [InlineData("/api/Vendors", "api/vendors")]
-    [InlineData("/api/Vendors/", "api/vendors")]
-    [InlineData("vendors", "vendors")]
+    [InlineData("/sellers", "sellers")]
+    [InlineData("/api/Sellers", "api/sellers")]
+    [InlineData("/api/Sellers/", "api/sellers")]
+    [InlineData("sellers", "sellers")]
     // ── Group 2: dynamic segments ────────────────────────────────────────────
-    [InlineData("/api/Vendors/{vendorId}", "api/vendors/{x}")]
+    [InlineData("/api/Sellers/{sellerId}", "api/sellers/{x}")]
     [InlineData("/Users/{userId}/Permissions/{permId}", "users/{x}/permissions/{x}")]
-    [InlineData("/api/Vendors/{id:int}", "api/vendors/{x}")]
+    [InlineData("/api/Sellers/{id:int}", "api/sellers/{x}")]
     [InlineData("/{month:int}/{year:int}", "{x}/{x}")]
     // ── Group 3: query strings stripped ──────────────────────────────────────
-    [InlineData("/vendors?status=active", "vendors")]
-    [InlineData("/api/Vendors?page=1&pageSize=10", "api/vendors")]
-    // ── Group 4: real field examples (OSSUS census shapes) ───────────────────
-    [InlineData("/api/Authentication/reset-token/{token}/detail", "api/authentication/reset-token/{x}/detail")]
-    [InlineData("/api/Incidents/{incidentId:int}/evidence/{fileId:int}/download", "api/incidents/{x}/evidence/{x}/download")]
-    [InlineData("/api/Files/public/organization/{slug}/logo/{theme}", "api/files/public/organization/{x}/logo/{x}")]
+    [InlineData("/sellers?status=active", "sellers")]
+    [InlineData("/api/Sellers?page=1&pageSize=10", "api/sellers")]
+    // ── Group 4: realistic production route shapes ──────────────────────────
+    [InlineData("/api/Checkout/resume-token/{token}/detail", "api/checkout/resume-token/{x}/detail")]
+    [InlineData("/api/Disputes/{disputeId:int}/invoices/{fileId:int}/download", "api/disputes/{x}/invoices/{x}/download")]
+    [InlineData("/api/Files/public/store/{slug}/logo/{theme}", "api/files/public/store/{x}/logo/{x}")]
     // ── Group 5: edge cases ──────────────────────────────────────────────────
     [InlineData("", "")]
     [InlineData("/", "")]
-    [InlineData("///vendors///notes///", "vendors/notes")]
+    [InlineData("///sellers///notes///", "sellers/notes")]
     // ── Group 6: special characters ──────────────────────────────────────────
     [InlineData("/api/Files/{fileId}.pdf", "api/files/{x}.pdf")]
     // ── Group 7: hash fragments ──────────────────────────────────────────────
-    [InlineData("/vendors#section", "vendors")]
+    [InlineData("/sellers#section", "sellers")]
     // ── Group 8: case normalization ──────────────────────────────────────────
-    [InlineData("/api/VENDORS", "api/vendors")]
-    [InlineData("/api/UserProfiles/current", "api/userprofiles/current")]
+    [InlineData("/api/SELLERS", "api/sellers")]
+    [InlineData("/api/AccountProfiles/current", "api/accountprofiles/current")]
     // ── Group 10: combinations ───────────────────────────────────────────────
-    [InlineData("/api/vendors/{id}?include=notes#top", "api/vendors/{x}")]
-    [InlineData("/api/Vendors/{vendorId}/Tags/{tagId}", "api/vendors/{x}/tags/{x}")]
+    [InlineData("/api/sellers/{id}?include=notes#top", "api/sellers/{x}")]
+    [InlineData("/api/Sellers/{sellerId}/Tags/{tagId}", "api/sellers/{x}/tags/{x}")]
     public void Normalize_GoldenSuite(string input, string expected) =>
         Assert.Equal(expected, RouteTemplate.Normalize(input));
 
@@ -59,23 +59,23 @@ public sealed class RouteTemplateTests
 
     [Theory]
     // exact
-    [InlineData("/api/vendors", "/api/vendors", true)]
+    [InlineData("/api/sellers", "/api/sellers", true)]
     // case-insensitivity is the framework's semantics, not a heuristic
-    [InlineData("/api/Vendors", "/api/VENDORS", true)]
+    [InlineData("/api/Sellers", "/api/SELLERS", true)]
     // a {param} hole binds a concrete segment (the request-path direction)
-    [InlineData("/api/vendors/{id}", "/api/vendors/42", true)]
-    [InlineData("/api/vendors/{id:int}", "/api/vendors/42", true)]
+    [InlineData("/api/sellers/{id}", "/api/sellers/42", true)]
+    [InlineData("/api/sellers/{id:int}", "/api/sellers/42", true)]
     // and the reverse: a hole in the query matches a template's concrete segment
-    [InlineData("/api/UserProfiles/current", "/api/userprofiles/{x}", true)]
+    [InlineData("/api/AccountProfiles/current", "/api/accountprofiles/{x}", true)]
     // holes match holes even under different names/constraints
-    [InlineData("/api/vendors/{vendorId:int}", "/api/vendors/{id}", true)]
+    [InlineData("/api/sellers/{sellerId:int}", "/api/sellers/{id}", true)]
     // segment counts must agree
-    [InlineData("/api/vendors/{id}", "/api/vendors", false)]
-    [InlineData("/api/vendors", "/api/vendors/42", false)]
+    [InlineData("/api/sellers/{id}", "/api/sellers", false)]
+    [InlineData("/api/sellers", "/api/sellers/42", false)]
     // concrete segments must agree
-    [InlineData("/api/vendors/{id}", "/api/incidents/42", false)]
+    [InlineData("/api/sellers/{id}", "/api/disputes/42", false)]
     // trailing slash and duplicate slashes are normalization, not difference
-    [InlineData("/api/vendors/", "//api//vendors", true)]
+    [InlineData("/api/sellers/", "//api//sellers", true)]
     // root
     [InlineData("/", "", true)]
     public void Matches_FrameworkSemantics(string template, string query, bool expected) =>

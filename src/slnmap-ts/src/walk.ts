@@ -228,7 +228,7 @@ function classifyCallExpression(
 
       // The verb-named-method shape alone is a WEAK signal: `.get`/`.post`/etc. are also real
       // methods on `Headers`, `Map`, `URLSearchParams`, and plenty of other everyday objects —
-      // at OSSUS_Frontend scale, an unfiltered shape check produced 284 false candidates (mostly
+      // on a large frontend, an unfiltered shape check produced many false candidates (mostly
       // `response.headers.get('Content-Type')`-style calls), each correctly failing identity
       // resolution but drowning the genuine unresolved signal in noise. The argument itself is
       // the disambiguator: only when it actually looks URL-shaped (resolves — fully or with
@@ -265,7 +265,7 @@ function classifyCallExpression(
 /**
  * The Fetch API defaults to GET absent an explicit `method`, but a real call site frequently
  * overrides it in the options object (`fetch(url, { method: 'POST', ... })`) — a spot-check
- * against OSSUS_Frontend caught this: a bare `fetch()` call was silently reported as GET when
+ * against a production frontend caught this: a bare `fetch()` call was silently reported as GET when
  * its options literally said POST. Only a literal `method` value is trusted; a non-literal one
  * means the real verb is genuinely unknown and must be declared as such, never guessed.
  */

@@ -60,7 +60,7 @@ public sealed partial class SlnmapQueries
         if (filtered.Count == 0)
         {
             return $"0 of {endpoints.Count} endpoint(s) match{filterNote}. "
-                + "The prefix is compared against the composed route template (e.g. '/api/vendors'); call list_endpoints without filters to see everything.";
+                + "The prefix is compared against the composed route template (e.g. '/api/sellers'); call list_endpoints without filters to see everything.";
         }
 
         var builder = new StringBuilder();
@@ -92,7 +92,7 @@ public sealed partial class SlnmapQueries
             return ToolFailure.MissingParameter(
                 "route",
                 ["route", "verb"],
-                "Provide a route in 'route', e.g. {\"route\": \"/api/vendors/{id}\"} — a concrete path like \"/api/vendors/42\" also matches its template.");
+                "Provide a route in 'route', e.g. {\"route\": \"/api/sellers/{id}\"} — a concrete path like \"/api/sellers/42\" also matches its template.");
         }
 
         string? verbFilter = null;
@@ -223,7 +223,7 @@ public sealed partial class SlnmapQueries
         return builder.ToString();
     }
 
-    /// <summary>The verb is the FQN's first token — "GET /api/vendors" → "GET" (design §2.3: no extra columns).</summary>
+    /// <summary>The verb is the FQN's first token — "GET /api/sellers" → "GET" (design §2.3: no extra columns).</summary>
     private static string VerbOf(SymbolNode endpoint)
     {
         int space = endpoint.Fqn.IndexOf(' ', StringComparison.Ordinal);

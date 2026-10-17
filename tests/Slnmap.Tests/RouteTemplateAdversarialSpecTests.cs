@@ -16,14 +16,14 @@ public sealed class RouteTemplateAdversarialSpecTests
     [Fact]
     public void HoleVsHole_DifferentParamNames_MatchTrivially()
     {
-        // /Tools/{*} (frontend, anonymous) vs /Tools/{id:int} (backend, named+constrained): both
+        // /Coupons/{*} (frontend, anonymous) vs /Coupons/{id:int} (backend, named+constrained): both
         // normalize their hole to the same "{x}" token regardless of name or constraint, so the
         // skeletons are textually identical and the fast-path equality check in Matches short-
         // circuits to true before the segment loop even runs.
-        string frontend = RouteTemplate.Normalize("/api/Tools/{*}");
-        string backend = RouteTemplate.Normalize("/api/Tools/{id:int}");
+        string frontend = RouteTemplate.Normalize("/api/Coupons/{*}");
+        string backend = RouteTemplate.Normalize("/api/Coupons/{id:int}");
 
-        Assert.Equal("api/tools/{x}", frontend);
+        Assert.Equal("api/coupons/{x}", frontend);
         Assert.Equal(frontend, backend);
         Assert.True(RouteTemplate.Matches(backend, frontend));
     }
@@ -31,11 +31,11 @@ public sealed class RouteTemplateAdversarialSpecTests
     [Fact]
     public void HoleVsHole_DifferentSegmentCounts_DoNotMatch()
     {
-        // /Tools/{*}/{*} (2 holes) vs /Tools/{id} (1 hole): segment counts differ, so this is a
+        // /Coupons/{*}/{*} (2 holes) vs /Tools/{id} (1 hole): segment counts differ, so this is a
         // clean rejection, not a partial/fuzzy match — confirms the design doesn't need extra
         // handling here; the existing segment-count guard already covers it.
-        string frontend = RouteTemplate.Normalize("/api/Tools/{*}/{*}");
-        string backend = RouteTemplate.Normalize("/api/Tools/{id}");
+        string frontend = RouteTemplate.Normalize("/api/Coupons/{*}/{*}");
+        string backend = RouteTemplate.Normalize("/api/Coupons/{id}");
 
         Assert.False(RouteTemplate.Matches(backend, frontend));
     }
@@ -43,11 +43,11 @@ public sealed class RouteTemplateAdversarialSpecTests
     [Fact]
     public void CaseSensitivity_FrontendLowercase_BackendPascalCase_MatchAfterNormalization()
     {
-        // The dominant real-world shape (OSSUS_Frontend writes lowercase; OSSUS_Backend composes
+        // The dominant real-world shape (the frontend writes lowercase; the backend composes
         // PascalCase class-name-derived segments) -- ASP.NET matches case-insensitively, so
         // case-folded comparison is the framework's own semantics, not a linker heuristic.
-        string frontend = RouteTemplate.Normalize("/api/OrganizationUsers");
-        string backend = RouteTemplate.Normalize("/API/organizationusers");
+        string frontend = RouteTemplate.Normalize("/api/Customers");
+        string backend = RouteTemplate.Normalize("/API/customers");
 
         Assert.Equal(frontend, backend);
         Assert.True(RouteTemplate.Matches(backend, frontend));
@@ -56,8 +56,8 @@ public sealed class RouteTemplateAdversarialSpecTests
     [Fact]
     public void TrailingSlash_FrontendWithBackendWithout_MatchAfterTrimming()
     {
-        string withTrailingSlash = RouteTemplate.Normalize("/api/vendors/");
-        string withoutTrailingSlash = RouteTemplate.Normalize("/api/vendors");
+        string withTrailingSlash = RouteTemplate.Normalize("/api/sellers/");
+        string withoutTrailingSlash = RouteTemplate.Normalize("/api/sellers");
 
         Assert.Equal(withTrailingSlash, withoutTrailingSlash);
         Assert.True(RouteTemplate.Matches(withoutTrailingSlash, withTrailingSlash));
@@ -68,8 +68,8 @@ public sealed class RouteTemplateAdversarialSpecTests
     {
         // A common real cause: a BFF base URL ending in "/" concatenated with a call-site path
         // starting with "/" (e.g. `${baseUrl}/${path}` where both already carry a slash).
-        string doubled = RouteTemplate.Normalize("/api//vendors///current");
-        string clean = RouteTemplate.Normalize("/api/vendors/current");
+        string doubled = RouteTemplate.Normalize("/api//sellers///current");
+        string clean = RouteTemplate.Normalize("/api/sellers/current");
 
         Assert.Equal(clean, doubled);
         Assert.True(RouteTemplate.Matches(clean, doubled));
@@ -78,8 +78,8 @@ public sealed class RouteTemplateAdversarialSpecTests
     [Fact]
     public void QueryStringAndHashFragment_AreStrippedBeforeComparison()
     {
-        string withQueryAndHash = RouteTemplate.Normalize("/api/vendors/current?tab=details#section");
-        string clean = RouteTemplate.Normalize("/api/vendors/current");
+        string withQueryAndHash = RouteTemplate.Normalize("/api/sellers/current?tab=details#section");
+        string clean = RouteTemplate.Normalize("/api/sellers/current");
 
         Assert.Equal(clean, withQueryAndHash);
     }

@@ -6,7 +6,7 @@ namespace Fixture.Web;
 /// forwarder, the omitted pattern (overload default), string.Empty, an :int route constraint kept
 /// verbatim, a multi-line chained registration, and a nested group.
 /// </summary>
-// Deliberately NOT sealed: the field convention (OSSUS's 54 groups) relies on the
+// Deliberately NOT sealed: the field convention relies on the
 // no-derived-types-in-compilation scan, not the IsSealed shortcut — this pins that path.
 public class Reminders : EndpointGroupBase
 {

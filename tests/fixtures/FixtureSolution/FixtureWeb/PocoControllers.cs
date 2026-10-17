@@ -51,7 +51,7 @@ internal class InternalPocoController
 /// <summary>
 /// An ordinary, unrelated class that happens to implement an interface (so it HAS a base list,
 /// exercising the pre-existing prefilter path unchanged) but has no controller-ish shape at all —
-/// a no-false-positive control alongside the OSSUS-shape check below. Deliberately named to NOT
+/// a no-false-positive control alongside the production-shape check below. Deliberately named to NOT
 /// end in "Controller" at all (a class ending in "...AController" would itself satisfy the
 /// name-suffix signal, per ASP.NET's own real, un-nuanced string-suffix convention — that would
 /// be a self-inflicted test bug, not a detection bug).
@@ -67,10 +67,10 @@ public class UnrelatedServiceWithAnInterface : IWorkPerformer
 }
 
 /// <summary>
-/// OSSUS-shape no-false-positive control: an ordinary POCO class (no base list, no
+/// Production-shape no-false-positive control: an ordinary POCO class (no base list, no
 /// controller-ish signal of any kind — no "Controller" suffix, no [ApiController]/[Route], no
 /// [Http*] on any member) — the vast majority shape in a real Minimal-API-only codebase like
-/// OSSUS_BE (measured: 0 controller-ish classes of any kind). Must stay completely untouched by
+/// a large production solution, which has none at all. Must stay completely untouched by
 /// the widened prefilter — zero semantic cost, exactly as before.
 /// </summary>
 public class PlainServiceHelper

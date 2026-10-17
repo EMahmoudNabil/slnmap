@@ -26,13 +26,13 @@ public sealed class AnalyzeTsIngestionTests
         CallSites:
         [
             new TsArtifactCallSite(
-                Kind: "FrontendCallSite", Verb: "GET", Template: "/Vendors", ResolutionTier: "literal",
-                Category: null, Reason: null, File: "src/services/vendors.ts", Line: 5, Column: 10,
+                Kind: "FrontendCallSite", Verb: "GET", Template: "/Sellers", ResolutionTier: "literal",
+                Category: null, Reason: null, File: "src/services/sellers.ts", Line: 5, Column: 10,
                 SpanStart: 100, SpanEnd: 130),
             new TsArtifactCallSite(
                 Kind: "UnresolvedCallSite", Verb: "GET", Template: null, ResolutionTier: null,
                 Category: "dynamic-base-url", Reason: "value is read from an environment variable",
-                File: "src/services/vendors.ts", Line: 9, Column: 4, SpanStart: 200, SpanEnd: 230),
+                File: "src/services/sellers.ts", Line: 9, Column: 4, SpanStart: 200, SpanEnd: 230),
         ]);
 
     [Fact]
@@ -42,14 +42,14 @@ public sealed class AnalyzeTsIngestionTests
         var nodes = TsArtifactFacts.BuildNodes(SampleArtifact, frontendRoot);
 
         var resolved = Assert.Single(nodes, n => n.Kind == NodeKind.FrontendCallSite);
-        Assert.Equal("/Vendors", resolved.Name);
-        Assert.Equal("GET src/services/vendors.ts:5:10", resolved.Fqn);
+        Assert.Equal("/Sellers", resolved.Name);
+        Assert.Equal("GET src/services/sellers.ts:5:10", resolved.Fqn);
         Assert.Equal(new SourceSpan(100, 130), resolved.Span);
-        Assert.Equal(Path.GetFullPath(Path.Combine(frontendRoot, "src/services/vendors.ts")), resolved.FilePath);
+        Assert.Equal(Path.GetFullPath(Path.Combine(frontendRoot, "src/services/sellers.ts")), resolved.FilePath);
 
         var unresolved = Assert.Single(nodes, n => n.Kind == NodeKind.UnresolvedCallSite);
         Assert.Equal("dynamic-base-url: value is read from an environment variable", unresolved.Name);
-        Assert.Equal("GET dynamic-base-url src/services/vendors.ts:9:4", unresolved.Fqn);
+        Assert.Equal("GET dynamic-base-url src/services/sellers.ts:9:4", unresolved.Fqn);
         Assert.Equal(new SourceSpan(200, 230), unresolved.Span);
     }
 

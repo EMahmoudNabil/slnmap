@@ -16,9 +16,9 @@ namespace Slnmap.Tests;
 /// <see cref="CrossStackLinker"/> and materializes its edges into <c>_graph</c>, so every
 /// assertion below exercises the actual production linking logic, not a hand-simulated shape.
 ///
-/// Fixtures: tests/fixtures/FixtureSolution/FixtureWeb/VendorEndpoints.cs (backend, analyzed for
+/// Fixtures: tests/fixtures/FixtureSolution/FixtureWeb/SellerEndpoints.cs (backend, analyzed for
 /// real via <see cref="AnalyzedFixtureSolution"/>) + tests/fixtures-ts/cross-stack-fixture/src/
-/// services/vendorsService.ts (frontend — a REAL source file in its OWN fixture directory,
+/// services/sellersService.ts (frontend — a REAL source file in its OWN fixture directory,
 /// deliberately separate from tests/fixtures-ts/frontend-fixture/, a shared golden fixture with
 /// its own hardcoded call-site counts that a dropped-in extra file would silently inflate). The
 /// frontend nodes below are hand-built from exactly what the shipped, unmodified `slnmap-ts`
@@ -41,42 +41,42 @@ public sealed class CrossStackLinkerGapTests : IClassFixture<AnalyzedFixtureSolu
             CallSites:
             [
                 // list() -- unique link: literal call site, literal endpoint.
-                new TsArtifactCallSite(Kind: "FrontendCallSite", Verb: "GET", Template: "/vendors",
+                new TsArtifactCallSite(Kind: "FrontendCallSite", Verb: "GET", Template: "/sellers",
                     ResolutionTier: "literal", Category: null, Reason: null,
-                    File: "src/services/vendorsService.ts", Line: 10, Column: 15, SpanStart: 0, SpanEnd: 1),
+                    File: "src/services/sellersService.ts", Line: 10, Column: 15, SpanStart: 0, SpanEnd: 1),
 
                 // update() -- unique link: LITERAL call site ("42"), single parameterized
-                // endpoint. Deliberately not a template interpolation (see vendorsService.ts's
+                // endpoint. Deliberately not a template interpolation (see sellersService.ts's
                 // own comment): a hole here would also match the pre-existing sibling
-                // POST /api/vendors/archive, which is a genuine ambiguity this fixture's
+                // POST /api/sellers/archive, which is a genuine ambiguity this fixture's
                 // original design missed until the real linker caught it during implementation.
-                new TsArtifactCallSite(Kind: "FrontendCallSite", Verb: "POST", Template: "/vendors/42",
+                new TsArtifactCallSite(Kind: "FrontendCallSite", Verb: "POST", Template: "/sellers/42",
                     ResolutionTier: "literal", Category: null, Reason: null,
-                    File: "src/services/vendorsService.ts", Line: 20, Column: 30, SpanStart: 2, SpanEnd: 3),
+                    File: "src/services/sellersService.ts", Line: 20, Column: 30, SpanStart: 2, SpanEnd: 3),
 
                 // current() -- ambiguous at the skeleton level (row 4): call site's own segment
                 // is a concrete literal, so route precedence must resolve it to one edge.
-                new TsArtifactCallSite(Kind: "FrontendCallSite", Verb: "GET", Template: "/vendors/current",
+                new TsArtifactCallSite(Kind: "FrontendCallSite", Verb: "GET", Template: "/sellers/current",
                     ResolutionTier: "literal", Category: null, Reason: null,
-                    File: "src/services/vendorsService.ts", Line: 27, Column: 18, SpanStart: 4, SpanEnd: 5),
+                    File: "src/services/sellersService.ts", Line: 27, Column: 18, SpanStart: 4, SpanEnd: 5),
 
                 // notify(channel) -- true fan-out: call site's own segment is a hole, so all
                 // three sibling endpoints are truthfully reachable.
-                new TsArtifactCallSite(Kind: "FrontendCallSite", Verb: "POST", Template: "/vendors/notify/{*}",
+                new TsArtifactCallSite(Kind: "FrontendCallSite", Verb: "POST", Template: "/sellers/notify/{*}",
                     ResolutionTier: "template-param-holes", Category: null, Reason: null,
-                    File: "src/services/vendorsService.ts", Line: 33, Column: 50, SpanStart: 6, SpanEnd: 7),
+                    File: "src/services/sellersService.ts", Line: 33, Column: 50, SpanStart: 6, SpanEnd: 7),
 
                 // bulkImport() -- deliberate orphan: no endpoint of this shape exists at all.
-                new TsArtifactCallSite(Kind: "FrontendCallSite", Verb: "POST", Template: "/vendors/reports/export/csv",
+                new TsArtifactCallSite(Kind: "FrontendCallSite", Verb: "POST", Template: "/sellers/reports/export/csv",
                     ResolutionTier: "literal", Category: null, Reason: null,
-                    File: "src/services/vendorsService.ts", Line: 37, Column: 37, SpanStart: 8, SpanEnd: 9),
+                    File: "src/services/sellersService.ts", Line: 37, Column: 37, SpanStart: 8, SpanEnd: 9),
 
-                // removeAll() -- deliberate verb mismatch: skeleton matches GET /api/vendors,
-                // but this call site is a DELETE (mirrors the real, still-live OSSUS_Frontend
-                // organizationUsers.ts:98 bug this investigation re-confirmed).
-                new TsArtifactCallSite(Kind: "FrontendCallSite", Verb: "DELETE", Template: "/vendors",
+                // removeAll() -- deliberate verb mismatch: skeleton matches GET /api/sellers,
+                // but this call site is a DELETE (mirrors a real verb-mismatch
+                // bug found in a production frontend).
+                new TsArtifactCallSite(Kind: "FrontendCallSite", Verb: "DELETE", Template: "/sellers",
                     ResolutionTier: "literal", Category: null, Reason: null,
-                    File: "src/services/vendorsService.ts", Line: 42, Column: 20, SpanStart: 10, SpanEnd: 11),
+                    File: "src/services/sellersService.ts", Line: 42, Column: 20, SpanStart: 10, SpanEnd: 11),
             ]);
 
         var frontendNodes = TsArtifactFacts.BuildNodes(frontendArtifact, frontendRoot);
@@ -92,29 +92,29 @@ public sealed class CrossStackLinkerGapTests : IClassFixture<AnalyzedFixtureSolu
     [Fact]
     public void Sanity_BothPopulationsArePresentBeforeLinking()
     {
-        GraphAssert.Node(_graph, NodeKind.Endpoint, "GET /api/vendors");
-        GraphAssert.Node(_graph, NodeKind.Endpoint, "POST /api/vendors/{id}");
-        GraphAssert.Node(_graph, NodeKind.Endpoint, "GET /api/vendors/current");
-        GraphAssert.Node(_graph, NodeKind.Endpoint, "GET /api/vendors/{vendorId}");
-        GraphAssert.Node(_graph, NodeKind.Endpoint, "POST /api/vendors/notify/email");
-        GraphAssert.Node(_graph, NodeKind.Endpoint, "POST /api/vendors/notify/sms");
-        GraphAssert.Node(_graph, NodeKind.Endpoint, "POST /api/vendors/notify/push");
+        GraphAssert.Node(_graph, NodeKind.Endpoint, "GET /api/sellers");
+        GraphAssert.Node(_graph, NodeKind.Endpoint, "POST /api/sellers/{id}");
+        GraphAssert.Node(_graph, NodeKind.Endpoint, "GET /api/sellers/current");
+        GraphAssert.Node(_graph, NodeKind.Endpoint, "GET /api/sellers/{sellerId}");
+        GraphAssert.Node(_graph, NodeKind.Endpoint, "POST /api/sellers/notify/email");
+        GraphAssert.Node(_graph, NodeKind.Endpoint, "POST /api/sellers/notify/sms");
+        GraphAssert.Node(_graph, NodeKind.Endpoint, "POST /api/sellers/notify/push");
         Assert.Equal(6, _graph.Nodes.Count(n => n.Kind == NodeKind.FrontendCallSite));
     }
 
     [Fact]
     public void Gap_UniqueLink_LiteralCallSite_LiteralEndpoint()
     {
-        var callSite = FrontendNode("GET", "/vendors");
-        AssertCallsEndpoint(callSite, EndpointNode("GET /api/vendors"));
+        var callSite = FrontendNode("GET", "/sellers");
+        AssertCallsEndpoint(callSite, EndpointNode("GET /api/sellers"));
         Assert.Equal(CallSiteLinkOutcome.Unique, OutcomeFor(callSite));
     }
 
     [Fact]
     public void Gap_UniqueLink_LiteralCallSite_ParameterizedEndpoint()
     {
-        var callSite = FrontendNode("POST", "/vendors/42");
-        AssertCallsEndpoint(callSite, EndpointNode("POST /api/vendors/{id}"));
+        var callSite = FrontendNode("POST", "/sellers/42");
+        AssertCallsEndpoint(callSite, EndpointNode("POST /api/sellers/{id}"));
         Assert.Equal(CallSiteLinkOutcome.Unique, OutcomeFor(callSite));
     }
 
@@ -124,24 +124,24 @@ public sealed class CrossStackLinkerGapTests : IClassFixture<AnalyzedFixtureSolu
         // The call site's own segment ("current") is concrete, so the linker's route-precedence
         // rule (literal beats parameter) must resolve this to exactly the literal endpoint --
         // not both, and not the parameterized sibling.
-        var callSite = FrontendNode("GET", "/vendors/current");
-        AssertCallsEndpoint(callSite, EndpointNode("GET /api/vendors/current"));
+        var callSite = FrontendNode("GET", "/sellers/current");
+        AssertCallsEndpoint(callSite, EndpointNode("GET /api/sellers/current"));
         Assert.Equal(CallSiteLinkOutcome.PrecedenceResolved, OutcomeFor(callSite));
 
         var edges = _graph.OutgoingEdges(callSite.Id, RelationshipKind.CallsEndpoint).ToList();
-        Assert.DoesNotContain(edges, e => e.TargetId == EndpointNode("GET /api/vendors/{vendorId}").Id);
+        Assert.DoesNotContain(edges, e => e.TargetId == EndpointNode("GET /api/sellers/{sellerId}").Id);
         Assert.Single(edges);
     }
 
     [Fact]
     public void Gap_FanOut_HoleAtDifferingSegment_ProducesOneEdgePerCandidate_NoMoreNoFewer()
     {
-        var callSite = FrontendNode("POST", "/vendors/notify/{*}");
+        var callSite = FrontendNode("POST", "/sellers/notify/{*}");
         SymbolNode[] targets =
         [
-            EndpointNode("POST /api/vendors/notify/email"),
-            EndpointNode("POST /api/vendors/notify/sms"),
-            EndpointNode("POST /api/vendors/notify/push"),
+            EndpointNode("POST /api/sellers/notify/email"),
+            EndpointNode("POST /api/sellers/notify/sms"),
+            EndpointNode("POST /api/sellers/notify/push"),
         ];
         foreach (var target in targets)
         {
@@ -156,7 +156,7 @@ public sealed class CrossStackLinkerGapTests : IClassFixture<AnalyzedFixtureSolu
     [Fact]
     public void Gap_Orphan_NoSkeletonMatchAtAnyVerb_IsQueryableAndHasNoEdge()
     {
-        var callSite = FrontendNode("POST", "/vendors/reports/export/csv");
+        var callSite = FrontendNode("POST", "/sellers/reports/export/csv");
         Assert.Empty(_graph.OutgoingEdges(callSite.Id, RelationshipKind.CallsEndpoint));
         Assert.Equal(CallSiteLinkOutcome.NoSkeletonMatch, OutcomeFor(callSite));
         Assert.Contains(callSite, ComputeOrphans());
@@ -165,7 +165,7 @@ public sealed class CrossStackLinkerGapTests : IClassFixture<AnalyzedFixtureSolu
     [Fact]
     public void Gap_VerbMismatch_SkeletonMatchesButVerbDiffers_IsNoEdgeNotAGuess()
     {
-        var callSite = FrontendNode("DELETE", "/vendors");
+        var callSite = FrontendNode("DELETE", "/sellers");
         Assert.Empty(_graph.OutgoingEdges(callSite.Id, RelationshipKind.CallsEndpoint));
         Assert.Equal(CallSiteLinkOutcome.VerbMismatch, OutcomeFor(callSite));
         Assert.Contains(callSite, ComputeOrphans());
@@ -175,10 +175,10 @@ public sealed class CrossStackLinkerGapTests : IClassFixture<AnalyzedFixtureSolu
     public void Gap_LinkedCallSites_AreNeverAlsoReportedAsOrphans()
     {
         var orphans = ComputeOrphans();
-        Assert.DoesNotContain(FrontendNode("GET", "/vendors"), orphans);
-        Assert.DoesNotContain(FrontendNode("POST", "/vendors/42"), orphans);
-        Assert.DoesNotContain(FrontendNode("GET", "/vendors/current"), orphans);
-        Assert.DoesNotContain(FrontendNode("POST", "/vendors/notify/{*}"), orphans);
+        Assert.DoesNotContain(FrontendNode("GET", "/sellers"), orphans);
+        Assert.DoesNotContain(FrontendNode("POST", "/sellers/42"), orphans);
+        Assert.DoesNotContain(FrontendNode("GET", "/sellers/current"), orphans);
+        Assert.DoesNotContain(FrontendNode("POST", "/sellers/notify/{*}"), orphans);
     }
 
     [Fact]
@@ -190,11 +190,11 @@ public sealed class CrossStackLinkerGapTests : IClassFixture<AnalyzedFixtureSolu
         // Method reaches the FrontendCallSite at depth 2 with zero traversal special-casing --
         // proven here directly against the graph (impact_analysis itself needs no change once
         // the edges exist; that is the point being pinned).
-        var handler = GraphAssert.Node(_graph, NodeKind.Method, "Fixture.Web.VendorEndpoints.GetVendorContext()");
-        var endpoint = EndpointNode("GET /api/vendors/current");
+        var handler = GraphAssert.Node(_graph, NodeKind.Method, "Fixture.Web.SellerEndpoints.GetSellerContext()");
+        var endpoint = EndpointNode("GET /api/sellers/current");
         GraphAssert.Edge(_graph, endpoint, handler, RelationshipKind.HandledBy);
 
-        var callSite = FrontendNode("GET", "/vendors/current");
+        var callSite = FrontendNode("GET", "/sellers/current");
         GraphAssert.Edge(_graph, callSite, endpoint, RelationshipKind.CallsEndpoint);
     }
 

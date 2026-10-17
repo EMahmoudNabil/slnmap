@@ -23,7 +23,7 @@ function project(files: Record<string, string>): string {
 
 const AXIOS_CLIENT = `
 import axios from 'axios';
-const apiClient = axios.create({ baseURL: '/api/ogw' });
+const apiClient = axios.create({ baseURL: '/api/proxy' });
 export default apiClient;
 `;
 
@@ -32,7 +32,7 @@ test('row 1: literal string argument resolves at resolutionTier "literal"', () =
     'src/apiClient.ts': AXIOS_CLIENT,
     'src/call.ts': `
       import apiClient from './apiClient';
-      export function call() { return apiClient.get('/Vendors'); }
+      export function call() { return apiClient.get('/Sellers'); }
     `,
   });
 
@@ -40,7 +40,7 @@ test('row 1: literal string argument resolves at resolutionTier "literal"', () =
   assert.equal(artifact.callSites.length, 1);
   const site = artifact.callSites[0]!;
   assert.equal(site.kind, 'FrontendCallSite');
-  assert.equal((site as { template: string }).template, '/Vendors');
+  assert.equal((site as { template: string }).template, '/Sellers');
   assert.equal((site as { resolutionTier: string }).resolutionTier, 'literal');
 });
 
@@ -49,15 +49,15 @@ test('row 2: const identifier referenced at the call site resolves at "const-res
     'src/apiClient.ts': AXIOS_CLIENT,
     'src/call.ts': `
       import apiClient from './apiClient';
-      const VENDORS = '/Vendors';
-      export function call() { return apiClient.get(VENDORS); }
+      const SELLERS = '/Sellers';
+      export function call() { return apiClient.get(SELLERS); }
     `,
   });
 
   const artifact = extract({ projectRoot: root });
   const site = artifact.callSites[0]!;
   assert.equal(site.kind, 'FrontendCallSite');
-  assert.equal((site as { template: string }).template, '/Vendors');
+  assert.equal((site as { template: string }).template, '/Sellers');
   assert.equal((site as { resolutionTier: string }).resolutionTier, 'const-resolved');
 });
 
@@ -65,44 +65,44 @@ test('row 3: property access into a literal-typed const object (API_ROUTES-style
   const root = project({
     'src/apiClient.ts': AXIOS_CLIENT,
     'src/routes.ts': `
-      export const API_ROUTES = { userTasksSummary: '/UserTasks/assigned-tasks-with-summary' };
+      export const API_ROUTES = { pickerTasksSummary: '/PickerTasks/assigned-picks-with-summary' };
     `,
     'src/call.ts': `
       import apiClient from './apiClient';
       import { API_ROUTES } from './routes';
-      export function call() { return apiClient.get(API_ROUTES.userTasksSummary); }
+      export function call() { return apiClient.get(API_ROUTES.pickerTasksSummary); }
     `,
   });
 
   const artifact = extract({ projectRoot: root });
   const site = artifact.callSites[0]!;
   assert.equal(site.kind, 'FrontendCallSite');
-  assert.equal((site as { template: string }).template, '/UserTasks/assigned-tasks-with-summary');
+  assert.equal((site as { template: string }).template, '/PickerTasks/assigned-picks-with-summary');
   assert.equal((site as { resolutionTier: string }).resolutionTier, 'const-resolved');
 });
 
 test('row 4: const-through-barrel (default->named rename) folds through the re-export chain', () => {
   const root = project({
     'src/services/apiClient.ts': AXIOS_CLIENT,
-    'src/services/boardMeetingsService.ts': `
+    'src/services/stockCountsService.ts': `
       import apiClient from './apiClient';
-      const COMMITTEES = '/Committees';
-      export const boardMeetingsService = { getCommittees: () => apiClient.get(COMMITTEES) };
+      const WAREHOUSES = '/Warehouses';
+      export const stockCountsService = { getWarehouses: () => apiClient.get(WAREHOUSES) };
     `,
     'src/services/index.ts': `
       export { default as apiClient } from './apiClient';
-      export { boardMeetingsService } from './boardMeetingsService';
+      export { stockCountsService } from './stockCountsService';
     `,
     'src/call.ts': `
-      import { boardMeetingsService } from './services';
-      export function call() { return boardMeetingsService.getCommittees(); }
+      import { stockCountsService } from './services';
+      export function call() { return stockCountsService.getWarehouses(); }
     `,
   });
 
   const artifact = extract({ projectRoot: root });
   const site = artifact.callSites[0]!;
   assert.equal(site.kind, 'FrontendCallSite');
-  assert.equal((site as { template: string }).template, '/Committees');
+  assert.equal((site as { template: string }).template, '/Warehouses');
 });
 
 test('row 5: template literal with every hole resolved folds at "template-folded"', () => {
@@ -110,7 +110,7 @@ test('row 5: template literal with every hole resolved folds at "template-folded
     'src/apiClient.ts': AXIOS_CLIENT,
     'src/call.ts': `
       import apiClient from './apiClient';
-      const BASE = '/Vendors';
+      const BASE = '/Sellers';
       const ID = '42';
       export function call() { return apiClient.get(\`\${BASE}/\${ID}/notes\`); }
     `,
@@ -119,7 +119,7 @@ test('row 5: template literal with every hole resolved folds at "template-folded
   const artifact = extract({ projectRoot: root });
   const site = artifact.callSites[0]!;
   assert.equal(site.kind, 'FrontendCallSite');
-  assert.equal((site as { template: string }).template, '/Vendors/42/notes');
+  assert.equal((site as { template: string }).template, '/Sellers/42/notes');
   assert.equal((site as { resolutionTier: string }).resolutionTier, 'template-folded');
 });
 
@@ -128,10 +128,10 @@ test('row 6: template literal with a genuinely runtime hole folds to an anonymou
     'src/apiClient.ts': AXIOS_CLIENT,
     'src/call.ts': `
       import apiClient from './apiClient';
-      const moduleMap: Record<string, string> = { compliance: 'compliances' };
+      const moduleMap: Record<string, string> = { pickup: 'pickups' };
       export function call(taskModule: string, taskId: string) {
         const resolvedModule = moduleMap[taskModule] || taskModule;
-        return apiClient.post(\`/TaskCenter/\${resolvedModule}/\${taskId}/reminder\`, {});
+        return apiClient.post(\`/OrderQueue/\${resolvedModule}/\${taskId}/reminder\`, {});
       }
     `,
   });
@@ -139,24 +139,24 @@ test('row 6: template literal with a genuinely runtime hole folds to an anonymou
   const artifact = extract({ projectRoot: root });
   const site = artifact.callSites[0]!;
   assert.equal(site.kind, 'FrontendCallSite');
-  assert.equal((site as { template: string }).template, '/TaskCenter/{*}/{*}/reminder');
+  assert.equal((site as { template: string }).template, '/OrderQueue/{*}/{*}/reminder');
   assert.equal((site as { resolutionTier: string }).resolutionTier, 'template-param-holes');
 });
 
 test('v0.15.0: an optional-query-string hole becomes ?{*}, leaving the path intact', () => {
-  // OSSUS indicatorsService.ts: was the orphan '/Indicators/{*}/linked-risks{*}'.
+  // Seen in a production frontend: was the orphan '/Promotions/{*}/linked-carts{*}'.
   const root = project({
     'src/apiClient.ts': AXIOS_CLIENT,
     'src/call.ts': `
       import apiClient from './apiClient';
-      export function linkedRisks(id: number, search?: string) {
+      export function linkedCarts(id: number, search?: string) {
         const qs = new URLSearchParams();
         if (search) qs.set('search', search);
         const query = qs.toString();
-        return apiClient.get(\`/Indicators/\${id}/linked-risks\${query ? \`?\${query}\` : ''}\`);
+        return apiClient.get(\`/Promotions/\${id}/linked-carts\${query ? \`?\${query}\` : ''}\`);
       }
-      export function vendors(filter?: string) {
-        return apiClient.get(\`/Vendors\${filter ? '?filter=' + filter : ''}\`);
+      export function sellers(filter?: string) {
+        return apiClient.get(\`/Sellers\${filter ? '?filter=' + filter : ''}\`);
       }
       export function items(qs: string) {
         const query = qs ? \`?\${qs}\` : '';
@@ -170,7 +170,7 @@ test('v0.15.0: an optional-query-string hole becomes ?{*}, leaving the path inta
 
   const artifact = extract({ projectRoot: root });
   const templates = artifact.callSites.map((c) => (c as { template: string }).template).sort();
-  assert.deepEqual(templates, ['/Indicators/{*}/linked-risks?{*}', '/Items?{*}', '/Orders?{*}', '/Vendors?{*}']);
+  assert.deepEqual(templates, ['/Items?{*}', '/Orders?{*}', '/Promotions/{*}/linked-carts?{*}', '/Sellers?{*}']);
   for (const site of artifact.callSites) {
     assert.equal((site as { resolutionTier: string }).resolutionTier, 'template-param-holes');
   }
@@ -181,16 +181,16 @@ test('v0.15.0: a hole that is not query-shaped stays an honest {*} segment', () 
     'src/apiClient.ts': AXIOS_CLIENT,
     'src/call.ts': `
       import apiClient from './apiClient';
-      export function a(suffix: string) { return apiClient.get(\`/Vendors\${suffix}\`); }
-      export function b(flag: boolean, id: string) { return apiClient.get(\`/Vendors\${flag ? '/' + id : ''}\`); }
+      export function a(suffix: string) { return apiClient.get(\`/Sellers\${suffix}\`); }
+      export function b(flag: boolean, id: string) { return apiClient.get(\`/Sellers\${flag ? '/' + id : ''}\`); }
       function build(id: string) { return '?x=' + id; }
-      export function c(id: string) { return apiClient.get(\`/Vendors\${build(id)}\`); }
+      export function c(id: string) { return apiClient.get(\`/Sellers\${build(id)}\`); }
     `,
   });
 
   const artifact = extract({ projectRoot: root });
   const templates = artifact.callSites.map((c) => (c as { template: string }).template).sort();
-  assert.deepEqual(templates, ['/Vendors{*}', '/Vendors{*}', '/Vendors{*}']);
+  assert.deepEqual(templates, ['/Sellers{*}', '/Sellers{*}', '/Sellers{*}']);
 });
 
 test('5 distinct import spellings of the same axios instance all resolve to one identity', () => {
